@@ -40,6 +40,9 @@ go.work.sum
 # Output of the go coverage tool, specifically when used with LiteIDE
 **/*.out
 
+# Openshift specific overriding
+!openshift/manifests/*.yaml
+
 # Common editor / temporary files
 **/*~
 **/*.tmp
