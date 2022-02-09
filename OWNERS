@@ -1,14 +1,9 @@
 # See the OWNERS docs: https://git.k8s.io/community/contributors/guide/owners.md
-
+component: "Cloud Compute"
+subcomponent: "Other Providers"
 approvers:
-  - cluster-api-admins
-  - cluster-api-maintainers
-  - cluster-api-vsphere-maintainers
-  - sig-cluster-lifecycle-leads
-
-reviewers:
-  - cluster-api-vsphere-maintainers
-  - cluster-api-vsphere-reviewers
-
-emeritus_approvers:
-  - gab-satchi
+  - damdo
+  - alexander-demichev
+  - JoelSpeed
+  - elmiko
+  - Fedosin
