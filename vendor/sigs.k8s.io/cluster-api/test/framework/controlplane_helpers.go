@@ -285,6 +285,7 @@ type UpgradeControlPlaneAndWaitForUpgradeInput struct {
 	Cluster                     *clusterv1.Cluster
 	ControlPlane                *controlplanev1.KubeadmControlPlane
 	KubernetesUpgradeVersion    string
+	UpgradeMachineTemplate      *string
 	EtcdImageTag                string
 	DNSImageTag                 string
 	WaitForMachinesToBeUpgraded []interface{}
@@ -310,7 +311,9 @@ func UpgradeControlPlaneAndWaitForUpgrade(ctx context.Context, input UpgradeCont
 	Expect(err).ToNot(HaveOccurred())
 
 	input.ControlPlane.Spec.Version = input.KubernetesUpgradeVersion
-
+	if input.UpgradeMachineTemplate != nil {
+		input.ControlPlane.Spec.MachineTemplate.InfrastructureRef.Name = *input.UpgradeMachineTemplate
+	}
 	// If the ClusterConfiguration is not specified, create an empty one.
 	if input.ControlPlane.Spec.KubeadmConfigSpec.ClusterConfiguration == nil {
 		input.ControlPlane.Spec.KubeadmConfigSpec.ClusterConfiguration = new(bootstrapv1.ClusterConfiguration)
@@ -380,8 +383,9 @@ func ScaleAndWaitControlPlane(ctx context.Context, input ScaleAndWaitControlPlan
 
 	patchHelper, err := patch.NewHelper(input.ControlPlane, input.ClusterProxy.GetClient())
 	Expect(err).ToNot(HaveOccurred())
+	scaleBefore := pointer.Int32Deref(input.ControlPlane.Spec.Replicas, 0)
 	input.ControlPlane.Spec.Replicas = pointer.Int32Ptr(input.Replicas)
-	log.Logf("Scaling controlplane %s/%s from %v to %v replicas", input.ControlPlane.Namespace, input.ControlPlane.Name, input.ControlPlane.Spec.Replicas, input.Replicas)
+	log.Logf("Scaling controlplane %s/%s from %v to %v replicas", input.ControlPlane.Namespace, input.ControlPlane.Name, scaleBefore, input.Replicas)
 	Expect(patchHelper.Patch(ctx, input.ControlPlane)).To(Succeed())
 
 	log.Logf("Waiting for correct number of replicas to exist")
