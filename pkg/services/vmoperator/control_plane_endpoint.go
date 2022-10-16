@@ -41,6 +41,14 @@ const (
 	nodeSelectorKey    = "capv.vmware.com/cluster.role"
 	roleNode           = "node"
 	roleControlPlane   = "controlplane"
+
+	// TODO(lubronzhan): Deprecated, will be removed in a future release.
+	// https://github.com/kubernetes-sigs/cluster-api-provider-vsphere/issues/1483
+	// legacyClusterSelectorKey and legacyNodeSelectorKey are added for backward compatibility.
+	// These will be removed in the future release.
+	// Please refer to the issue above for deprecation process.
+	legacyClusterSelectorKey = "capw.vmware.com/cluster.name"
+	legacyNodeSelectorKey    = "capw.vmware.com/cluster.role"
 )
 
 // CPService represents the ability to reconcile a ControlPlaneEndpoint.
@@ -104,14 +112,18 @@ func controlPlaneVMServiceName(ctx *vmware.ClusterContext) string {
 
 // ClusterRoleVMLabels returns labels applied to a VirtualMachine in the cluster. The Control Plane
 // VM Service uses these labels to select VMs, as does the Cloud Provider.
+// Add the legacyNodeSelectorKey and legacyClusterSelectorKey to machines as well.
 func clusterRoleVMLabels(ctx *vmware.ClusterContext, controlPlane bool) map[string]string {
 	result := map[string]string{
-		clusterSelectorKey: ctx.Cluster.Name,
+		clusterSelectorKey:       ctx.Cluster.Name,
+		legacyClusterSelectorKey: ctx.Cluster.Name,
 	}
 	if controlPlane {
 		result[nodeSelectorKey] = roleControlPlane
+		result[legacyNodeSelectorKey] = roleControlPlane
 	} else {
 		result[nodeSelectorKey] = roleNode
+		result[legacyNodeSelectorKey] = roleNode
 	}
 	return result
 }
@@ -135,7 +147,14 @@ func (s CPService) createVMControlPlaneService(ctx *vmware.ClusterContext, annot
 
 	vmService := newVirtualMachineService(ctx)
 
-	_, err := ctrlutil.CreateOrUpdate(ctx, ctx.Client, vmService, func() error {
+	_, err := ctrlutil.CreateOrPatch(ctx, ctx.Client, vmService, func() error {
+		if vmService.Annotations == nil {
+			vmService.Annotations = annotations
+		} else {
+			for k, v := range annotations {
+				vmService.Annotations[k] = v
+			}
+		}
 		vmService.Annotations = annotations
 		vmService.Spec = vmoprv1.VirtualMachineServiceSpec{
 			Type: serviceType,
@@ -149,15 +168,22 @@ func (s CPService) createVMControlPlaneService(ctx *vmware.ClusterContext, annot
 			},
 			Selector: clusterRoleVMLabels(ctx, true),
 		}
-		// Ensure that the VirtualMachineService is owned by the VSphereCluster
-		vmService.OwnerReferences = []metav1.OwnerReference{
-			{
-				Name:       ctx.VSphereCluster.Name,
-				APIVersion: infrav1.GroupVersion.String(),
-				Kind:       "VSphereCluster",
-				UID:        ctx.VSphereCluster.UID,
-			},
+
+		if err := ctrlutil.SetOwnerReference(
+			ctx.VSphereCluster,
+			vmService,
+			ctx.Scheme,
+		); err != nil {
+			return errors.Wrapf(
+				err,
+				"error setting %s/%s as owner of %s/%s",
+				ctx.VSphereCluster.Namespace,
+				ctx.VSphereCluster.Name,
+				vmService.Namespace,
+				vmService.Name,
+			)
 		}
+
 		return nil
 	})
 	if err != nil {

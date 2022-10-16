@@ -28,6 +28,7 @@ import (
 	"github.com/vmware/govmomi/find"
 	"github.com/vmware/govmomi/object"
 	"github.com/vmware/govmomi/session"
+	"github.com/vmware/govmomi/session/keepalive"
 	"github.com/vmware/govmomi/vapi/rest"
 	"github.com/vmware/govmomi/vapi/tags"
 	"github.com/vmware/govmomi/vim25"
@@ -36,12 +37,11 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 
 	"sigs.k8s.io/cluster-api-provider-vsphere/apis/v1beta1"
-	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/constants"
 )
 
-var sessionCache = map[string]Session{}
-
-var sessionMU sync.Mutex
+// global Session map against sessionKeys
+// in map[sessionKey]Session.
+var sessionCache sync.Map
 
 // Session is a vSphere session with a configured Finder.
 type Session struct {
@@ -52,14 +52,11 @@ type Session struct {
 }
 
 type Feature struct {
-	EnableKeepAlive   bool
 	KeepAliveDuration time.Duration
 }
 
 func DefaultFeature() Feature {
-	return Feature{
-		EnableKeepAlive: constants.DefaultEnableKeepAlive,
-	}
+	return Feature{}
 }
 
 type Params struct {
@@ -105,25 +102,29 @@ func (p *Params) WithFeatures(feature Feature) *Params {
 // already exist.
 func GetOrCreate(ctx context.Context, params *Params) (*Session, error) {
 	logger := ctrl.LoggerFrom(ctx).WithName("session")
-	sessionMU.Lock()
-	defer sessionMU.Unlock()
 
 	sessionKey := params.server + params.userinfo.Username() + params.datacenter
-	if cachedSession, ok := sessionCache[sessionKey]; ok {
+	if cachedSession, ok := sessionCache.Load(sessionKey); ok {
+		s := cachedSession.(*Session)
 		logger = logger.WithValues("server", params.server, "datacenter", params.datacenter)
-		// if keepalive is enabled we depend upon roundtripper to reestablish the connection
-		// and remove the key if it could not
-		if params.feature.EnableKeepAlive {
-			return &cachedSession, nil
+
+		vimSessionActive, err := s.SessionManager.SessionIsActive(ctx)
+		if err != nil {
+			logger.Error(err, "unable to check if vim session is active")
 		}
-		var err error
-		if ok, err = cachedSession.SessionManager.SessionIsActive(ctx); ok {
+
+		tagManagerSession, err := s.TagManager.Session(ctx)
+		if err != nil {
+			logger.Error(err, "unable to check if rest session is active")
+		}
+
+		if vimSessionActive && tagManagerSession != nil {
 			logger.V(2).Info("found active cached vSphere client session")
-			return &cachedSession, nil
+			return s, nil
 		}
-		logger.V(2).Error(err, "error checking if session is active")
 	}
 
+	clearCache(logger, sessionKey)
 	soapURL, err := soap.ParseURL(params.server)
 	if err != nil {
 		return nil, errors.Wrapf(err, "error parsing vSphere URL %q", params.server)
@@ -144,7 +145,7 @@ func GetOrCreate(ctx context.Context, params *Params) (*Session, error) {
 	// Assign the finder to the session.
 	session.Finder = find.NewFinder(session.Client.Client, false)
 	// Assign tag manager to the session.
-	manager, err := newManager(ctx, client.Client, soapURL.User)
+	manager, err := newManager(ctx, logger, sessionKey, client.Client, soapURL.User, params.feature)
 	if err != nil {
 		return nil, errors.Wrap(err, "unable to create tags manager")
 	}
@@ -160,7 +161,7 @@ func GetOrCreate(ctx context.Context, params *Params) (*Session, error) {
 		session.Finder.SetDatacenter(dc)
 	}
 	// Cache the session.
-	sessionCache[sessionKey] = session
+	sessionCache.Store(sessionKey, &session)
 
 	logger.V(2).Info("cached vSphere client session", "server", params.server, "datacenter", params.datacenter)
 
@@ -184,22 +185,20 @@ func newClient(ctx context.Context, logger logr.Logger, sessionKey string, url *
 		SessionManager: session.NewManager(vimClient),
 	}
 
-	if feature.EnableKeepAlive {
-		vimClient.RoundTripper = session.KeepAliveHandler(vimClient.RoundTripper, feature.KeepAliveDuration, func(tripper soap.RoundTripper) error {
-			// we tried implementing
-			// c.Login here but the client once logged out
-			// keeps errong in invalid username or password
-			// we tried with cached username and password in session still the error persisted
-			// hence we just clear the cache and expect the client to
-			// be recreated in next GetOrCreate call
-			_, err := methods.GetCurrentTime(ctx, tripper)
-			if err != nil {
-				logger.Error(err, "failed to keep alive govmomi client")
-				clearCache(sessionKey)
-			}
-			return err
-		})
-	}
+	vimClient.RoundTripper = session.KeepAliveHandler(vimClient.RoundTripper, feature.KeepAliveDuration, func(tripper soap.RoundTripper) error {
+		// we tried implementing
+		// c.Login here but the client once logged out
+		// keeps errong in invalid username or password
+		// we tried with cached username and password in session still the error persisted
+		// hence we just clear the cache and expect the client to
+		// be recreated in next GetOrCreate call
+		_, err := methods.GetCurrentTime(ctx, tripper)
+		if err != nil {
+			logger.Error(err, "failed to keep alive govmomi client")
+			clearCache(logger, sessionKey)
+		}
+		return err
+	})
 
 	if err := c.Login(ctx, url.User); err != nil {
 		return nil, err
@@ -208,15 +207,54 @@ func newClient(ctx context.Context, logger logr.Logger, sessionKey string, url *
 	return c, nil
 }
 
-func clearCache(sessionKey string) {
-	sessionMU.Lock()
-	defer sessionMU.Unlock()
-	delete(sessionCache, sessionKey)
+func clearCache(logger logr.Logger, sessionKey string) {
+	if cachedSession, ok := sessionCache.Load(sessionKey); ok {
+		s := cachedSession.(*Session)
+
+		// check for the presence of tagmanager session
+		// since calling Logout on an expired session blocks
+		session, err := s.TagManager.Session(context.Background())
+		if err != nil {
+			logger.Error(err, "unable to get tag manager session")
+		}
+		if session != nil {
+			logger.V(6).Info("found active tag manager session, logging out")
+			err := s.TagManager.Logout(context.Background())
+			if err != nil {
+				logger.Error(err, "unable to logout tag manager session")
+			}
+		}
+
+		vimSessionActive, err := s.SessionManager.SessionIsActive(context.Background())
+		if err != nil {
+			logger.Error(err, "unable to get vim client session")
+		} else if vimSessionActive {
+			logger.V(6).Info("found active vim session, logging out")
+			err := s.SessionManager.Logout(context.Background())
+			if err != nil {
+				logger.Error(err, "unable to logout vim session")
+			}
+		}
+	}
+	sessionCache.Delete(sessionKey)
 }
 
 // newManager creates a Manager that encompasses the REST Client for the VSphere tagging API.
-func newManager(ctx context.Context, client *vim25.Client, user *url.Userinfo) (*tags.Manager, error) {
+func newManager(ctx context.Context, logger logr.Logger, sessionKey string, client *vim25.Client, user *url.Userinfo, feature Feature) (*tags.Manager, error) {
 	rc := rest.NewClient(client)
+	rc.Transport = keepalive.NewHandlerREST(rc, feature.KeepAliveDuration, func() error {
+		s, err := rc.Session(ctx)
+		if err != nil {
+			return err
+		}
+		if s != nil {
+			return nil
+		}
+
+		logger.V(6).Info("rest client session expired, clearing cache")
+		clearCache(logger, sessionKey)
+		return errors.New("rest client session expired")
+	})
 	if err := rc.Login(ctx, user); err != nil {
 		return nil, err
 	}

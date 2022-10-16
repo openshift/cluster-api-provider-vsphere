@@ -48,6 +48,10 @@ import (
 	infrautilv1 "sigs.k8s.io/cluster-api-provider-vsphere/pkg/util"
 )
 
+// legacyIdentityFinalizer is deprecated and should be used only while upgrading the cluster
+// from v1alpha3(v.0.7).
+const legacyIdentityFinalizer string = "identity/infrastructure.cluster.x-k8s.io"
+
 type clusterReconciler struct {
 	*context.ControllerContext
 }
@@ -176,8 +180,14 @@ func (r clusterReconciler) reconcileDelete(ctx *context.ClusterContext) (reconci
 			}
 			return reconcile.Result{}, err
 		}
-		r.Logger.Info(fmt.Sprintf("Removing finalizer form Secret %s/%s", secret.Namespace, secret.Name))
+		r.Logger.Info(fmt.Sprintf("Removing finalizer from Secret %s/%s having finalizers %v", secret.Namespace, secret.Name, secret.Finalizers))
 		ctrlutil.RemoveFinalizer(secret, infrav1.SecretIdentitySetFinalizer)
+
+		// Check if the old finalizer(from v0.7) is present, if yes, delete it
+		// For more context, please refer: https://github.com/kubernetes-sigs/cluster-api-provider-vsphere/issues/1482
+		if ctrlutil.ContainsFinalizer(secret, legacyIdentityFinalizer) {
+			ctrlutil.RemoveFinalizer(secret, legacyIdentityFinalizer)
+		}
 		if err := ctx.Client.Update(ctx, secret); err != nil {
 			return reconcile.Result{}, err
 		}
@@ -257,18 +267,18 @@ func (r clusterReconciler) reconcileIdentitySecret(ctx *context.ClusterContext) 
 
 		// check if cluster is already an owner
 		if !clusterutilv1.IsOwnedByObject(secret, vsphereCluster) {
-			if len(secret.GetOwnerReferences()) > 0 {
+			ownerReferences := secret.GetOwnerReferences()
+			if identity.IsOwnedByIdentityOrCluster(ownerReferences) {
 				return fmt.Errorf("another cluster has set the OwnerRef for secret: %s/%s", secret.Namespace, secret.Name)
 			}
-
-			secret.SetOwnerReferences([]metav1.OwnerReference{{
+			ownerReferences = append(ownerReferences, metav1.OwnerReference{
 				APIVersion: infrav1.GroupVersion.String(),
 				Kind:       vsphereCluster.Kind,
 				Name:       vsphereCluster.Name,
 				UID:        vsphereCluster.UID,
-			}})
+			})
+			secret.SetOwnerReferences(ownerReferences)
 		}
-
 		if !ctrlutil.ContainsFinalizer(secret, infrav1.SecretIdentitySetFinalizer) {
 			ctrlutil.AddFinalizer(secret, infrav1.SecretIdentitySetFinalizer)
 		}
@@ -286,7 +296,6 @@ func (r clusterReconciler) reconcileVCenterConnectivity(ctx *context.ClusterCont
 		WithServer(ctx.VSphereCluster.Spec.Server).
 		WithThumbprint(ctx.VSphereCluster.Spec.Thumbprint).
 		WithFeatures(session.Feature{
-			EnableKeepAlive:   r.EnableKeepAlive,
 			KeepAliveDuration: r.KeepAliveDuration,
 		})
 
@@ -347,6 +356,9 @@ func (r clusterReconciler) reconcileDeploymentZones(ctx *context.ClusterContext)
 		} else {
 			conditions.MarkTrue(ctx.VSphereCluster, infrav1.FailureDomainsAvailableCondition)
 		}
+	} else {
+		// Remove the condition if failure domains do not exist
+		conditions.Delete(ctx.VSphereCluster, infrav1.FailureDomainsAvailableCondition)
 	}
 	return true, nil
 }
@@ -375,7 +387,7 @@ func (r clusterReconciler) reconcileVSphereClusterWhenAPIServerIsOnline(ctx *con
 	go func() {
 		// Block until the target API server is online.
 		ctx.Logger.Info("start polling API server for online check")
-		wait.PollImmediateInfinite(time.Second*1, func() (bool, error) { return r.isAPIServerOnline(ctx), nil }) // nolint:errcheck
+		wait.PollImmediateInfinite(time.Second*1, func() (bool, error) { return r.isAPIServerOnline(ctx), nil }) //nolint:errcheck
 		ctx.Logger.Info("stop polling API server for online check")
 		ctx.Logger.Info("triggering GenericEvent", "reason", "api-server-online")
 		eventChannel := ctx.GetGenericEventChannelFor(ctx.VSphereCluster.GetObjectKind().GroupVersionKind())
@@ -387,7 +399,7 @@ func (r clusterReconciler) reconcileVSphereClusterWhenAPIServerIsOnline(ctx *con
 		// remove the key from the map that prevents multiple goroutines from
 		// polling the API server to see if it is online.
 		ctx.Logger.Info("start polling for control plane initialized")
-		wait.PollImmediateInfinite(time.Second*1, func() (bool, error) { return r.isControlPlaneInitialized(ctx), nil }) // nolint:errcheck
+		wait.PollImmediateInfinite(time.Second*1, func() (bool, error) { return r.isControlPlaneInitialized(ctx), nil }) //nolint:errcheck
 		ctx.Logger.Info("stop polling for control plane initialized")
 		apiServerTriggersMu.Lock()
 		delete(apiServerTriggers, ctx.Cluster.UID)

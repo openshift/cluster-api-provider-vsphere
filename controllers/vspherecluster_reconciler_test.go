@@ -39,6 +39,7 @@ import (
 	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/context/fake"
 	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/identity"
 	"sigs.k8s.io/cluster-api-provider-vsphere/test/helpers"
+	"sigs.k8s.io/cluster-api-provider-vsphere/test/helpers/vcsim"
 )
 
 const (
@@ -61,6 +62,14 @@ var _ = Describe("VIM based VSphere ClusterReconciler", func() {
 				ObjectMeta: metav1.ObjectMeta{
 					GenerateName: "secret-",
 					Namespace:    "default",
+					OwnerReferences: []metav1.OwnerReference{
+						{
+							APIVersion: "bitnami.com/v1alpha1",
+							Kind:       "SealedSecret",
+							Name:       "some-name",
+							UID:        "some-uid",
+						},
+					},
 				},
 				Data: map[string][]byte{
 					identity.UsernameKey: []byte(vcURL.User.Username()),
@@ -177,8 +186,8 @@ var _ = Describe("VIM based VSphere ClusterReconciler", func() {
 					Namespace:    "default",
 					OwnerReferences: []metav1.OwnerReference{
 						{
-							APIVersion: "api-version",
-							Kind:       "cluster",
+							APIVersion: infrav1.GroupVersion.String(),
+							Kind:       "VSphereClusterIdentity",
 							Name:       "another-cluster",
 							UID:        "some-uid",
 						},
@@ -232,6 +241,117 @@ var _ = Describe("VIM based VSphere ClusterReconciler", func() {
 					Severity: clusterv1.ConditionSeverityError,
 					Reason:   infrav1.VCenterUnreachableReason,
 				}))
+			}, timeout).Should(BeTrue())
+		})
+	})
+	Context("Reconcile delete", func() {
+		var (
+			ctx             context.Context
+			secret          *corev1.Secret
+			capiCluster     *clusterv1.Cluster
+			instance        *infrav1.VSphereCluster
+			legacyFinalizer = "identity/infrastructure.cluster.x-k8s.io"
+			key             client.ObjectKey
+		)
+		It("should remove legacy finalizer if present during the cluster deletion", func() {
+			ctx = context.Background()
+			capiCluster = &clusterv1.Cluster{
+				ObjectMeta: metav1.ObjectMeta{
+					GenerateName: "test1-",
+					Namespace:    "default",
+				},
+				Spec: clusterv1.ClusterSpec{
+					InfrastructureRef: &corev1.ObjectReference{
+						APIVersion: infrav1.GroupVersion.String(),
+						Kind:       "VsphereCluster",
+						Name:       "vsphere-test1",
+					},
+				},
+			}
+			defer func() {
+				Expect(testEnv.Cleanup(ctx, capiCluster)).To(Succeed())
+			}()
+
+			// Create the CAPI cluster (owner) object
+			Expect(testEnv.Create(ctx, capiCluster)).To(Succeed())
+
+			fakeVCenter := startVcenter()
+			vcURL := fakeVCenter.ServerURL()
+			defer fakeVCenter.Destroy()
+			// Create the secret containing the credentials
+			password, _ := vcURL.User.Password()
+
+			secret = &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					GenerateName: "secret-",
+					Namespace:    "default",
+					Finalizers:   []string{legacyFinalizer},
+				},
+				Data: map[string][]byte{
+					identity.UsernameKey: []byte(vcURL.User.Username()),
+					identity.PasswordKey: []byte(password),
+				},
+			}
+			Expect(testEnv.Create(ctx, secret)).To(Succeed())
+			Eventually(func() error {
+				secretKey := client.ObjectKey{Namespace: secret.Namespace, Name: secret.Name}
+				return testEnv.Get(ctx, secretKey, secret)
+			}).Should(BeNil())
+
+			// Create the VSphereCluster object
+			instance = &infrav1.VSphereCluster{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "vsphere-test1",
+					Namespace: "default",
+				},
+				Spec: infrav1.VSphereClusterSpec{
+					IdentityRef: &infrav1.VSphereIdentityReference{
+						Kind: infrav1.SecretKind,
+						Name: secret.Name,
+					},
+					Server: fmt.Sprintf("%s://%s", vcURL.Scheme, vcURL.Host),
+				},
+			}
+			Expect(testEnv.Create(ctx, instance)).To(Succeed())
+
+			// Make sure the VSphereCluster exists.
+			key = client.ObjectKey{Namespace: instance.Namespace, Name: instance.Name}
+			Eventually(func() error {
+				return testEnv.Get(ctx, key, instance)
+			}, timeout).Should(BeNil())
+
+			By("setting the OwnerRef on the VSphereCluster")
+			Eventually(func() bool {
+				ph, err := patch.NewHelper(instance, testEnv)
+				Expect(err).ShouldNot(HaveOccurred())
+				instance.OwnerReferences = append(instance.OwnerReferences, metav1.OwnerReference{Kind: "Cluster", APIVersion: clusterv1.GroupVersion.String(), Name: capiCluster.Name, UID: "blah"})
+				Expect(ph.Patch(ctx, instance, patch.WithStatusObservedGeneration{})).ShouldNot(HaveOccurred())
+				return true
+			}, timeout).Should(BeTrue())
+
+			By("setting the VSphereCluster's VCenterAvailableCondition to true")
+			Eventually(func() bool {
+				if err := testEnv.Get(ctx, key, instance); err != nil {
+					return false
+				}
+				return conditions.IsTrue(instance, infrav1.VCenterAvailableCondition)
+			}, timeout).Should(BeTrue())
+
+			By("deleting the vspherecluster which has the secret with legacy finalizer")
+			Eventually(func() error {
+				return testEnv.Delete(ctx, instance)
+			}, timeout).Should(BeNil())
+			// confirm that the VSphereCluster is deleted
+			Eventually(func() bool {
+				err := testEnv.Get(ctx, key, instance)
+				return apierrors.IsNotFound(err)
+			}, timeout).Should(BeTrue())
+
+			By("checking that the secret is deleted")
+			secretKey := client.ObjectKey{Namespace: secret.Namespace, Name: secret.Name}
+			Eventually(func() bool {
+				err := testEnv.Get(ctx, secretKey, secret)
+				return apierrors.IsNotFound(err)
 			}, timeout).Should(BeTrue())
 		})
 	})
@@ -302,13 +422,7 @@ var _ = Describe("VIM based VSphere ClusterReconciler", func() {
 			var err error
 			namespace, err = testEnv.CreateNamespace(ctx, "dz-test")
 			Expect(err).NotTo(HaveOccurred())
-		})
 
-		AfterEach(func() {
-			Expect(testEnv.Cleanup(ctx, namespace, capiCluster, instance, zoneOne)).To(Succeed())
-		})
-
-		It("should reconcile a cluster", func() {
 			capiCluster = &clusterv1.Cluster{
 				ObjectMeta: metav1.ObjectMeta{
 					GenerateName: "test1-",
@@ -355,7 +469,13 @@ var _ = Describe("VIM based VSphere ClusterReconciler", func() {
 				},
 			}
 			Expect(testEnv.Create(ctx, instance)).To(Succeed())
+		})
 
+		AfterEach(func() {
+			Expect(testEnv.Cleanup(ctx, namespace, capiCluster, instance, zoneOne)).To(Succeed())
+		})
+
+		It("should reconcile a cluster", func() {
 			key := client.ObjectKey{Namespace: instance.Namespace, Name: instance.Name}
 			Eventually(func() bool {
 				if err := testEnv.Get(ctx, key, instance); err != nil {
@@ -381,6 +501,40 @@ var _ = Describe("VIM based VSphere ClusterReconciler", func() {
 				return conditions.Has(instance, infrav1.FailureDomainsAvailableCondition) &&
 					conditions.IsTrue(instance, infrav1.FailureDomainsAvailableCondition)
 			}, timeout).Should(BeTrue())
+		})
+
+		Context("when deployment zones are deleted", func() {
+			BeforeEach(func() {
+				By("Setting the status of the Deployment Zone to true")
+				Eventually(func() error {
+					ph, err := patch.NewHelper(zoneOne, testEnv)
+					Expect(err).ShouldNot(HaveOccurred())
+					zoneOne.Status.Ready = pointer.Bool(true)
+					return ph.Patch(ctx, zoneOne, patch.WithStatusObservedGeneration{})
+				}, timeout).Should(BeNil())
+			})
+
+			It("should remove the FailureDomainsAvailable condition from the cluster", func() {
+				key := client.ObjectKey{Namespace: instance.Namespace, Name: instance.Name}
+				Eventually(func() bool {
+					if err := testEnv.Get(ctx, key, instance); err != nil {
+						return false
+					}
+					return conditions.Has(instance, infrav1.FailureDomainsAvailableCondition) &&
+						conditions.IsTrue(instance, infrav1.FailureDomainsAvailableCondition)
+				}, timeout).Should(BeTrue())
+
+				By("Deleting the Deployment Zone", func() {
+					Expect(testEnv.Delete(ctx, zoneOne)).To(Succeed())
+				})
+
+				Eventually(func() bool {
+					if err := testEnv.Get(ctx, key, instance); err != nil {
+						return false
+					}
+					return conditions.Has(instance, infrav1.FailureDomainsAvailableCondition)
+				}, timeout).Should(BeFalse())
+			})
 		})
 	})
 
@@ -512,19 +666,6 @@ func TestClusterReconciler_ReconcileDeploymentZones(t *testing.T) {
 	server := "vcenter123.foo.com"
 	g := NewWithT(t)
 
-	t.Run("with no deployment zones", func(t *testing.T) {
-		controllerCtx := fake.NewControllerContext(fake.NewControllerManagerContext())
-		ctx := fake.NewClusterContext(controllerCtx)
-		ctx.VSphereCluster = &infrav1.VSphereCluster{
-			Spec: infrav1.VSphereClusterSpec{Server: server},
-		}
-
-		r := clusterReconciler{controllerCtx}
-		reconciled, err := r.reconcileDeploymentZones(ctx)
-		g.Expect(err).NotTo(HaveOccurred())
-		g.Expect(reconciled).To(BeTrue())
-	})
-
 	tests := []struct {
 		name       string
 		initObjs   []client.Object
@@ -532,14 +673,21 @@ func TestClusterReconciler_ReconcileDeploymentZones(t *testing.T) {
 		assert     func(*infrav1.VSphereCluster)
 	}{
 		{
+			name:       "with no deployment zones",
+			reconciled: true,
+			assert: func(vsphereCluster *infrav1.VSphereCluster) {
+				g.Expect(conditions.Has(vsphereCluster, infrav1.FailureDomainsAvailableCondition)).To(BeFalse())
+			},
+		},
+		{
 			name: "with deployment zone status not reported",
 			initObjs: []client.Object{
 				deploymentZone(server, "zone-1", pointer.Bool(false), nil),
 				deploymentZone(server, "zone-2", pointer.Bool(true), pointer.Bool(false)),
 			},
-			assert: func(zone *infrav1.VSphereCluster) {
-				g.Expect(conditions.IsFalse(zone, infrav1.FailureDomainsAvailableCondition)).To(BeTrue())
-				g.Expect(conditions.Get(zone, infrav1.FailureDomainsAvailableCondition).Reason).To(Equal(infrav1.WaitingForFailureDomainStatusReason))
+			assert: func(vsphereCluster *infrav1.VSphereCluster) {
+				g.Expect(conditions.IsFalse(vsphereCluster, infrav1.FailureDomainsAvailableCondition)).To(BeTrue())
+				g.Expect(conditions.Get(vsphereCluster, infrav1.FailureDomainsAvailableCondition).Reason).To(Equal(infrav1.WaitingForFailureDomainStatusReason))
 			},
 		},
 		{
@@ -549,9 +697,9 @@ func TestClusterReconciler_ReconcileDeploymentZones(t *testing.T) {
 				deploymentZone(server, "zone-1", pointer.Bool(false), pointer.Bool(false)),
 				deploymentZone(server, "zone-2", pointer.Bool(true), pointer.Bool(true)),
 			},
-			assert: func(zone *infrav1.VSphereCluster) {
-				g.Expect(conditions.IsFalse(zone, infrav1.FailureDomainsAvailableCondition)).To(BeTrue())
-				g.Expect(conditions.Get(zone, infrav1.FailureDomainsAvailableCondition).Reason).To(Equal(infrav1.FailureDomainsSkippedReason))
+			assert: func(vsphereCluster *infrav1.VSphereCluster) {
+				g.Expect(conditions.IsFalse(vsphereCluster, infrav1.FailureDomainsAvailableCondition)).To(BeTrue())
+				g.Expect(conditions.Get(vsphereCluster, infrav1.FailureDomainsAvailableCondition).Reason).To(Equal(infrav1.FailureDomainsSkippedReason))
 			},
 		},
 		{
@@ -561,8 +709,8 @@ func TestClusterReconciler_ReconcileDeploymentZones(t *testing.T) {
 				deploymentZone(server, "zone-1", pointer.Bool(false), pointer.Bool(true)),
 				deploymentZone(server, "zone-2", pointer.Bool(true), pointer.Bool(true)),
 			},
-			assert: func(zone *infrav1.VSphereCluster) {
-				g.Expect(conditions.IsTrue(zone, infrav1.FailureDomainsAvailableCondition)).To(BeTrue())
+			assert: func(vsphereCluster *infrav1.VSphereCluster) {
+				g.Expect(conditions.IsTrue(vsphereCluster, infrav1.FailureDomainsAvailableCondition)).To(BeTrue())
 			},
 		},
 	}
@@ -597,11 +745,11 @@ func deploymentZone(server, fdName string, cp, ready *bool) *infrav1.VSphereDepl
 	}
 }
 
-func startVcenter() *helpers.Simulator {
+func startVcenter() *vcsim.Simulator {
 	model := simulator.VPX()
 	model.Pool = 1
 
-	simr, err := helpers.VCSimBuilder().WithModel(model).Build()
+	simr, err := vcsim.NewBuilder().WithModel(model).Build()
 	if err != nil {
 		panic(fmt.Sprintf("unable to create simulator %s", err))
 	}

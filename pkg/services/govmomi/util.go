@@ -52,11 +52,11 @@ func sanitizeIPAddrs(ctx *context.VMContext, ipAddrs []string) []string {
 }
 
 // findVM searches for a VM in one of two ways:
-//   1. If the BIOS UUID is available, then it is used to find the VM.
-//   2. Lacking the BIOS UUID, the VM is queried by its instance UUID,
-//      which was assigned the value of the VSphereVM resource's UID string.
-//   3. If it is not found by instance UUID, fallback to an inventory path search
-//      using the vm folder path and the VSphereVM name
+//  1. If the BIOS UUID is available, then it is used to find the VM.
+//  2. Lacking the BIOS UUID, the VM is queried by its instance UUID,
+//     which was assigned the value of the VSphereVM resource's UID string.
+//  3. If it is not found by instance UUID, fallback to an inventory path search
+//     using the vm folder path and the VSphereVM name
 func findVM(ctx *context.VMContext) (types.ManagedObjectReference, error) {
 	if biosUUID := ctx.VSphereVM.Spec.BiosUUID; biosUUID != "" {
 		objRef, err := ctx.Session.FindByBIOSUUID(ctx, biosUUID)
@@ -113,10 +113,17 @@ func getTask(ctx *context.VMContext) *mo.Task {
 	return &obj
 }
 
+// reconcileInFlightTask determines if a task associated to the VSphereVM object
+// is in flight or not.
 func reconcileInFlightTask(ctx *context.VMContext) (bool, error) {
 	// Check to see if there is an in-flight task.
 	task := getTask(ctx)
+	return checkAndRetryTask(ctx, task)
+}
 
+// checkAndRetryTask verifies whether the task exists and if the
+// task should be reconciled which is determined by the task state retryAfter value set.
+func checkAndRetryTask(ctx *context.VMContext, task *mo.Task) (bool, error) {
 	// If no task was found then make sure to clear the VSphereVM
 	// resource's Status.TaskRef field.
 	if task == nil {
@@ -354,7 +361,7 @@ func waitForMacAddresses(ctx *virtualMachineContext) error {
 
 // getMacAddresses gets the MAC addresses for all network devices.
 // This happens separately from waitForMacAddresses to ensure returned order of
-// devices matches the spec and not order in which the propery changes were
+// devices matches the spec and not order in which the property changes were
 // noticed.
 func getMacAddresses(ctx *virtualMachineContext) ([]string, map[string]int, map[int]string, error) {
 	var (
@@ -383,9 +390,10 @@ func getMacAddresses(ctx *virtualMachineContext) ([]string, map[string]int, map[
 // IP address to have an IP address. This is any network device that specifies a
 // network name and DHCP for v4 or v6 or one or more static IP addresses.
 // The gocyclo detector is disabled for this function as it is difficult to
-// rewrite muchs simpler due to the maps used to track state and the lambdas
+// rewrite much simpler due to the maps used to track state and the lambdas
 // that use the maps.
-// nolint:gocyclo,gocognit
+//
+//nolint:gocyclo,gocognit
 func waitForIPAddresses(
 	ctx *virtualMachineContext,
 	macToDeviceIndex map[string]int,
@@ -436,7 +444,7 @@ func waitForIPAddresses(
 				// Get the network device spec that corresponds to the MAC.
 				deviceSpec := ctx.VSphereVM.Spec.Network.Devices[deviceSpecIndex]
 
-				// Look at each IP and determine whether or not a reconcile has
+				// Look at each IP and determine whether a reconcile has
 				// been triggered for the IP.
 				for _, discoveredIPInfo := range nic.IpConfig.IpAddress {
 					discoveredIP := discoveredIPInfo.IpAddress
@@ -558,7 +566,7 @@ func waitForIPAddresses(
 
 	// The wait function will not return true until all the VM's
 	// network devices have IP assignments that match the requested
-	// network devie specs. However, every time a new IP is discovered,
+	// network device specs. However, every time a new IP is discovered,
 	// a reconcile request will be triggered for the VSphereVM.
 	go func() {
 		if err := property.Wait(

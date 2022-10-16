@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	apiv1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -40,19 +41,14 @@ type Credentials struct {
 }
 
 func GetCredentials(ctx context.Context, c client.Client, cluster *infrav1.VSphereCluster, controllerNamespace string) (*Credentials, error) {
-	if c == nil {
-		return nil, errors.New("kubernetes client is required")
-	}
-	if cluster == nil {
-		return nil, errors.New("vsphere cluster is required")
-	}
-	ref := cluster.Spec.IdentityRef
-	if ref == nil {
-		return nil, errors.New("IdentityRef is required")
+	if err := validateInputs(c, cluster); err != nil {
+		return nil, err
 	}
 
+	ref := cluster.Spec.IdentityRef
 	secret := &apiv1.Secret{}
 	var secretKey client.ObjectKey
+
 	switch ref.Kind {
 	case infrav1.SecretKind:
 		secretKey = client.ObjectKey{
@@ -112,12 +108,40 @@ func GetCredentials(ctx context.Context, c client.Client, cluster *infrav1.VSphe
 	return credentials, nil
 }
 
+func validateInputs(c client.Client, cluster *infrav1.VSphereCluster) error {
+	if c == nil {
+		return errors.New("kubernetes client is required")
+	}
+	if cluster == nil {
+		return errors.New("vsphere cluster is required")
+	}
+	ref := cluster.Spec.IdentityRef
+	if ref == nil {
+		return errors.New("IdentityRef is required")
+	}
+	return nil
+}
+
 func IsSecretIdentity(cluster *infrav1.VSphereCluster) bool {
 	if cluster == nil || cluster.Spec.IdentityRef == nil {
 		return false
 	}
 
 	return cluster.Spec.IdentityRef.Kind == infrav1.SecretKind
+}
+
+func IsOwnedByIdentityOrCluster(ownerReferences []metav1.OwnerReference) bool {
+	if len(ownerReferences) > 0 {
+		for _, ownerReference := range ownerReferences {
+			if !strings.Contains(ownerReference.APIVersion, infrav1.GroupName+"/") {
+				continue
+			}
+			if ownerReference.Kind == "VSphereCluster" || ownerReference.Kind == "VSphereClusterIdentity" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func getData(secret *apiv1.Secret, key string) string {

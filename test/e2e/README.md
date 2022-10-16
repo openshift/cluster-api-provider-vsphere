@@ -20,7 +20,7 @@ In order to run the e2e tests the following requirements must be met:
 
 The first step to running the e2e tests is setting up the required environment variables:
 
-| Environment variable          | Description                                                                                           | Example                                                                          |
+| Environment variable          | Description                                                                         | Example                                                                          |
 | ----------------------------- | ----------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
 | `VSPHERE_SERVER`              | The IP address or FQDN of a vCenter 6.7u3 server                                    | `my.vcenter.com`                                                                 |
 | `VSPHERE_USERNAME`            | The username used to access the vSphere server                                      | `my-username`                                                                    |
@@ -36,12 +36,19 @@ The first step to running the e2e tests is setting up the required environment v
 | `CONTROL_PLANE_ENDPOINT_IP`   | The IP that kube-vip should use as a control plane endpoint                         | `10.10.123.100`                                                                  |
 | `VSPHERE_STORAGE_POLICY`      | The name of an existing vSphere storage policy to be assigned to created VMs        | `my-test-sp`                                                                     |
 
+### Flags
+
+| Flag                        | Description                                                                                                     | Default Value |
+| --------------------------- | --------------------------------------------------------------------------------------------------------------- | ------------- |
+|`SKIP_RESOURCE_CLEANUP`      | This flags skips cleanup of the resources created during the tests as well as the kind/bootstrap cluster        | `false`       |
+|`USE_EXISTING_CLUSTER`       | This flag enables the usage of an existing K8S cluster as the management cluster to run tests against.          | `false`       |
+
 ### Running the e2e tests
 
 Run the following command to execute the CAPV e2e tests:
 
 ```shell
-make e2e GC_KIND=false
+make e2e
 ```
 
 The above command should build the CAPV manager image locally and use that image with the e2e test suite.

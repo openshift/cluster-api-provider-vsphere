@@ -22,21 +22,33 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	bootstrapapi "k8s.io/cluster-bootstrap/token/api"
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
+	capiutil "sigs.k8s.io/cluster-api/util"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	vmwarev1b1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/vmware/v1beta1"
-	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/builder"
+	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/context/fake"
+	helpers "sigs.k8s.io/cluster-api-provider-vsphere/test/helpers/vmware"
 )
 
 var _ = Describe("ServiceDiscoveryReconciler ReconcileNormal", serviceDiscoveryUnitTestsReconcileNormal)
 
 func serviceDiscoveryUnitTestsReconcileNormal() {
 	var (
-		ctx         *builder.UnitTestContextForController
-		initObjects []client.Object
+		ctx            *helpers.UnitTestContextForController
+		vsphereCluster vmwarev1b1.VSphereCluster
+		initObjects    []client.Object
+		reconciler     serviceDiscoveryReconciler
 	)
+	namespace := capiutil.RandomString(6)
 	JustBeforeEach(func() {
-		ctx = serviceDiscoveryTestSuite.NewUnitTestContextForController(initObjects...)
+		vsphereCluster = fake.NewVSphereCluster(namespace)
+		ctx = helpers.NewUnitTestContextForController(namespace, &vsphereCluster, false, initObjects, nil)
+		_, err := reconciler.ReconcileNormal(ctx.GuestClusterContext)
+		Expect(err).NotTo(HaveOccurred())
+
+		// Update the VSphereCluster and its status in the fake client.
+		Expect(ctx.Client.Update(ctx, ctx.VSphereCluster)).To(Succeed())
+		Expect(ctx.Client.Status().Update(ctx, ctx.VSphereCluster)).To(Succeed())
 	})
 	JustAfterEach(func() {
 		ctx = nil

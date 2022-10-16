@@ -17,6 +17,8 @@ limitations under the License.
 package identity
 
 import (
+	"testing"
+
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
@@ -26,7 +28,7 @@ import (
 	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/manager"
 )
 
-// nolint:goconst
+//nolint:goconst
 var _ = Describe("GetCredentials", func() {
 	var (
 		ns      *corev1.Namespace
@@ -54,7 +56,26 @@ var _ = Describe("GetCredentials", func() {
 	AfterEach(func() {
 		Expect(k8sclient.Delete(ctx, ns)).To(Succeed())
 	})
-
+	Context("with checking if cluster spec identity Ref secret", func() {
+		It("should return false if cluster is nil", func() {
+			cluster = &infrav1.VSphereCluster{}
+			Expect(IsSecretIdentity(cluster)).To(BeFalse())
+		})
+		It("should return false if cluster spec identity Ref is nil", func() {
+			cluster.Spec = infrav1.VSphereClusterSpec{}
+			Expect(IsSecretIdentity(cluster)).To(BeFalse())
+		})
+		It("should return true if cluster spec identity Ref is not nil", func() {
+			credentialSecret := createSecret(cluster.Namespace)
+			cluster.Spec = infrav1.VSphereClusterSpec{
+				IdentityRef: &infrav1.VSphereIdentityReference{
+					Kind: infrav1.SecretKind,
+					Name: credentialSecret.Name,
+				},
+			}
+			Expect(IsSecretIdentity(cluster)).To(BeTrue())
+		})
+	})
 	Context("with using a secret directly", func() {
 		It("should find and return credentials from a secret within same namespace", func() {
 			credentialSecret := createSecret(cluster.Namespace)
@@ -184,21 +205,50 @@ var _ = Describe("GetCredentials", func() {
 			Expect(err).To(HaveOccurred())
 		})
 	})
+})
 
-	Context("prerequisites missing", func() {
-		It("should error if cluster is missing", func() {
-			_, err := GetCredentials(ctx, k8sclient, nil, manager.DefaultPodNamespace)
-			Expect(err).To(HaveOccurred())
-		})
+var _ = Describe("validateInputs", func() {
+	var (
+		ns      *corev1.Namespace
+		cluster *infrav1.VSphereCluster
+	)
 
+	BeforeEach(func() {
+		ns = &corev1.Namespace{
+			ObjectMeta: metav1.ObjectMeta{
+				GenerateName: "namespace-",
+			},
+		}
+		Expect(k8sclient.Create(ctx, ns)).To(Succeed())
+
+		cluster = &infrav1.VSphereCluster{
+			ObjectMeta: metav1.ObjectMeta{
+				GenerateName: "cluster-",
+				Namespace:    ns.Name,
+			},
+		}
+		Expect(k8sclient.Create(ctx, cluster)).To(Succeed())
+	})
+
+	AfterEach(func() {
+		Expect(k8sclient.Delete(ctx, ns)).To(Succeed())
+	})
+
+	Context("If the client is missing", func() {
 		It("should error if client is missing", func() {
-			_, err := GetCredentials(ctx, nil, cluster, manager.DefaultPodNamespace)
-			Expect(err).To(HaveOccurred())
+			Expect(validateInputs(nil, cluster)).NotTo(Succeed())
 		})
+	})
 
+	Context("If the cluster is missing", func() {
+		It("should error if cluster is missing", func() {
+			Expect(validateInputs(k8sclient, nil)).NotTo(Succeed())
+		})
+	})
+
+	Context("If the identityRef is missing on cluster", func() {
 		It("should error if identityRef is missing on cluster", func() {
-			_, err := GetCredentials(ctx, k8sclient, cluster, manager.DefaultPodNamespace)
-			Expect(err).To(HaveOccurred())
+			Expect(validateInputs(k8sclient, cluster)).NotTo(Succeed())
 		})
 	})
 })
@@ -238,4 +288,160 @@ func createIdentity(secretName string) *infrav1.VSphereClusterIdentity {
 	identity.Status.Ready = true
 	Expect(k8sclient.Status().Update(ctx, identity)).To(Succeed())
 	return identity
+}
+
+func TestIsOwnedByIdentityOrCluster(t *testing.T) {
+	type args struct {
+		ownerReferences []metav1.OwnerReference
+	}
+	tests := []struct {
+		name string
+		args args
+		want bool
+	}{
+		{
+			name: "No Owners",
+			args: args{
+				ownerReferences: []metav1.OwnerReference{},
+			},
+			want: false,
+		},
+		{
+			name: "Owned by external entity",
+			args: args{
+				ownerReferences: []metav1.OwnerReference{
+					{
+						APIVersion: "api",
+						Kind:       "bla",
+						Name:       "test",
+					},
+				},
+			},
+			want: false,
+		},
+		{
+			name: "Owned by external different entity",
+			args: args{
+				ownerReferences: []metav1.OwnerReference{
+					{
+						APIVersion: "api2",
+						Kind:       "bla2",
+						Name:       "tes2t",
+					},
+				},
+			},
+			want: false,
+		},
+		{
+			name: "Owned by VSphereCluster/v1beta1",
+			args: args{
+				ownerReferences: []metav1.OwnerReference{
+					{
+						APIVersion: "infrastructure.cluster.x-k8s.io/v1beta1",
+						Kind:       "VSphereCluster",
+						Name:       "tes2t",
+					},
+				},
+			},
+			want: true,
+		},
+		{
+			name: "Owned by VSphereClusterIdentity/v1beta1",
+			args: args{
+				ownerReferences: []metav1.OwnerReference{
+					{
+						APIVersion: "infrastructure.cluster.x-k8s.io/v1beta1",
+						Kind:       "VSphereClusterIdentity",
+						Name:       "tes2t",
+					},
+				},
+			},
+			want: true,
+		},
+		{
+			name: "Owned by VSphereCluster/v1alpha4",
+			args: args{
+				ownerReferences: []metav1.OwnerReference{
+					{
+						APIVersion: "infrastructure.cluster.x-k8s.io/v1alpha4",
+						Kind:       "VSphereCluster",
+						Name:       "tes2t",
+					},
+				},
+			},
+			want: true,
+		},
+		{
+			name: "Owned by VSphereClusterIdentity/v1alpha4",
+			args: args{
+				ownerReferences: []metav1.OwnerReference{
+					{
+						APIVersion: "infrastructure.cluster.x-k8s.io/v1alpha4",
+						Kind:       "VSphereClusterIdentity",
+						Name:       "tes2t",
+					},
+				},
+			},
+			want: true,
+		},
+		{
+			name: "Owned by VSphereCluster/v1alpha3",
+			args: args{
+				ownerReferences: []metav1.OwnerReference{
+					{
+						APIVersion: "infrastructure.cluster.x-k8s.io/v1alpha3",
+						Kind:       "VSphereCluster",
+						Name:       "tes2t",
+					},
+				},
+			},
+			want: true,
+		},
+		{
+			name: "Owned by VSphereClusterIdentity/v1alpha3",
+			args: args{
+				ownerReferences: []metav1.OwnerReference{
+					{
+						APIVersion: "infrastructure.cluster.x-k8s.io/v1alpha3",
+						Kind:       "VSphereClusterIdentity",
+						Name:       "tes2t",
+					},
+				},
+			},
+			want: true,
+		},
+		{
+			name: "Owned by vmware.infrastructure.cluster.x-k8s.io/VSphereCluster",
+			args: args{
+				ownerReferences: []metav1.OwnerReference{
+					{
+						APIVersion: "vmware.infrastructure.cluster.x-k8s.io/v1beta1",
+						Kind:       "VSphereCluster",
+						Name:       "tes2t",
+					},
+				},
+			},
+			want: true,
+		},
+		{
+			name: "Owned by vmware.infrastructure.cluster.x-k8s.io/VSphereClusterIdentity",
+			args: args{
+				ownerReferences: []metav1.OwnerReference{
+					{
+						APIVersion: "vmware.infrastructure.cluster.x-k8s.io/v1beta1",
+						Kind:       "VSphereClusterIdentity",
+						Name:       "tes2t",
+					},
+				},
+			},
+			want: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := IsOwnedByIdentityOrCluster(tt.args.ownerReferences); got != tt.want {
+				t.Errorf("IsOwnedByIdentityOrCluster() = %v, want %v", got, tt.want)
+			}
+		})
+	}
 }

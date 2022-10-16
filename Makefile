@@ -13,7 +13,7 @@
 # limitations under the License.
 
 # If you update this file, please follow
-# https://suva.sh/posts/well-documented-makefiles
+# https://www.thapaliya.com/en/writings/well-documented-makefiles/
 
 # Ensure Make is run with bash shell as some syntax below is bash-specific
 SHELL := /usr/bin/env bash
@@ -31,6 +31,11 @@ export GOPROXY
 
 # Active module mode, as we use go modules to manage dependencies
 export GO111MODULE := on
+
+#
+# Kubebuilder.
+#
+export KUBEBUILDER_ENVTEST_KUBERNETES_VERSION ?= 1.23.3
 
 # Directories
 ROOT_DIR:=$(shell dirname $(realpath $(firstword $(MAKEFILE_LIST))))
@@ -55,8 +60,10 @@ GOLANGCI_LINT := $(TOOLS_BIN_DIR)/golangci-lint
 GOVC := $(TOOLS_BIN_DIR)/govc
 KIND := $(TOOLS_BIN_DIR)/kind
 KUSTOMIZE := $(TOOLS_BIN_DIR)/kustomize
+SETUP_ENVTEST := $(abspath $(TOOLS_BIN_DIR)/setup-envtest)
 CONVERSION_VERIFIER := $(abspath $(TOOLS_BIN_DIR)/conversion-verifier)
-TOOLING_BINARIES := $(CONTROLLER_GEN) $(CONVERSION_GEN) $(GINKGO) $(GOLANGCI_LINT) $(GOVC) $(KIND) $(KUSTOMIZE) $(CONVERSION_VERIFIER)
+GO_APIDIFF := $(TOOLS_BIN_DIR)/go-apidiff
+TOOLING_BINARIES := $(CONTROLLER_GEN) $(CONVERSION_GEN) $(GINKGO) $(GOLANGCI_LINT) $(GOVC) $(KIND) $(KUSTOMIZE) $(CONVERSION_VERIFIER) $(GO_APIDIFF)
 ARTIFACTS_PATH := $(ROOT_DIR)/_artifacts
 
 # Set --output-base for conversion-gen if we are not within GOPATH
@@ -71,14 +78,14 @@ SUPERVISOR_CRD_ROOT ?= $(MANIFEST_ROOT)/supervisor/crd
 VMOP_CRD_ROOT ?= $(MANIFEST_ROOT)/deployments/integration-tests/crds
 WEBHOOK_ROOT ?= $(MANIFEST_ROOT)/webhook
 RBAC_ROOT ?= $(MANIFEST_ROOT)/rbac
-GC_KIND ?= true
+SKIP_RESOURCE_CLEANUP ?= false
+USE_EXISTING_CLUSTER ?= false
 RELEASE_DIR := out
 BUILD_DIR := .build
 OVERRIDES_DIR := $(HOME)/.cluster-api/overrides/infrastructure-vsphere/$(VERSION)
 
 # Architecture variables
-ARCH ?= amd64
-ALL_ARCH = amd64 arm arm64 ppc64le s390x
+ARCH ?= $(shell go env GOARCH)
 
 # Common docker variables
 IMAGE_NAME ?= manager
@@ -99,7 +106,6 @@ RELEASE_CONTROLLER_IMG := $(RELEASE_REGISTRY)/$(IMAGE_NAME)
 DEV_REGISTRY ?= gcr.io/$(shell gcloud config get-value project)
 DEV_CONTROLLER_IMG ?= $(DEV_REGISTRY)/vsphere-$(IMAGE_NAME)
 DEV_TAG ?= dev
-DEV_MANIFEST_IMG := $(DEV_CONTROLLER_IMG)-$(ARCH)
 
 # Set build time variables including git version details
 LDFLAGS := $(shell hack/version.sh)
@@ -115,22 +121,36 @@ help: ## Display this help
 ## Testing
 ## --------------------------------------
 
+KUBEBUILDER_ASSETS ?= $(shell $(SETUP_ENVTEST) use --use-env -p path $(KUBEBUILDER_ENVTEST_KUBERNETES_VERSION))
+
 .PHONY: test
-test: $(GOVC)
+test: $(SETUP_ENVTEST) $(GOVC)
 	$(MAKE) generate lint-go
-	source ./hack/fetch_ext_bins.sh; fetch_tools; setup_envs; export GOVC_BIN_PATH=$(GOVC); go test -v ./apis/... ./controllers/... ./pkg/... $(TEST_ARGS)
+	KUBEBUILDER_ASSETS="$(KUBEBUILDER_ASSETS)" GOVC_BIN_PATH=$(GOVC) go test -v ./apis/... ./controllers/... ./pkg/... $(TEST_ARGS)
+
 
 .PHONY: e2e-image
 e2e-image: ## Build the e2e manager image
-	docker build --build-arg ldflags="$(LDFLAGS)" --tag="gcr.io/k8s-staging-cluster-api/capv-manager:e2e" .
+	docker buildx build --platform linux/$(ARCH) --output=type=docker \
+		--build-arg ldflags="$(LDFLAGS)" --tag="gcr.io/k8s-staging-cluster-api/capv-manager:e2e" .
 
 .PHONY: e2e-templates
 e2e-templates: ## Generate e2e cluster templates
 	$(MAKE) release-manifests
 	cp $(RELEASE_DIR)/cluster-template.yaml $(E2E_TEMPLATE_DIR)/kustomization/base/cluster-template.yaml
-	"$(KUSTOMIZE)" build $(E2E_TEMPLATE_DIR)/kustomization/base > $(E2E_TEMPLATE_DIR)/cluster-template.yaml
-	"$(KUSTOMIZE)" build $(E2E_TEMPLATE_DIR)/kustomization/remote-management > $(E2E_TEMPLATE_DIR)/cluster-template-remote-management.yaml
-	"$(KUSTOMIZE)" build $(E2E_TEMPLATE_DIR)/kustomization/conformance > $(E2E_TEMPLATE_DIR)/cluster-template-conformance.yaml
+	"$(KUSTOMIZE)" --load-restrictor LoadRestrictionsNone build $(E2E_TEMPLATE_DIR)/kustomization/base > $(E2E_TEMPLATE_DIR)/cluster-template.yaml
+	"$(KUSTOMIZE)" --load-restrictor LoadRestrictionsNone build $(E2E_TEMPLATE_DIR)/kustomization/remote-management > $(E2E_TEMPLATE_DIR)/cluster-template-remote-management.yaml
+	"$(KUSTOMIZE)" --load-restrictor LoadRestrictionsNone build $(E2E_TEMPLATE_DIR)/kustomization/conformance > $(E2E_TEMPLATE_DIR)/cluster-template-conformance.yaml
+	# Since CAPI uses different flavor names for KCP and MD remediation using MHC
+	"$(KUSTOMIZE)" --load-restrictor LoadRestrictionsNone build $(E2E_TEMPLATE_DIR)/kustomization/mhc-remediation/kcp > $(E2E_TEMPLATE_DIR)/cluster-template-kcp-remediation.yaml
+	"$(KUSTOMIZE)" --load-restrictor LoadRestrictionsNone build $(E2E_TEMPLATE_DIR)/kustomization/mhc-remediation/md > $(E2E_TEMPLATE_DIR)/cluster-template-md-remediation.yaml
+	"$(KUSTOMIZE)" --load-restrictor LoadRestrictionsNone build $(E2E_TEMPLATE_DIR)/kustomization/node-drain > $(E2E_TEMPLATE_DIR)/cluster-template-node-drain.yaml
+	# generate clusterclass and cluster topology
+	cp $(RELEASE_DIR)/cluster-template-topology.yaml $(E2E_TEMPLATE_DIR)/kustomization/topology/cluster-template-topology.yaml
+	cp $(RELEASE_DIR)/clusterclass-template.yaml $(E2E_TEMPLATE_DIR)/clusterclass-quick-start.yaml
+	"$(KUSTOMIZE)" --load-restrictor LoadRestrictionsNone build $(E2E_TEMPLATE_DIR)/kustomization/topology > $(E2E_TEMPLATE_DIR)/cluster-template-topology.yaml
+	# for PCI passthrough template
+	"$(KUSTOMIZE)" --load-restrictor LoadRestrictionsNone build $(E2E_TEMPLATE_DIR)/kustomization/pci > $(E2E_TEMPLATE_DIR)/cluster-template-pci.yaml
 
 .PHONY: test-integration
 test-integration: e2e-image
@@ -153,7 +173,11 @@ e2e: $(GINKGO) $(KUSTOMIZE) $(KIND) $(GOVC) ## Run e2e tests
 	@echo Contents of $(TOOLS_BIN_DIR):
 	@ls $(TOOLS_BIN_DIR)
 	@echo
-	time $(GINKGO) -v  -focus="$(GINKGO_FOCUS)" $(_SKIP_ARGS) ./test/e2e -- --e2e.config="$(E2E_CONF_FILE)" --e2e.artifacts-folder="$(ARTIFACTS_PATH)"
+	time $(GINKGO) -v -focus="$(GINKGO_FOCUS)" $(_SKIP_ARGS) ./test/e2e -- \
+		--e2e.config="$(E2E_CONF_FILE)" \
+		--e2e.artifacts-folder="$(ARTIFACTS_PATH)" \
+		--e2e.skip-resource-cleanup=$(SKIP_RESOURCE_CLEANUP) \
+		--e2e.use-existing-cluster="$(USE_EXISTING_CLUSTER)"
 
 .PHONY: test-cover
 test-cover: ## Run tests with code coverage and code generate  reports
@@ -174,6 +198,9 @@ $(MANAGER): generate
 clusterctl: $(CLUSTERCTL) ## Build clusterctl binary
 $(CLUSTERCTL): go.mod
 	go build -o $@ sigs.k8s.io/cluster-api/cmd/clusterctl
+
+$(SETUP_ENVTEST): $(TOOLS_DIR)/go.mod # Build setup-envtest from tools folder.
+	cd $(TOOLS_DIR); go build -tags=tools -o $(TOOLS_BIN_DIR)/setup-envtest sigs.k8s.io/controller-runtime/tools/setup-envtest
 
 ## --------------------------------------
 ## Tooling Binaries
@@ -204,7 +231,7 @@ lint-go-full: lint-go ## Run slower linters to detect possible issues
 
 .PHONY: lint-markdown
 lint-markdown: ## Lint the project's markdown
-	docker run --rm -v "$$(pwd)":/build$(DOCKER_VOL_OPTS) gcr.io/cluster-api-provider-vsphere/extra/mdlint:0.23.2 -- /md/lint -i vendor -i contrib/haproxy/openapi .
+	docker run --rm -v "$$(pwd)":/build$(DOCKER_VOL_OPTS) gcr.io/cluster-api-provider-vsphere/extra/mdlint:0.17.0 -- /md/lint -i vendor -i contrib/haproxy/openapi .
 
 .PHONY: lint-shell
 lint-shell: ## Lint the project's shell scripts
@@ -213,6 +240,12 @@ lint-shell: ## Lint the project's shell scripts
 .PHONY: fix
 fix: GOLANGCI_LINT_FLAGS = --fast=false --fix
 fix: lint-go ## Tries to fix errors reported by lint-go-full target
+
+APIDIFF_OLD_COMMIT ?= $(shell git rev-parse origin/main)
+
+.PHONY: apidiff
+apidiff: $(GO_APIDIFF) ## Run the apidiff tool
+	$(GO_APIDIFF) $(APIDIFF_OLD_COMMIT) --print-compatible
 
 ## --------------------------------------
 ## Generate
@@ -355,15 +388,12 @@ verify-modules: modules  ## Verify go modules are up to date
 verify-conversions: $(CONVERSION_VERIFIER)  ## Verifies expected API conversion are in place
 	$(CONVERSION_VERIFIER)
 
-## --------------------------------------
-## Cleanup
-## --------------------------------------
-
 .PHONY: flavors
 flavors: $(FLAVOR_DIR)
 	go run ./packaging/flavorgen -f vip > $(FLAVOR_DIR)/cluster-template.yaml
 	go run ./packaging/flavorgen -f external-loadbalancer > $(FLAVOR_DIR)/cluster-template-external-loadbalancer.yaml
-
+	go run ./packaging/flavorgen -f cluster-class > $(FLAVOR_DIR)/clusterclass-template.yaml
+	go run ./packaging/flavorgen -f cluster-topology > $(FLAVOR_DIR)/cluster-template-topology.yaml
 
 .PHONY: release-flavors ## Create release flavor manifests
 release-flavors: release-version-check
@@ -376,6 +406,10 @@ dev-flavors:
 .PHONY: overrides ## Generates flavors as clusterctl overrides
 overrides: version-check $(OVERRIDES_DIR)
 	go run ./packaging/flavorgen -f multi-host > $(OVERRIDES_DIR)/cluster-template.yaml
+
+## --------------------------------------
+## Cleanup
+## --------------------------------------
 
 .PHONY: clean
 clean: ## Run all the clean targets
@@ -423,8 +457,14 @@ check: ## Verify and lint the project
 
 .PHONY: docker-build
 docker-build: ## Build the docker image for controller-manager
-	docker build --pull --build-arg ARCH=$(ARCH) --build-arg ldflags="$(LDFLAGS)"  . -t $(DEV_CONTROLLER_IMG):$(DEV_TAG)
+	docker buildx build --platform linux/$(ARCH) --output=type=docker \
+		--pull --build-arg ldflags="$(LDFLAGS)" \
+		-t $(DEV_CONTROLLER_IMG):$(DEV_TAG) .
 
 .PHONY: docker-push
 docker-push: ## Push the docker image
-	docker push $(DEV_CONTROLLER_IMG):$(DEV_TAG)
+	docker buildx inspect capv &>/dev/null || docker buildx create --name capv
+	docker buildx build --builder capv --platform linux/amd64,linux/arm64 --output=type=registry \
+		--pull --build-arg ldflags="$(LDFLAGS)" \
+		-t $(DEV_CONTROLLER_IMG):$(DEV_TAG) .
+	docker buildx rm capv

@@ -19,6 +19,8 @@ package test
 import (
 	goctx "context"
 	"encoding/json"
+	"fmt"
+	"os"
 	"os/exec"
 	"path"
 	"path/filepath"
@@ -32,8 +34,8 @@ import (
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	"k8s.io/klog/v2"
-	"k8s.io/klog/v2/klogr"
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1alpha3"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
@@ -58,7 +60,8 @@ var (
 func init() {
 	klog.InitFlags(nil)
 	klog.SetOutput(GinkgoWriter)
-	logf.SetLogger(klogr.New())
+	ctrl.SetLogger(klog.Background())
+	logf.SetLogger(klog.Background())
 }
 
 func TestAPIs(t *testing.T) {
@@ -102,6 +105,16 @@ func getTestEnv() (*envtest.Environment, *rest.Config) {
 }
 
 func getManager(cfg *rest.Config, networkProvider string) manager.Manager {
+	contentFmt := `username: '%s'
+	password: '%s'
+	`
+	tmpFile, err := os.CreateTemp("", "creds")
+	Expect(err).NotTo(HaveOccurred())
+
+	content := fmt.Sprintf(contentFmt, cfg.Username, cfg.Password)
+	_, err = tmpFile.Write([]byte(content))
+	Expect(err).NotTo(HaveOccurred())
+
 	opts := manager.Options{
 		Options: ctrlmgr.Options{
 			Scheme: scheme.Scheme,
@@ -113,6 +126,7 @@ func getManager(cfg *rest.Config, networkProvider string) manager.Manager {
 		},
 		KubeConfig:      cfg,
 		NetworkProvider: networkProvider,
+		CredentialsFile: tmpFile.Name(),
 	}
 
 	opts.AddToManager = func(ctx *context.ControllerManagerContext, mgr ctrlmgr.Manager) error {

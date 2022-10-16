@@ -39,7 +39,7 @@ and `VSPHERE_PASSWORD` in `kustomize_substitutions`:
 
 ## Developing in conjunction with clusterctl
 
-If you want to use clusterctl with development work, or when working from master,
+If you want to use clusterctl with development work, or when working from main,
 you will need the following:
 
 * jq
@@ -71,7 +71,7 @@ export DEV_TAG ?= dev
 The following make targets build and push a test image to your repository:
 
 ``` shell
-make docker-build docker-push
+make docker-push
 ```
 
 ### Generating clusterctl overrides

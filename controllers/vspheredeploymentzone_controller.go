@@ -226,7 +226,6 @@ func (r vsphereDeploymentZoneReconciler) getVCenterSession(ctx *context.VSphereD
 		WithDatacenter(ctx.VSphereFailureDomain.Spec.Topology.Datacenter).
 		WithUserInfo(r.ControllerContext.Username, r.ControllerContext.Password).
 		WithFeatures(session.Feature{
-			EnableKeepAlive:   r.EnableKeepAlive,
 			KeepAliveDuration: r.KeepAliveDuration,
 		})
 
@@ -267,7 +266,10 @@ func (r vsphereDeploymentZoneReconciler) reconcileDelete(ctx *context.VSphereDep
 	}
 
 	machinesUsingDeploymentZone := collections.FromMachineList(machines).Filter(collections.ActiveMachines, func(machine *clusterv1.Machine) bool {
-		return *machine.Spec.FailureDomain == ctx.VSphereDeploymentZone.Name
+		if machine.Spec.FailureDomain != nil {
+			return *machine.Spec.FailureDomain == ctx.VSphereDeploymentZone.Name
+		}
+		return false
 	})
 	if len(machinesUsingDeploymentZone) > 0 {
 		machineNamesStr := util.MachinesAsString(machinesUsingDeploymentZone.SortedByCreationTimestamp())
