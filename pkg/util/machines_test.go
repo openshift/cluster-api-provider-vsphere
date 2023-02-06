@@ -239,6 +239,7 @@ func Test_GetMachineMetadata(t *testing.T) {
 		name            string
 		machine         *infrav1.VSphereVM
 		networkStatuses []infrav1.NetworkStatus
+		ipamState       map[string]infrav1.NetworkDeviceSpec
 		expected        string
 	}{
 		{
@@ -359,6 +360,122 @@ network:
 									MACAddr:     "00:00:00:00:00",
 									DHCP4:       true,
 									DHCP6:       true,
+								},
+							},
+						},
+					},
+				},
+			},
+			expected: `
+instance-id: "test-vm"
+local-hostname: "test-vm"
+wait-on-network:
+  ipv4: true
+  ipv6: true
+network:
+  version: 2
+  ethernets:
+    id0:
+      match:
+        macaddress: "00:00:00:00:00"
+      set-name: "eth0"
+      wakeonlan: true
+      dhcp4: true
+      dhcp6: true
+`,
+		},
+		{
+			name: "dhcp4+dhcp6+dhcpOverrides",
+			machine: &infrav1.VSphereVM{
+				Spec: infrav1.VSphereVMSpec{
+					VirtualMachineCloneSpec: infrav1.VirtualMachineCloneSpec{
+						Network: infrav1.NetworkSpec{
+							Devices: []infrav1.NetworkDeviceSpec{
+								{
+									NetworkName: "network1",
+									MACAddr:     "00:00:00:00:00",
+									DHCP4:       true,
+									DHCP4Overrides: &infrav1.DHCPOverrides{
+										Hostname:     toStringPtr("hal"),
+										RouteMetric:  toIntPtr(12345),
+										SendHostname: toBoolPtr(true),
+										UseDNS:       toBoolPtr(true),
+										UseDomains:   toStringPtr("true"),
+										UseHostname:  toBoolPtr(true),
+										UseMTU:       toBoolPtr(true),
+										UseNTP:       toBoolPtr(true),
+										UseRoutes:    toStringPtr("route"),
+									},
+									DHCP6: true,
+									DHCP6Overrides: &infrav1.DHCPOverrides{
+										Hostname:     toStringPtr("hal"),
+										RouteMetric:  toIntPtr(12345),
+										SendHostname: toBoolPtr(true),
+										UseDNS:       toBoolPtr(true),
+										UseDomains:   toStringPtr("true"),
+										UseHostname:  toBoolPtr(true),
+										UseMTU:       toBoolPtr(true),
+										UseNTP:       toBoolPtr(true),
+										UseRoutes:    toStringPtr("route"),
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			expected: `
+instance-id: "test-vm"
+local-hostname: "test-vm"
+wait-on-network:
+  ipv4: true
+  ipv6: true
+network:
+  version: 2
+  ethernets:
+    id0:
+      match:
+        macaddress: "00:00:00:00:00"
+      set-name: "eth0"
+      wakeonlan: true
+      dhcp4: true
+      dhcp4-overrides:
+        hostname: "hal"
+        route-metric: 12345
+        send-hostname: true
+        use-dns: true
+        use-domains: true
+        use-hostname: true
+        use-mtu: true
+        use-ntp: true
+        use-routes: "route"
+      dhcp6: true
+      dhcp6-overrides:
+        hostname: "hal"
+        route-metric: 12345
+        send-hostname: true
+        use-dns: true
+        use-domains: true
+        use-hostname: true
+        use-mtu: true
+        use-ntp: true
+        use-routes: "route"
+`,
+		},
+		{
+			name: "dhcp4+dhcp6+noDhcpOverrides",
+			machine: &infrav1.VSphereVM{
+				Spec: infrav1.VSphereVMSpec{
+					VirtualMachineCloneSpec: infrav1.VirtualMachineCloneSpec{
+						Network: infrav1.NetworkSpec{
+							Devices: []infrav1.NetworkDeviceSpec{
+								{
+									NetworkName:    "network1",
+									MACAddr:        "00:00:00:00:00",
+									DHCP4:          true,
+									DHCP4Overrides: nil,
+									DHCP6:          true,
+									DHCP6Overrides: nil,
 								},
 							},
 						},
@@ -646,12 +763,85 @@ network:
       dhcp6: true
 `,
 		},
+		{
+			name: "ipam state is used to render metadata",
+			machine: &infrav1.VSphereVM{
+				Spec: infrav1.VSphereVMSpec{
+					VirtualMachineCloneSpec: infrav1.VirtualMachineCloneSpec{
+						Network: infrav1.NetworkSpec{
+							Devices: []infrav1.NetworkDeviceSpec{
+								{
+									NetworkName: "network1",
+									MACAddr:     "00:00:00:00:00",
+								},
+								{
+									NetworkName: "network2",
+									MACAddr:     "00:00:00:00:01",
+									DHCP4:       true,
+								},
+								{
+									NetworkName: "network3",
+									MACAddr:     "00:00:00:00:02",
+								},
+							},
+						},
+					},
+				},
+			},
+			ipamState: map[string]infrav1.NetworkDeviceSpec{
+				"00:00:00:00:00": {
+					IPAddrs: []string{
+						"10.10.50.50/24",
+					},
+					Gateway4: "10.10.50.1",
+				},
+				"00:00:00:00:02": {
+					IPAddrs: []string{
+						"fe80::3/64",
+					},
+					Gateway6: "fe80::1",
+				},
+			},
+			expected: `
+instance-id: "test-vm"
+local-hostname: "test-vm"
+wait-on-network:
+  ipv4: true
+  ipv6: false
+network:
+  version: 2
+  ethernets:
+    id0:
+      match:
+        macaddress: "00:00:00:00:00"
+      set-name: "eth0"
+      wakeonlan: true
+      addresses:
+      - "10.10.50.50/24"
+      gateway4: "10.10.50.1"
+    id1:
+      match:
+        macaddress: "00:00:00:00:01"
+      set-name: "eth1"
+      wakeonlan: true
+      dhcp4: true
+      dhcp6: false
+    id2:
+      match:
+        macaddress: "00:00:00:00:02"
+      set-name: "eth2"
+      wakeonlan: true
+      addresses:
+      - "fe80::3/64"
+      gateway6: "fe80::1"
+`,
+		},
 	}
 	for _, tc := range testCases {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			tc.machine.Name = tc.name
-			actVal, err := util.GetMachineMetadata("test-vm", *tc.machine, tc.networkStatuses...)
+			actVal, err := util.GetMachineMetadata("test-vm", *tc.machine, tc.ipamState, tc.networkStatuses...)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -866,7 +1056,7 @@ func Test_GetVSphereClusterFromVSphereMachine(t *testing.T) {
 			g := gomega.NewGomegaWithT(t)
 
 			client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(tt.initObjects...).Build()
-			_, err := util.GetVSphereClusterFromVSphereMachine(context.Background(), client, tt.inputMachine)
+			_, err := util.GetVSphereClusterFromVMwareMachine(context.Background(), client, tt.inputMachine)
 			if tt.hasError {
 				g.Expect(err).To(gomega.HaveOccurred())
 			} else {
@@ -885,4 +1075,12 @@ func mtu(i int64) *int64 {
 
 func toStringPtr(s string) *string {
 	return &s
+}
+
+func toBoolPtr(b bool) *bool {
+	return &b
+}
+
+func toIntPtr(i int) *int {
+	return &i
 }

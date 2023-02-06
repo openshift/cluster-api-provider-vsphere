@@ -20,6 +20,7 @@ package v1beta1
 import (
 	"fmt"
 
+	corev1 "k8s.io/api/core/v1"
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 )
 
@@ -165,11 +166,16 @@ type VirtualMachineCloneSpec struct {
 	// PciDevices is the list of pci devices used by the virtual machine.
 	// +optional
 	PciDevices []PCIDeviceSpec `json:"pciDevices,omitempty"`
-
 	// OS is the Operating System of the virtual machine
 	// Defaults to Linux
 	// +optional
 	OS OS `json:"os,omitempty"`
+	// HardwareVersion is the hardware version of the virtual machine.
+	// Defaults to the eponymous property value in the template from which the
+	// virtual machine is cloned.
+	// Check the compatibility with the ESXi version before setting the value.
+	// +optional
+	HardwareVersion string `json:"hardwareVersion,omitempty"`
 }
 
 // VSphereMachineTemplateResource describes the data needed to create a VSphereMachine from a template
@@ -311,6 +317,77 @@ type NetworkDeviceSpec struct {
 	// addresses with DNS.
 	// +optional
 	SearchDomains []string `json:"searchDomains,omitempty"`
+
+	// AddressesFromPools is a list of IPAddressPools that should be assigned
+	// to IPAddressClaims. The machine's cloud-init metadata will be populated
+	// with IPAddresses fulfilled by an IPAM provider.
+	// +optional
+	AddressesFromPools []corev1.TypedLocalObjectReference `json:"addressesFromPools,omitempty"`
+
+	// DHCP4Overrides allows for the control over several DHCP behaviors.
+	// Overrides will only be applied when the corresponding DHCP flag is set.
+	// Only configured values will be sent, omitted values will default to
+	// distribution defaults.
+	// Dependent on support in the network stack for your distribution.
+	// For more information see the netplan reference (https://netplan.io/reference#dhcp-overrides)
+	// +optional
+	DHCP4Overrides *DHCPOverrides `json:"dhcp4Overrides,omitempty"`
+
+	// DHCP6Overrides allows for the control over several DHCP behaviors.
+	// Overrides will only be applied when the corresponding DHCP flag is set.
+	// Only configured values will be sent, omitted values will default to
+	// distribution defaults.
+	// Dependent on support in the network stack for your distribution.
+	// For more information see the netplan reference (https://netplan.io/reference#dhcp-overrides)
+	// +optional
+	DHCP6Overrides *DHCPOverrides `json:"dhcp6Overrides,omitempty"`
+}
+
+// DHCPOverrides allows for the control over several DHCP behaviors.
+// Overrides will only be applied when the corresponding DHCP flag is set.
+// Only configured values will be sent, omitted values will default to
+// distribution defaults.
+// Dependent on support in the network stack for your distribution.
+// For more information see the netplan reference (https://netplan.io/reference#dhcp-overrides)
+type DHCPOverrides struct {
+	// Hostname is the name which will be sent to the DHCP server instead of
+	// the machine's hostname.
+	// +optional
+	Hostname *string `json:"hostname,omitempty"`
+	// RouteMetric is used to prioritize routes for devices. A lower metric for
+	// an interface will have a higher priority.
+	// +optional
+	RouteMetric *int `json:"routeMetric,omitempty"`
+	// SendHostname when `true`, the hostname of the machine will be sent to the
+	// DHCP server.
+	// +optional
+	SendHostname *bool `json:"sendHostname,omitempty"`
+	// UseDNS when `true`, the DNS servers in the DHCP server will be used and
+	// take precedence.
+	// +optional
+	UseDNS *bool `json:"useDNS,omitempty"`
+	// UseDomains can take the values `true`, `false`, or `route`. When `true`,
+	// the domain name from the DHCP server will be used as the DNS search
+	// domain for this device. When `route`, the domain name from the DHCP
+	// response will be used for routing DNS only, not for searching.
+	// +optional
+	UseDomains *string `json:"useDomains,omitempty"`
+	// UseHostname when `true`, the hostname from the DHCP server will be set
+	// as the transient hostname of the machine.
+	// +optional
+	UseHostname *bool `json:"useHostname,omitempty"`
+	// UseMTU when `true`, the MTU from the DHCP server will be set as the
+	// MTU of the device.
+	// +optional
+	UseMTU *bool `json:"useMTU,omitempty"`
+	// UseNTP when `true`, the NTP servers from the DHCP server will be used
+	// by systemd-timesyncd and take precedence.
+	// +optional
+	UseNTP *bool `json:"useNTP,omitempty"`
+	// UseRoutes when `true`, the routes from the DHCP server will be installed
+	// in the routing table.
+	// +optional
+	UseRoutes *string `json:"useRoutes,omitempty"`
 }
 
 // NetworkRouteSpec defines a static network route.

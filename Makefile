@@ -43,6 +43,7 @@ BIN_DIR := $(ROOT_DIR)/bin
 TOOLS_DIR := $(ROOT_DIR)/hack/tools
 TOOLS_BIN_DIR := $(TOOLS_DIR)/bin
 export PATH := $(abspath $(TOOLS_BIN_DIR)):$(PATH)
+FLAVOR_DIR := $(ROOT_DIR)/templates
 
 E2E_CONF_FILE  ?= "$(abspath test/e2e/config/vsphere-dev.yaml)"
 INTEGRATION_CONF_FILE ?= "$(abspath test/integration/integration-dev.yaml)"
@@ -63,7 +64,8 @@ KUSTOMIZE := $(TOOLS_BIN_DIR)/kustomize
 SETUP_ENVTEST := $(abspath $(TOOLS_BIN_DIR)/setup-envtest)
 CONVERSION_VERIFIER := $(abspath $(TOOLS_BIN_DIR)/conversion-verifier)
 GO_APIDIFF := $(TOOLS_BIN_DIR)/go-apidiff
-TOOLING_BINARIES := $(CONTROLLER_GEN) $(CONVERSION_GEN) $(GINKGO) $(GOLANGCI_LINT) $(GOVC) $(KIND) $(KUSTOMIZE) $(CONVERSION_VERIFIER) $(GO_APIDIFF)
+RELEASE_NOTES := $(TOOLS_BIN_DIR)/release-notes
+TOOLING_BINARIES := $(CONTROLLER_GEN) $(CONVERSION_GEN) $(GINKGO) $(GOLANGCI_LINT) $(GOVC) $(KIND) $(KUSTOMIZE) $(CONVERSION_VERIFIER) $(GO_APIDIFF) $(RELEASE_NOTES)
 ARTIFACTS_PATH := $(ROOT_DIR)/_artifacts
 
 # Set --output-base for conversion-gen if we are not within GOPATH
@@ -139,18 +141,23 @@ e2e-templates: ## Generate e2e cluster templates
 	$(MAKE) release-manifests
 	cp $(RELEASE_DIR)/cluster-template.yaml $(E2E_TEMPLATE_DIR)/kustomization/base/cluster-template.yaml
 	"$(KUSTOMIZE)" --load-restrictor LoadRestrictionsNone build $(E2E_TEMPLATE_DIR)/kustomization/base > $(E2E_TEMPLATE_DIR)/cluster-template.yaml
+	"$(KUSTOMIZE)" --load-restrictor LoadRestrictionsNone build $(E2E_TEMPLATE_DIR)/kustomization/hw-upgrade > $(E2E_TEMPLATE_DIR)/cluster-template-hw-upgrade.yaml
+	"$(KUSTOMIZE)" --load-restrictor LoadRestrictionsNone build $(E2E_TEMPLATE_DIR)/kustomization/storage-policy > $(E2E_TEMPLATE_DIR)/cluster-template-storage-policy.yaml
 	"$(KUSTOMIZE)" --load-restrictor LoadRestrictionsNone build $(E2E_TEMPLATE_DIR)/kustomization/remote-management > $(E2E_TEMPLATE_DIR)/cluster-template-remote-management.yaml
 	"$(KUSTOMIZE)" --load-restrictor LoadRestrictionsNone build $(E2E_TEMPLATE_DIR)/kustomization/conformance > $(E2E_TEMPLATE_DIR)/cluster-template-conformance.yaml
 	# Since CAPI uses different flavor names for KCP and MD remediation using MHC
 	"$(KUSTOMIZE)" --load-restrictor LoadRestrictionsNone build $(E2E_TEMPLATE_DIR)/kustomization/mhc-remediation/kcp > $(E2E_TEMPLATE_DIR)/cluster-template-kcp-remediation.yaml
 	"$(KUSTOMIZE)" --load-restrictor LoadRestrictionsNone build $(E2E_TEMPLATE_DIR)/kustomization/mhc-remediation/md > $(E2E_TEMPLATE_DIR)/cluster-template-md-remediation.yaml
 	"$(KUSTOMIZE)" --load-restrictor LoadRestrictionsNone build $(E2E_TEMPLATE_DIR)/kustomization/node-drain > $(E2E_TEMPLATE_DIR)/cluster-template-node-drain.yaml
+	"$(KUSTOMIZE)" --load-restrictor LoadRestrictionsNone build $(E2E_TEMPLATE_DIR)/kustomization/ignition > $(E2E_TEMPLATE_DIR)/cluster-template-ignition.yaml
 	# generate clusterclass and cluster topology
 	cp $(RELEASE_DIR)/cluster-template-topology.yaml $(E2E_TEMPLATE_DIR)/kustomization/topology/cluster-template-topology.yaml
 	cp $(RELEASE_DIR)/clusterclass-template.yaml $(E2E_TEMPLATE_DIR)/clusterclass-quick-start.yaml
 	"$(KUSTOMIZE)" --load-restrictor LoadRestrictionsNone build $(E2E_TEMPLATE_DIR)/kustomization/topology > $(E2E_TEMPLATE_DIR)/cluster-template-topology.yaml
 	# for PCI passthrough template
 	"$(KUSTOMIZE)" --load-restrictor LoadRestrictionsNone build $(E2E_TEMPLATE_DIR)/kustomization/pci > $(E2E_TEMPLATE_DIR)/cluster-template-pci.yaml
+	# for DHCP overrides
+	"$(KUSTOMIZE)" --load-restrictor LoadRestrictionsNone build $(E2E_TEMPLATE_DIR)/kustomization/dhcp-overrides > $(E2E_TEMPLATE_DIR)/cluster-template-dhcp-overrides.yaml
 
 .PHONY: test-integration
 test-integration: e2e-image
@@ -260,6 +267,7 @@ modules: ## Runs go mod to ensure proper vendoring
 generate: ## Generate code
 	$(MAKE) generate-go
 	$(MAKE) generate-manifests
+	$(MAKE) generate-flavors
 
 .PHONY: generate-go
 generate-go: $(CONTROLLER_GEN) $(CONVERSION_GEN) ## Runs Go related generate targets
@@ -297,6 +305,14 @@ generate-manifests: $(CONTROLLER_GEN) ## Generate manifests e.g. CRD, RBAC etc.
 		paths=github.com/vmware-tanzu/vm-operator-api/api/... \
 		crd:crdVersions=v1 \
 		output:crd:dir=$(VMOP_CRD_ROOT)
+
+.PHONY: generate-flavors
+generate-flavors: $(FLAVOR_DIR)
+	go run ./packaging/flavorgen -f vip > $(FLAVOR_DIR)/cluster-template.yaml
+	go run ./packaging/flavorgen -f external-loadbalancer > $(FLAVOR_DIR)/cluster-template-external-loadbalancer.yaml
+	go run ./packaging/flavorgen -f cluster-class > $(FLAVOR_DIR)/clusterclass-template.yaml
+	go run ./packaging/flavorgen -f cluster-topology > $(FLAVOR_DIR)/cluster-template-topology.yaml
+	go run ./packaging/flavorgen -f ignition > $(FLAVOR_DIR)/cluster-template-ignition.yaml
 ## --------------------------------------
 ## Release
 ## --------------------------------------
@@ -346,6 +362,10 @@ manifests:  $(STAGE)-version-check $(STAGE)-flavors $(MANIFEST_DIR) $(BUILD_DIR)
 	"$(KUSTOMIZE)" build $(BUILD_DIR)/config/default > $(MANIFEST_DIR)/infrastructure-components.yaml
 	"$(KUSTOMIZE)" build $(BUILD_DIR)/config/supervisor > $(MANIFEST_DIR)/infrastructure-components-supervisor.yaml
 
+.PHONY: generate-release-notes
+generate-release-notes: $(TOOLING_BINARIES)
+	"$(RELEASE_NOTES)" --project kubernetes-sigs/cluster-api-provider-vsphere --branch $(release_branch) --from $(previous_release_tag_or_commit) --r $(release_type) --show-others docs,infra
+
 ## --------------------------------------
 ## Verification
 ## --------------------------------------
@@ -370,7 +390,7 @@ verify-crds: ## Verifies the committed CRDs are up-to-date
 verify-gen: generate  ## Verfiy go generated files are up to date
 	@if !(git diff --quiet HEAD); then \
 		git diff; \
-		echo "generated files are out of date, run make generate"; exit 1; \
+		echo "generated files are out of date, run make generate and commit the result"; exit 1; \
 	fi
 
 .PHONY: verify-modules
@@ -388,20 +408,13 @@ verify-modules: modules  ## Verify go modules are up to date
 verify-conversions: $(CONVERSION_VERIFIER)  ## Verifies expected API conversion are in place
 	$(CONVERSION_VERIFIER)
 
-.PHONY: flavors
-flavors: $(FLAVOR_DIR)
-	go run ./packaging/flavorgen -f vip > $(FLAVOR_DIR)/cluster-template.yaml
-	go run ./packaging/flavorgen -f external-loadbalancer > $(FLAVOR_DIR)/cluster-template-external-loadbalancer.yaml
-	go run ./packaging/flavorgen -f cluster-class > $(FLAVOR_DIR)/clusterclass-template.yaml
-	go run ./packaging/flavorgen -f cluster-topology > $(FLAVOR_DIR)/cluster-template-topology.yaml
-
 .PHONY: release-flavors ## Create release flavor manifests
 release-flavors: release-version-check
-	$(MAKE) flavors FLAVOR_DIR=$(RELEASE_DIR)
+	$(MAKE) generate-flavors FLAVOR_DIR=$(RELEASE_DIR)
 
 .PHONY: dev-flavors ## Create release flavor manifests
 dev-flavors:
-	$(MAKE) flavors FLAVOR_DIR=$(OVERRIDES_DIR)
+	$(MAKE) generate-flavors FLAVOR_DIR=$(OVERRIDES_DIR)
 
 .PHONY: overrides ## Generates flavors as clusterctl overrides
 overrides: version-check $(OVERRIDES_DIR)

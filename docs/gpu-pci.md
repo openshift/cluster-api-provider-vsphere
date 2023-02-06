@@ -15,7 +15,7 @@ Before we begin, a couple of important things of note:
 
 Let's create a CAPV cluster with GPU enabled via PCI passthrough mode and run a GPU-powered vector calculation.
 
-### Pre-requisities
+### Prerequisites
 
 - Enable Passthrough for the GPU device on the ESXi Host
   - Browse to a host in the vSphere Client navigator.
@@ -60,7 +60,7 @@ We are using Nvidia Tesla T4 cards for the purpose of this example.
 
 ```shell
 $ make dev-flavors
-/Library/Developer/CommandLineTools/usr/bin/make flavors FLAVOR_DIR=/Users/muchhals/.cluster-api/overrides/infrastructure-vsphere/v1.4.0
+/Library/Developer/CommandLineTools/usr/bin/make generate-flavors FLAVOR_DIR=/Users/muchhals/.cluster-api/overrides/infrastructure-vsphere/v1.4.0
 go run ./packaging/flavorgen -f vip > /Users/muchhals/.cluster-api/overrides/infrastructure-vsphere/v1.4.0/cluster-template.yaml
 ```
 

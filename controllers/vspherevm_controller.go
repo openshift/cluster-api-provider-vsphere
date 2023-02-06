@@ -28,8 +28,10 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	apitypes "k8s.io/apimachinery/pkg/types"
+	"k8s.io/utils/pointer"
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	"sigs.k8s.io/cluster-api/controllers/remote"
+	ipamv1 "sigs.k8s.io/cluster-api/exp/ipam/api/v1alpha1"
 	clusterutilv1 "sigs.k8s.io/cluster-api/util"
 	"sigs.k8s.io/cluster-api/util/annotations"
 	"sigs.k8s.io/cluster-api/util/conditions"
@@ -46,6 +48,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/source"
 
 	infrav1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/v1beta1"
+	"sigs.k8s.io/cluster-api-provider-vsphere/feature"
+	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/clustermodule"
 	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/context"
 	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/identity"
 	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/record"
@@ -57,9 +61,15 @@ import (
 
 // +kubebuilder:rbac:groups=infrastructure.cluster.x-k8s.io,resources=vspherevms,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=infrastructure.cluster.x-k8s.io,resources=vspherevms/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=cluster.x-k8s.io,resources=machinedeployments;machinesets,verbs=get;list;watch
+// +kubebuilder:rbac:groups=controlplane.cluster.x-k8s.io,resources=kubeadmcontrolplanes,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=events,verbs=get;list;watch;create;update;patch
+// +kubebuilder:rbac:groups=core,resources=nodes,verbs=get;list;delete
+// +kubebuilder:rbac:groups=ipam.cluster.x-k8s.io,resources=ipaddressclaims,verbs=get;create;update;watch;list
+// +kubebuilder:rbac:groups=ipam.cluster.x-k8s.io,resources=ipaddresses,verbs=get;list;watch
 
 // AddVMControllerToManager adds the VM controller to the provided manager.
+//
 //nolint:forcetypeassert
 func AddVMControllerToManager(ctx *context.ControllerManagerContext, mgr manager.Manager) error {
 	var (
@@ -78,7 +88,10 @@ func AddVMControllerToManager(ctx *context.ControllerManagerContext, mgr manager
 		Recorder:                 record.New(mgr.GetEventRecorderFor(controllerNameLong)),
 		Logger:                   ctx.Logger.WithName(controllerNameShort),
 	}
-	r := vmReconciler{ControllerContext: controllerContext}
+	r := vmReconciler{
+		ControllerContext: controllerContext,
+		VMService:         &govmomi.VMService{},
+	}
 	controller, err := ctrl.NewControllerManagedBy(mgr).
 		// Watch the controlled, infrastructure resource.
 		For(controlledType).
@@ -116,11 +129,30 @@ func AddVMControllerToManager(ctx *context.ControllerManagerContext, mgr manager
 	if err != nil {
 		return err
 	}
+
+	err = controller.Watch(
+		&source.Kind{Type: &infrav1.VSphereCluster{}},
+		handler.EnqueueRequestsFromMapFunc(r.vsphereClusterToVSphereVMs),
+		predicate.Funcs{
+			UpdateFunc: func(e event.UpdateEvent) bool {
+				oldCluster := e.ObjectOld.(*infrav1.VSphereCluster)
+				newCluster := e.ObjectNew.(*infrav1.VSphereCluster)
+				return !clustermodule.Compare(oldCluster.Spec.ClusterModules, newCluster.Spec.ClusterModules)
+			},
+			CreateFunc:  func(e event.CreateEvent) bool { return false },
+			DeleteFunc:  func(e event.DeleteEvent) bool { return false },
+			GenericFunc: func(e event.GenericEvent) bool { return false },
+		})
+	if err != nil {
+		return err
+	}
 	return nil
 }
 
 type vmReconciler struct {
 	*context.ControllerContext
+
+	VMService services.VirtualMachineService
 }
 
 // Reconcile ensures the back-end state reflects the Kubernetes resource state intent.
@@ -161,6 +193,12 @@ func (r vmReconciler) Reconcile(ctx goctx.Context, req ctrl.Request) (_ ctrl.Res
 	// preventing vspheremachine_controller from setting the ownerref
 	if err != nil || vsphereMachine == nil {
 		r.Logger.Info("Owner VSphereMachine not found, won't reconcile", "key", req.NamespacedName)
+		return reconcile.Result{}, nil
+	}
+
+	vsphereCluster, err := util.GetVSphereClusterFromVSphereMachine(r, r.Client, vsphereMachine)
+	if err != nil || vsphereCluster == nil {
+		r.Logger.Info("VSphereCluster not found, won't reconcile", "key", ctrlclient.ObjectKeyFromObject(vsphereMachine))
 		return reconcile.Result{}, nil
 	}
 
@@ -236,23 +274,43 @@ func (r vmReconciler) Reconcile(ctx goctx.Context, req ctrl.Request) (_ ctrl.Res
 		}
 	}
 
+	return r.reconcile(vmContext, fetchClusterModuleInput{
+		VSphereCluster: vsphereCluster,
+		Machine:        machine,
+	})
+}
+
+// reconcile encases the behavior of the controller around cluster module information
+// retrieval depending upon inputs passed.
+//
+// This logic was moved to a smaller function outside of the main Reconcile() loop
+// for the ease of testing.
+func (r vmReconciler) reconcile(ctx *context.VMContext, input fetchClusterModuleInput) (reconcile.Result, error) {
+	if feature.Gates.Enabled(feature.NodeAntiAffinity) {
+		clusterModuleInfo, err := r.fetchClusterModuleInfo(input)
+		// If cluster module information cannot be fetched for a VM being deleted,
+		// we should not block VM deletion since the cluster module is updated
+		// once the VM gets removed.
+		if err != nil && ctx.VSphereVM.ObjectMeta.DeletionTimestamp.IsZero() {
+			return reconcile.Result{}, err
+		}
+		ctx.ClusterModuleInfo = clusterModuleInfo
+	}
+
 	// Handle deleted machines
-	if !vsphereVM.ObjectMeta.DeletionTimestamp.IsZero() {
-		return r.reconcileDelete(vmContext)
+	if !ctx.VSphereVM.ObjectMeta.DeletionTimestamp.IsZero() {
+		return r.reconcileDelete(ctx)
 	}
 
 	// Handle non-deleted machines
-	return r.reconcileNormal(vmContext)
+	return r.reconcileNormal(ctx)
 }
 
 func (r vmReconciler) reconcileDelete(ctx *context.VMContext) (reconcile.Result, error) {
 	ctx.Logger.Info("Handling deleted VSphereVM")
 
-	// TODO(akutz) Implement selection of VM service based on vSphere version
-	var vmService services.VirtualMachineService = &govmomi.VMService{}
-
 	conditions.MarkFalse(ctx.VSphereVM, infrav1.VMProvisionedCondition, clusterv1.DeletingReason, clusterv1.ConditionSeverityInfo, "")
-	vm, err := vmService.DestroyVM(ctx)
+	vm, err := r.VMService.DestroyVM(ctx)
 	if err != nil {
 		conditions.MarkFalse(ctx.VSphereVM, infrav1.VMProvisionedCondition, "DeletionFailed", clusterv1.ConditionSeverityWarning, err.Error())
 		return reconcile.Result{}, errors.Wrapf(err, "failed to destroy VM")
@@ -268,6 +326,31 @@ func (r vmReconciler) reconcileDelete(ctx *context.VMContext) (reconcile.Result,
 	err = r.deleteNode(ctx, vm.Name)
 	if err != nil {
 		r.Logger.V(6).Info("unable to delete node", "err", err)
+	}
+
+	// Remove finalizers from any ipam claims
+	for devIdx, device := range ctx.VSphereVM.Spec.Network.Devices {
+		for poolRefIdx := range device.AddressesFromPools {
+			// check if claim exists
+			ipAddrClaim := &ipamv1.IPAddressClaim{}
+			ipAddrClaimName := govmomi.IPAddressClaimName(ctx.VSphereVM.Name, devIdx, poolRefIdx)
+			ctx.Logger.Info("removing finalizer", "IPAddressClaim", ipAddrClaimName)
+			ipAddrClaimKey := apitypes.NamespacedName{
+				Namespace: ctx.VSphereVM.Namespace,
+				Name:      ipAddrClaimName,
+			}
+			if err := ctx.Client.Get(ctx, ipAddrClaimKey, ipAddrClaim); err != nil {
+				if apierrors.IsNotFound(err) {
+					continue
+				}
+				return reconcile.Result{}, errors.Wrapf(err, fmt.Sprintf("failed to find IPAddressClaim %q to remove the finalizer", ipAddrClaimName))
+			}
+			if ctrlutil.RemoveFinalizer(ipAddrClaim, infrav1.IPAddressClaimFinalizer) {
+				if err := ctx.Client.Update(ctx, ipAddrClaim); err != nil {
+					return reconcile.Result{}, errors.Wrapf(err, fmt.Sprintf("failed to update IPAddressClaim %q", ipAddrClaimName))
+				}
+			}
+		}
 	}
 
 	// The VM is deleted so remove the finalizer.
@@ -311,9 +394,6 @@ func (r vmReconciler) reconcileNormal(ctx *context.VMContext) (reconcile.Result,
 	// If the VSphereVM doesn't have our finalizer, add it.
 	ctrlutil.AddFinalizer(ctx.VSphereVM, infrav1.VMFinalizer)
 
-	// TODO(akutz) Implement selection of VM service based on vSphere version
-	var vmService services.VirtualMachineService = &govmomi.VMService{}
-
 	if r.isWaitingForStaticIPAllocation(ctx) {
 		conditions.MarkFalse(ctx.VSphereVM, infrav1.VMProvisionedCondition, infrav1.WaitingForStaticIPAllocationReason, clusterv1.ConditionSeverityInfo, "")
 		ctx.Logger.Info("vm is waiting for static ip to be available")
@@ -321,8 +401,9 @@ func (r vmReconciler) reconcileNormal(ctx *context.VMContext) (reconcile.Result,
 	}
 
 	// Get or create the VM.
-	vm, err := vmService.ReconcileVM(ctx)
+	vm, err := r.VMService.ReconcileVM(ctx)
 	if err != nil {
+		ctx.Logger.Error(err, "error reconciling VM")
 		return reconcile.Result{}, errors.Wrapf(err, "failed to reconcile VM")
 	}
 
@@ -350,6 +431,7 @@ func (r vmReconciler) reconcileNormal(ctx *context.VMContext) (reconcile.Result,
 
 	// we didn't get any addresses, requeue
 	if len(ctx.VSphereVM.Status.Addresses) == 0 {
+		conditions.MarkFalse(ctx.VSphereVM, infrav1.VMProvisionedCondition, infrav1.WaitingForIPAllocationReason, clusterv1.ConditionSeverityInfo, "")
 		return reconcile.Result{RequeueAfter: 10 * time.Second}, nil
 	}
 
@@ -364,11 +446,11 @@ func (r vmReconciler) reconcileNormal(ctx *context.VMContext) (reconcile.Result,
 // isWaitingForStaticIPAllocation checks whether the VM should wait for a static IP
 // to be allocated.
 // It checks the state of both DHCP4 and DHCP6 for all the network devices and if
-// any static IP addresses are specified.
+// any static IP addresses or IPAM Pools are specified.
 func (r vmReconciler) isWaitingForStaticIPAllocation(ctx *context.VMContext) bool {
 	devices := ctx.VSphereVM.Spec.Network.Devices
 	for _, dev := range devices {
-		if !dev.DHCP4 && !dev.DHCP6 && len(dev.IPAddrs) == 0 {
+		if !dev.DHCP4 && !dev.DHCP6 && len(dev.IPAddrs) == 0 && len(dev.AddressesFromPools) == 0 {
 			// Static IP is not available yet
 			return true
 		}
@@ -386,7 +468,7 @@ func (r vmReconciler) reconcileNetwork(ctx *context.VMContext, vm infrav1.Virtua
 	ctx.VSphereVM.Status.Addresses = ipAddrs
 }
 
-func (r *vmReconciler) clusterToVSphereVMs(a ctrlclient.Object) []reconcile.Request {
+func (r vmReconciler) clusterToVSphereVMs(a ctrlclient.Object) []reconcile.Request {
 	requests := []reconcile.Request{}
 	vms := &infrav1.VSphereVMList{}
 	err := r.Client.List(goctx.Background(), vms, ctrlclient.MatchingLabels(
@@ -409,7 +491,39 @@ func (r *vmReconciler) clusterToVSphereVMs(a ctrlclient.Object) []reconcile.Requ
 	return requests
 }
 
-func (r *vmReconciler) retrieveVcenterSession(ctx goctx.Context, vsphereVM *infrav1.VSphereVM) (*session.Session, error) {
+func (r vmReconciler) vsphereClusterToVSphereVMs(a ctrlclient.Object) []reconcile.Request {
+	vsphereCluster, ok := a.(*infrav1.VSphereCluster)
+	if !ok {
+		return nil
+	}
+	clusterName, ok := vsphereCluster.Labels[clusterv1.ClusterLabelName]
+	if !ok {
+		return nil
+	}
+
+	requests := []reconcile.Request{}
+	vms := &infrav1.VSphereVMList{}
+	err := r.Client.List(goctx.Background(), vms, ctrlclient.MatchingLabels(
+		map[string]string{
+			clusterv1.ClusterLabelName: clusterName,
+		},
+	))
+	if err != nil {
+		return requests
+	}
+	for _, vm := range vms.Items {
+		r := reconcile.Request{
+			NamespacedName: apitypes.NamespacedName{
+				Name:      vm.Name,
+				Namespace: vm.Namespace,
+			},
+		}
+		requests = append(requests, r)
+	}
+	return requests
+}
+
+func (r vmReconciler) retrieveVcenterSession(ctx goctx.Context, vsphereVM *infrav1.VSphereVM) (*session.Session, error) {
 	// Get cluster object and then get VSphereCluster object
 
 	params := session.NewParams().
@@ -452,4 +566,47 @@ func (r *vmReconciler) retrieveVcenterSession(ctx goctx.Context, vsphereVM *infr
 	// Fallback to using credentials provided to the manager
 	return session.GetOrCreate(r.Context,
 		params)
+}
+
+func (r vmReconciler) fetchClusterModuleInfo(clusterModInput fetchClusterModuleInput) (*string, error) {
+	var (
+		owner ctrlclient.Object
+		err   error
+	)
+	machine := clusterModInput.Machine
+	logger := r.Logger.WithName(machine.Namespace).WithName(machine.Name)
+
+	input := util.FetchObjectInput{
+		Context: r.Context,
+		Client:  r.Client,
+		Object:  machine,
+	}
+	// TODO (srm09): Figure out a way to find the latest version of the CRD
+	if util.IsControlPlaneMachine(machine) {
+		owner, err = util.FetchControlPlaneOwnerObject(input)
+	} else {
+		owner, err = util.FetchMachineDeploymentOwnerObject(input)
+	}
+	if err != nil {
+		// If the owner objects cannot be traced, we can assume that the objects
+		// have been deleted in which case we do not want cluster module info populated
+		if apierrors.IsNotFound(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	for _, mod := range clusterModInput.VSphereCluster.Spec.ClusterModules {
+		if mod.TargetObjectName == owner.GetName() {
+			logger.Info("cluster module with UUID found", "moduleUUID", mod.ModuleUUID)
+			return pointer.String(mod.ModuleUUID), nil
+		}
+	}
+	logger.V(4).Info("no cluster module found")
+	return nil, nil
+}
+
+type fetchClusterModuleInput struct {
+	VSphereCluster *infrav1.VSphereCluster
+	Machine        *clusterv1.Machine
 }

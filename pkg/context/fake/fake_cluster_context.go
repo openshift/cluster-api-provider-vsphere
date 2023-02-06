@@ -73,6 +73,7 @@ func newVSphereCluster(owner clusterv1.Cluster) infrav1.VSphereCluster {
 			Namespace: owner.Namespace,
 			Name:      owner.Name,
 			UID:       VSphereClusterUUID,
+			Labels:    map[string]string{clusterv1.ClusterLabelName: owner.Name},
 			OwnerReferences: []metav1.OwnerReference{
 				{
 					APIVersion:         owner.APIVersion,
@@ -84,6 +85,8 @@ func newVSphereCluster(owner clusterv1.Cluster) infrav1.VSphereCluster {
 				},
 			},
 		},
-		Spec: infrav1.VSphereClusterSpec{},
+		Spec: infrav1.VSphereClusterSpec{
+			Server: VCenterURL,
+		},
 	}
 }

@@ -18,130 +18,280 @@ package controllers
 
 import (
 	goctx "context"
+	"fmt"
 	"testing"
+	"time"
 
 	. "github.com/onsi/gomega"
+	"github.com/stretchr/testify/mock"
 	"github.com/vmware/govmomi/simulator"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	apirecord "k8s.io/client-go/tools/record"
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
+	ipamv1 "sigs.k8s.io/cluster-api/exp/ipam/api/v1alpha1"
 	"sigs.k8s.io/cluster-api/util"
 	"sigs.k8s.io/cluster-api/util/conditions"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	infrav1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/v1beta1"
+	"sigs.k8s.io/cluster-api-provider-vsphere/feature"
 	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/context"
 	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/context/fake"
 	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/identity"
 	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/record"
+	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/services"
+	fake_svc "sigs.k8s.io/cluster-api-provider-vsphere/pkg/services/fake"
 	"sigs.k8s.io/cluster-api-provider-vsphere/test/helpers/vcsim"
 )
 
 func TestReconcileNormal_WaitingForIPAddrAllocation(t *testing.T) {
+	var (
+		machine *clusterv1.Machine
+		cluster *clusterv1.Cluster
+
+		vsphereVM      *infrav1.VSphereVM
+		vsphereMachine *infrav1.VSphereMachine
+		vsphereCluster *infrav1.VSphereCluster
+
+		initObjs       []client.Object
+		ipAddressClaim *ipamv1.IPAddressClaim
+	)
+
+	poolAPIGroup := "some.ipam.api.group"
+
 	// initializing a fake server to replace the vSphere endpoint
 	model := simulator.VPX()
 	model.Host = 0
-
 	simr, err := vcsim.NewBuilder().WithModel(model).Build()
 	if err != nil {
 		t.Fatalf("unable to create simulator: %s", err)
 	}
 	defer simr.Destroy()
 
-	vsphereCluster := &infrav1.VSphereCluster{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "valid-vsphere-cluster",
-			Namespace: "test",
-		},
+	create := func(netSpec infrav1.NetworkSpec) func() {
+		return func() {
+			vsphereCluster = &infrav1.VSphereCluster{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "valid-vsphere-cluster",
+					Namespace: "test",
+				},
+			}
+
+			cluster = &clusterv1.Cluster{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "valid-cluster",
+					Namespace: "test",
+				},
+				Spec: clusterv1.ClusterSpec{
+					InfrastructureRef: &corev1.ObjectReference{
+						Name: vsphereCluster.Name,
+					},
+				},
+			}
+
+			machine = &clusterv1.Machine{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "foo",
+					Namespace: "test",
+					Labels: map[string]string{
+						clusterv1.ClusterLabelName: "valid-cluster",
+					},
+				},
+			}
+			initObjs = createMachineOwnerHierarchy(machine)
+
+			vsphereMachine = &infrav1.VSphereMachine{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "foo-vm",
+					Namespace: "test",
+					Labels: map[string]string{
+						clusterv1.ClusterLabelName: "valid-cluster",
+					},
+					OwnerReferences: []metav1.OwnerReference{{APIVersion: clusterv1.GroupVersion.String(), Kind: "Machine", Name: "foo"}},
+				},
+			}
+
+			vsphereVM = &infrav1.VSphereVM{
+				TypeMeta: metav1.TypeMeta{
+					Kind: "VSphereVM",
+				},
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "foo",
+					Namespace: "test",
+					Finalizers: []string{
+						infrav1.VMFinalizer,
+					},
+					Labels: map[string]string{
+						clusterv1.ClusterLabelName: "valid-cluster",
+					},
+					OwnerReferences: []metav1.OwnerReference{{APIVersion: infrav1.GroupVersion.String(), Kind: "VSphereMachine", Name: "foo-vm"}},
+					// To make sure PatchHelper does not error out
+					ResourceVersion: "1234",
+				},
+				Spec: infrav1.VSphereVMSpec{
+					VirtualMachineCloneSpec: infrav1.VirtualMachineCloneSpec{
+						Server:     simr.ServerURL().Host,
+						Datacenter: "",
+						Datastore:  "",
+						Network:    netSpec,
+					},
+				},
+				Status: infrav1.VSphereVMStatus{},
+			}
+
+			ipAddressClaim = &ipamv1.IPAddressClaim{
+				TypeMeta: metav1.TypeMeta{
+					Kind: "IPAddressClaim",
+				},
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "foo-0-0",
+					Namespace: "test",
+					Finalizers: []string{
+						infrav1.IPAddressClaimFinalizer,
+					},
+					OwnerReferences: []metav1.OwnerReference{{APIVersion: infrav1.GroupVersion.String(), Kind: vsphereVM.Kind, Name: "foo"}},
+				},
+				Spec: ipamv1.IPAddressClaimSpec{
+					PoolRef: corev1.TypedLocalObjectReference{
+						APIGroup: &poolAPIGroup,
+						Kind:     "IPAMPools",
+						Name:     "my-ip-pool",
+					},
+				},
+			}
+		}
 	}
 
-	cluster := &clusterv1.Cluster{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "valid-cluster",
-			Namespace: "test",
-		},
-		Spec: clusterv1.ClusterSpec{
-			InfrastructureRef: &corev1.ObjectReference{
-				Name: vsphereCluster.Name,
-			},
-		},
+	setupReconciler := func(vmService services.VirtualMachineService) vmReconciler {
+		initObjs = append(initObjs, vsphereVM, vsphereMachine, machine, cluster, vsphereCluster, ipAddressClaim)
+		controllerMgrContext := fake.NewControllerManagerContext(initObjs...)
+		password, _ := simr.ServerURL().User.Password()
+		controllerMgrContext.Password = password
+		controllerMgrContext.Username = simr.ServerURL().User.Username()
+
+		controllerContext := &context.ControllerContext{
+			ControllerManagerContext: controllerMgrContext,
+			Recorder:                 record.New(apirecord.NewFakeRecorder(100)),
+			Logger:                   log.Log,
+		}
+		return vmReconciler{
+			ControllerContext: controllerContext,
+			VMService:         vmService,
+		}
 	}
 
-	machine := &clusterv1.Machine{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "foo",
-			Namespace: "test",
-			Labels: map[string]string{
-				clusterv1.ClusterLabelName: "valid-cluster",
+	t.Run("Waiting for static IP allocation", func(t *testing.T) {
+		create(infrav1.NetworkSpec{
+			Devices: []infrav1.NetworkDeviceSpec{
+				{NetworkName: "nw-1"},
+				{NetworkName: "nw-2"},
 			},
-		},
-	}
+		})()
+		fakeVMSvc := new(fake_svc.VMService)
+		fakeVMSvc.On("ReconcileVM", mock.Anything).Return(infrav1.VirtualMachine{
+			Name:     vsphereVM.Name,
+			BiosUUID: "265104de-1472-547c-b873-6dc7883fb6cb",
+			State:    infrav1.VirtualMachineStatePending,
+			Network:  nil,
+		}, nil)
+		r := setupReconciler(fakeVMSvc)
+		_, err = r.Reconcile(goctx.Background(), ctrl.Request{NamespacedName: util.ObjectKey(vsphereVM)})
+		g := NewWithT(t)
+		g.Expect(err).NotTo(HaveOccurred())
 
-	vsphereMachine := &infrav1.VSphereMachine{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "foo-vm",
-			Namespace: "test",
-			Labels: map[string]string{
-				clusterv1.ClusterLabelName: "valid-cluster",
-			},
-			OwnerReferences: []metav1.OwnerReference{{APIVersion: clusterv1.GroupVersion.String(), Kind: "Machine", Name: "foo"}},
-		},
-	}
+		vm := &infrav1.VSphereVM{}
+		vmKey := util.ObjectKey(vsphereVM)
+		g.Expect(r.Client.Get(goctx.Background(), vmKey, vm)).NotTo(HaveOccurred())
 
-	vSphereVM := &infrav1.VSphereVM{
-		TypeMeta: metav1.TypeMeta{
-			Kind: "VSphereVM",
-		},
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "foo",
-			Namespace: "test",
-			Labels: map[string]string{
-				clusterv1.ClusterLabelName: "valid-cluster",
+		g.Expect(conditions.Has(vm, infrav1.VMProvisionedCondition)).To(BeTrue())
+		vmProvisionCondition := conditions.Get(vm, infrav1.VMProvisionedCondition)
+		g.Expect(vmProvisionCondition.Status).To(Equal(corev1.ConditionFalse))
+		g.Expect(vmProvisionCondition.Reason).To(Equal(infrav1.WaitingForStaticIPAllocationReason))
+	})
+
+	t.Run("Waiting for IP addr allocation", func(t *testing.T) {
+		create(infrav1.NetworkSpec{
+			Devices: []infrav1.NetworkDeviceSpec{
+				{NetworkName: "nw-1", DHCP4: true},
 			},
-			OwnerReferences: []metav1.OwnerReference{{APIVersion: infrav1.GroupVersion.String(), Kind: "VSphereMachine", Name: "foo-vm"}},
-			// To make sure PatchHelper does not error out
-			ResourceVersion: "1234",
-		},
-		Spec: infrav1.VSphereVMSpec{
-			VirtualMachineCloneSpec: infrav1.VirtualMachineCloneSpec{
-				Server: simr.ServerURL().Host,
-				Network: infrav1.NetworkSpec{
-					Devices: []infrav1.NetworkDeviceSpec{
-						{NetworkName: "nw-1"},
-						{NetworkName: "nw-2"},
+		})()
+		fakeVMSvc := new(fake_svc.VMService)
+		fakeVMSvc.On("ReconcileVM", mock.Anything).Return(infrav1.VirtualMachine{
+			Name:     vsphereVM.Name,
+			BiosUUID: "265104de-1472-547c-b873-6dc7883fb6cb",
+			State:    infrav1.VirtualMachineStateReady,
+			Network: []infrav1.NetworkStatus{{
+				Connected:   true,
+				IPAddrs:     []string{}, // empty array to show waiting for IP address
+				MACAddr:     "blah-mac",
+				NetworkName: vsphereVM.Spec.Network.Devices[0].NetworkName,
+			}},
+		}, nil)
+		r := setupReconciler(fakeVMSvc)
+		_, err = r.Reconcile(goctx.Background(), ctrl.Request{NamespacedName: util.ObjectKey(vsphereVM)})
+		g := NewWithT(t)
+		g.Expect(err).NotTo(HaveOccurred())
+
+		vm := &infrav1.VSphereVM{}
+		vmKey := util.ObjectKey(vsphereVM)
+		g.Expect(r.Client.Get(goctx.Background(), vmKey, vm)).NotTo(HaveOccurred())
+
+		g.Expect(conditions.Has(vm, infrav1.VMProvisionedCondition)).To(BeTrue())
+		vmProvisionCondition := conditions.Get(vm, infrav1.VMProvisionedCondition)
+		g.Expect(vmProvisionCondition.Status).To(Equal(corev1.ConditionFalse))
+		g.Expect(vmProvisionCondition.Reason).To(Equal(infrav1.WaitingForIPAllocationReason))
+	})
+
+	t.Run("Deleting a VM with IPAddressClaims", func(t *testing.T) {
+		create(infrav1.NetworkSpec{
+			Devices: []infrav1.NetworkDeviceSpec{
+				{
+					NetworkName: "nw-1",
+					AddressesFromPools: []corev1.TypedLocalObjectReference{
+						{
+							APIGroup: &poolAPIGroup,
+							Kind:     "IPAMPools",
+							Name:     "my-ip-pool",
+						},
 					},
 				},
 			},
-		},
-		Status: infrav1.VSphereVMStatus{},
-	}
+		})()
+		vsphereVM.ObjectMeta.Finalizers = []string{infrav1.VMFinalizer}
+		vsphereVM.ObjectMeta.DeletionTimestamp = &metav1.Time{Time: time.Now()}
 
-	controllerMgrContext := fake.NewControllerManagerContext(vSphereVM, vsphereMachine, machine, cluster, vsphereCluster)
-	password, _ := simr.ServerURL().User.Password()
-	controllerMgrContext.Password = password
-	controllerMgrContext.Username = simr.ServerURL().User.Username()
+		fakeVMSvc := new(fake_svc.VMService)
+		fakeVMSvc.On("DestroyVM", mock.Anything).Return(infrav1.VirtualMachine{
+			Name:     vsphereVM.Name,
+			BiosUUID: "265104de-1472-547c-b873-6dc7883fb6cb",
+			State:    infrav1.VirtualMachineStateNotFound,
+			Network: []infrav1.NetworkStatus{{
+				Connected:   true,
+				IPAddrs:     []string{}, // empty array to show waiting for IP address
+				MACAddr:     "blah-mac",
+				NetworkName: vsphereVM.Spec.Network.Devices[0].NetworkName,
+			}},
+		}, nil)
+		r := setupReconciler(fakeVMSvc)
 
-	controllerContext := &context.ControllerContext{
-		ControllerManagerContext: controllerMgrContext,
-		Recorder:                 record.New(apirecord.NewFakeRecorder(100)),
-		Logger:                   log.Log,
-	}
-	r := vmReconciler{ControllerContext: controllerContext}
+		g := NewWithT(t)
 
-	_, err = r.Reconcile(goctx.Background(), ctrl.Request{NamespacedName: util.ObjectKey(vSphereVM)})
-	g := NewWithT(t)
-	g.Expect(err).NotTo(HaveOccurred())
+		_, err := r.Reconcile(goctx.Background(), ctrl.Request{NamespacedName: util.ObjectKey(vsphereVM)})
+		g.Expect(err).To(HaveOccurred())
 
-	vm := &infrav1.VSphereVM{}
-	vmKey := util.ObjectKey(vSphereVM)
-	g.Expect(r.Client.Get(goctx.Background(), vmKey, vm)).NotTo(HaveOccurred())
+		vm := &infrav1.VSphereVM{}
+		vmKey := util.ObjectKey(vsphereVM)
+		g.Expect(apierrors.IsNotFound(r.Client.Get(goctx.Background(), vmKey, vm))).To(BeTrue())
 
-	g.Expect(conditions.Has(vm, infrav1.VMProvisionedCondition)).To(BeTrue())
-	vmProvisionCondition := conditions.Get(vm, infrav1.VMProvisionedCondition)
-	g.Expect(vmProvisionCondition.Status).To(Equal(corev1.ConditionFalse))
-	g.Expect(vmProvisionCondition.Reason).To(Equal(infrav1.WaitingForStaticIPAllocationReason))
+		claim := &ipamv1.IPAddressClaim{}
+		ipacKey := util.ObjectKey(ipAddressClaim)
+		g.Expect(r.Client.Get(goctx.Background(), ipacKey, claim)).NotTo(HaveOccurred())
+		g.Expect(claim.ObjectMeta.Finalizers).NotTo(ContainElement(infrav1.IPAddressClaimFinalizer))
+	})
 }
 
 func TestVmReconciler_WaitingForStaticIPAllocation(t *testing.T) {
@@ -190,7 +340,7 @@ func TestVmReconciler_WaitingForStaticIPAllocation(t *testing.T) {
 
 	controllerCtx := fake.NewControllerContext(fake.NewControllerManagerContext())
 	vmContext := fake.NewVMContext(controllerCtx)
-	r := vmReconciler{controllerCtx}
+	r := vmReconciler{ControllerContext: controllerCtx}
 
 	for _, tt := range tests {
 		// Need to explicitly reinitialize test variable, looks odd, but needed
@@ -261,6 +411,8 @@ func TestRetrievingVCenterCredentialsFromCluster(t *testing.T) {
 		},
 	}
 
+	initObjs := createMachineOwnerHierarchy(machine)
+
 	vsphereMachine := &infrav1.VSphereMachine{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "foo-vm",
@@ -272,7 +424,7 @@ func TestRetrievingVCenterCredentialsFromCluster(t *testing.T) {
 		},
 	}
 
-	vSphereVM := &infrav1.VSphereVM{
+	vsphereVM := &infrav1.VSphereVM{
 		TypeMeta: metav1.TypeMeta{
 			Kind: "VSphereVM",
 		},
@@ -300,7 +452,8 @@ func TestRetrievingVCenterCredentialsFromCluster(t *testing.T) {
 		Status: infrav1.VSphereVMStatus{},
 	}
 
-	controllerMgrContext := fake.NewControllerManagerContext(secret, vSphereVM, vsphereMachine, machine, cluster, vsphereCluster)
+	initObjs = append(initObjs, secret, vsphereVM, vsphereMachine, machine, cluster, vsphereCluster)
+	controllerMgrContext := fake.NewControllerManagerContext(initObjs...)
 
 	controllerContext := &context.ControllerContext{
 		ControllerManagerContext: controllerMgrContext,
@@ -309,14 +462,217 @@ func TestRetrievingVCenterCredentialsFromCluster(t *testing.T) {
 	}
 	r := vmReconciler{ControllerContext: controllerContext}
 
-	_, err = r.Reconcile(goctx.Background(), ctrl.Request{NamespacedName: util.ObjectKey(vSphereVM)})
+	_, err = r.Reconcile(goctx.Background(), ctrl.Request{NamespacedName: util.ObjectKey(vsphereVM)})
 	g := NewWithT(t)
 	g.Expect(err).NotTo(HaveOccurred())
 
 	vm := &infrav1.VSphereVM{}
-	vmKey := util.ObjectKey(vSphereVM)
+	vmKey := util.ObjectKey(vsphereVM)
 	g.Expect(r.Client.Get(goctx.Background(), vmKey, vm)).NotTo(HaveOccurred())
 	g.Expect(conditions.Has(vm, infrav1.VCenterAvailableCondition)).To(BeTrue())
 	vCenterCondition := conditions.Get(vm, infrav1.VCenterAvailableCondition)
 	g.Expect(vCenterCondition.Status).To(Equal(corev1.ConditionTrue))
+}
+
+func Test_reconcile(t *testing.T) {
+	ns := "test"
+	vsphereCluster := &infrav1.VSphereCluster{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "valid-vsphere-cluster",
+			Namespace: ns,
+		},
+		Spec: infrav1.VSphereClusterSpec{},
+	}
+	machine := &clusterv1.Machine{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "foo",
+			Namespace: ns,
+			Labels: map[string]string{
+				clusterv1.ClusterLabelName: "valid-cluster",
+			},
+		},
+	}
+	vsphereVM := &infrav1.VSphereVM{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: infrav1.GroupVersion.String(),
+			Kind:       "VSphereVM",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "foo",
+			Namespace: ns,
+			Labels: map[string]string{
+				clusterv1.ClusterLabelName: "valid-cluster",
+			},
+			OwnerReferences: []metav1.OwnerReference{{APIVersion: infrav1.GroupVersion.String(), Kind: "VSphereMachine", Name: "foo-vm"}},
+			Finalizers:      []string{infrav1.VMFinalizer},
+		},
+		Spec: infrav1.VSphereVMSpec{},
+	}
+
+	setupReconciler := func(vmService services.VirtualMachineService, initObjs ...client.Object) vmReconciler {
+		return vmReconciler{
+			ControllerContext: &context.ControllerContext{
+				ControllerManagerContext: fake.NewControllerManagerContext(initObjs...),
+				Recorder:                 record.New(apirecord.NewFakeRecorder(100)),
+				Logger:                   log.Log,
+			},
+			VMService: vmService,
+		}
+	}
+
+	t.Run("during VM creation", func(t *testing.T) {
+		initObjs := []client.Object{vsphereCluster, machine, vsphereVM}
+		t.Run("when info cannot be fetched", func(t *testing.T) {
+			t.Run("when anti affinity feature gate is turned off", func(t *testing.T) {
+				fakeVMSvc := new(fake_svc.VMService)
+				fakeVMSvc.On("ReconcileVM", mock.Anything).Return(infrav1.VirtualMachine{
+					Name:     vsphereVM.Name,
+					BiosUUID: "265104de-1472-547c-b873-6dc7883fb6cb",
+					State:    infrav1.VirtualMachineStateReady,
+				}, nil)
+				r := setupReconciler(fakeVMSvc, initObjs...)
+				_, err := r.reconcile(&context.VMContext{
+					ControllerContext: r.ControllerContext,
+					VSphereVM:         vsphereVM,
+					Logger:            r.Logger,
+				}, fetchClusterModuleInput{
+					VSphereCluster: vsphereCluster,
+					Machine:        machine,
+				})
+
+				g := NewWithT(t)
+				g.Expect(err).NotTo(HaveOccurred())
+			})
+
+			t.Run("when anti affinity feature gate is turned on", func(t *testing.T) {
+				_ = feature.MutableGates.Set("NodeAntiAffinity=true")
+				r := setupReconciler(new(fake_svc.VMService), initObjs...)
+				_, err := r.reconcile(&context.VMContext{
+					ControllerContext: r.ControllerContext,
+					VSphereVM:         vsphereVM,
+					Logger:            r.Logger,
+				}, fetchClusterModuleInput{
+					VSphereCluster: vsphereCluster,
+					Machine:        machine,
+				})
+
+				g := NewWithT(t)
+				g.Expect(err).To(HaveOccurred())
+			})
+		})
+
+		t.Run("when info can be fetched", func(t *testing.T) {
+			objsWithHierarchy := initObjs
+			objsWithHierarchy = append(objsWithHierarchy, createMachineOwnerHierarchy(machine)...)
+			fakeVMSvc := new(fake_svc.VMService)
+			fakeVMSvc.On("ReconcileVM", mock.Anything).Return(infrav1.VirtualMachine{
+				Name:     vsphereVM.Name,
+				BiosUUID: "265104de-1472-547c-b873-6dc7883fb6cb",
+				State:    infrav1.VirtualMachineStateReady,
+			}, nil)
+
+			r := setupReconciler(fakeVMSvc, objsWithHierarchy...)
+			_, err := r.reconcile(&context.VMContext{
+				ControllerContext: r.ControllerContext,
+				VSphereVM:         vsphereVM,
+				Logger:            r.Logger,
+			}, fetchClusterModuleInput{
+				VSphereCluster: vsphereCluster,
+				Machine:        machine,
+			})
+
+			g := NewWithT(t)
+			g.Expect(err).NotTo(HaveOccurred())
+		})
+	})
+
+	t.Run("during VM deletion", func(t *testing.T) {
+		deletedVM := vsphereVM.DeepCopy()
+		deletedVM.DeletionTimestamp = &metav1.Time{Time: time.Now()}
+
+		fakeVMSvc := new(fake_svc.VMService)
+		fakeVMSvc.On("DestroyVM", mock.Anything).Return(infrav1.VirtualMachine{
+			Name:     deletedVM.Name,
+			BiosUUID: "265104de-1472-547c-b873-6dc7883fb6cb",
+			State:    infrav1.VirtualMachineStateNotFound,
+		}, nil)
+
+		initObjs := []client.Object{vsphereCluster, machine, deletedVM}
+		t.Run("when info can be fetched", func(t *testing.T) {
+			objsWithHierarchy := initObjs
+			objsWithHierarchy = append(objsWithHierarchy, createMachineOwnerHierarchy(machine)...)
+
+			r := setupReconciler(fakeVMSvc, objsWithHierarchy...)
+			_, err := r.reconcile(&context.VMContext{
+				ControllerContext: r.ControllerContext,
+				VSphereVM:         deletedVM,
+				Logger:            r.Logger,
+			}, fetchClusterModuleInput{
+				VSphereCluster: vsphereCluster,
+				Machine:        machine,
+			})
+
+			g := NewWithT(t)
+			g.Expect(err).NotTo(HaveOccurred())
+		})
+
+		t.Run("when info cannot be fetched", func(t *testing.T) {
+			r := setupReconciler(fakeVMSvc, initObjs...)
+			_, err := r.reconcile(&context.VMContext{
+				ControllerContext: r.ControllerContext,
+				VSphereVM:         deletedVM,
+				Logger:            r.Logger,
+			}, fetchClusterModuleInput{
+				VSphereCluster: vsphereCluster,
+				Machine:        machine,
+			})
+
+			g := NewWithT(t)
+			// Assertion to verify that cluster module info is not mandatory
+			g.Expect(err).NotTo(HaveOccurred())
+		})
+	})
+}
+
+func createMachineOwnerHierarchy(machine *clusterv1.Machine) []client.Object {
+	machine.OwnerReferences = []metav1.OwnerReference{
+		{
+			APIVersion: clusterv1.GroupVersion.String(),
+			Kind:       "MachineSet",
+			Name:       fmt.Sprintf("%s-ms", machine.Name),
+		},
+	}
+
+	var (
+		objs           []client.Object
+		clusterName, _ = machine.Labels[clusterv1.ClusterLabelName]
+	)
+
+	objs = append(objs, &clusterv1.MachineSet{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      fmt.Sprintf("%s-ms", machine.Name),
+			Namespace: machine.Namespace,
+			Labels: map[string]string{
+				clusterv1.ClusterLabelName: clusterName,
+			},
+			OwnerReferences: []metav1.OwnerReference{
+				{
+					APIVersion: clusterv1.GroupVersion.String(),
+					Kind:       "MachineDeployment",
+					Name:       fmt.Sprintf("%s-md", machine.Name),
+				},
+			},
+		},
+	})
+
+	objs = append(objs, &clusterv1.MachineDeployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      fmt.Sprintf("%s-md", machine.Name),
+			Namespace: machine.Namespace,
+			Labels: map[string]string{
+				clusterv1.ClusterLabelName: clusterName,
+			},
+		},
+	})
+	return objs
 }

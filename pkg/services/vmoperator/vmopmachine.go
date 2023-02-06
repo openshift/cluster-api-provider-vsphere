@@ -229,6 +229,23 @@ func (v *VmopMachineService) ReconcileNormal(c context.MachineContext) (bool, er
 	return false, nil
 }
 
+func (v VmopMachineService) GetHostInfo(c context.MachineContext) (string, error) {
+	ctx, ok := c.(*vmware.SupervisorMachineContext)
+	if !ok {
+		return "", errors.New("received unexpected SupervisorMachineContext type")
+	}
+
+	vmOperatorVM := &vmoprv1.VirtualMachine{}
+	if err := ctx.Client.Get(ctx, client.ObjectKey{
+		Name:      ctx.Machine.Name,
+		Namespace: ctx.Machine.Namespace,
+	}, vmOperatorVM); err != nil {
+		return "", err
+	}
+
+	return vmOperatorVM.Status.Host, nil
+}
+
 func (v VmopMachineService) newVMOperatorVM(ctx *vmware.SupervisorMachineContext) *vmoprv1.VirtualMachine {
 	return &vmoprv1.VirtualMachine{
 		ObjectMeta: metav1.ObjectMeta{
@@ -532,8 +549,9 @@ func getVMLabels(ctx *vmware.SupervisorMachineContext, vmLabels map[string]strin
 // getTopologyLabels returns the labels related to a VM's topology.
 //
 // TODO(akutz): Currently this function just returns the availability zone,
-//              and thus the code is optimized as such. However, in the future
-//              this function may return a more diverse topology.
+//
+//	and thus the code is optimized as such. However, in the future
+//	this function may return a more diverse topology.
 func getTopologyLabels(ctx *vmware.SupervisorMachineContext) map[string]string {
 	if fd := ctx.VSphereMachine.Spec.FailureDomain; fd != nil && *fd != "" {
 		return map[string]string{

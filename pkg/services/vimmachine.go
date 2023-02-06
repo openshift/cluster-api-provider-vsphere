@@ -121,8 +121,8 @@ func (v *VimMachineService) ReconcileNormal(c context.MachineContext) (bool, err
 	}
 
 	vm, err := v.createOrPatchVSPhereVM(ctx, vsphereVM)
-
-	if err != nil && !apierrors.IsAlreadyExists(err) {
+	if err != nil {
+		ctx.Logger.Error(err, "error creating or patching VM", "vsphereVM", vsphereVM)
 		return false, err
 	}
 
@@ -171,6 +171,27 @@ func (v *VimMachineService) ReconcileNormal(c context.MachineContext) (bool, err
 
 	ctx.VSphereMachine.Status.Ready = true
 	return false, nil
+}
+
+func (v *VimMachineService) GetHostInfo(c context.MachineContext) (string, error) {
+	ctx, ok := c.(*context.VIMMachineContext)
+	if !ok {
+		return "", errors.New("received unexpected VIMMachineContext type")
+	}
+
+	vsphereVM := &infrav1.VSphereVM{}
+	if err := ctx.Client.Get(ctx, client.ObjectKey{
+		Namespace: ctx.Machine.Namespace,
+		Name:      ctx.Machine.Name,
+	}, vsphereVM); err != nil {
+		return "", err
+	}
+
+	if conditions.IsTrue(vsphereVM, infrav1.VMProvisionedCondition) {
+		return vsphereVM.Status.Host, nil
+	}
+	ctx.Logger.V(4).Info("VMProvisionedCondition is set to false", "vsphereVM", vsphereVM.Name)
+	return "", nil
 }
 
 func (v *VimMachineService) findVMPre7(ctx *context.VIMMachineContext) (*infrav1.VSphereVM, error) {
@@ -431,6 +452,7 @@ func (v *VimMachineService) createOrPatchVSPhereVM(ctx *context.VIMMachineContex
 
 // generateOverrideFunc returns a function which can override the values in the VSphereVM Spec
 // with the values from the FailureDomain (if any) set on the owner CAPI machine.
+//
 //nolint:nestif
 func (v *VimMachineService) generateOverrideFunc(ctx *context.VIMMachineContext) (func(vm *infrav1.VSphereVM), bool) {
 	failureDomainName := ctx.Machine.Spec.FailureDomain

@@ -75,31 +75,6 @@ func GetVSphereMachine(
 	return machine, nil
 }
 
-// GetVSphereClusterFromVSphereMachine gets the vmware.infrastructure.cluster.x-k8s.io.VSphereCluster resource for the given VSphereMachine.
-func GetVSphereClusterFromVSphereMachine(ctx context.Context, c client.Client, machine *vmwarev1b1.VSphereMachine) (*vmwarev1b1.VSphereCluster, error) {
-	clusterName := machine.Labels[clusterv1.ClusterLabelName]
-	if clusterName == "" {
-		return nil, errors.Errorf("error getting VSphereCluster name from VSphereMachine %s/%s",
-			machine.Namespace, machine.Name)
-	}
-	namespacedName := apitypes.NamespacedName{
-		Namespace: machine.Namespace,
-		Name:      clusterName,
-	}
-	cluster := &clusterv1.Cluster{}
-	if err := c.Get(ctx, namespacedName, cluster); err != nil {
-		return nil, err
-	}
-
-	vsphereClusterKey := apitypes.NamespacedName{
-		Namespace: machine.Namespace,
-		Name:      cluster.Spec.InfrastructureRef.Name,
-	}
-	vsphereCluster := &vmwarev1b1.VSphereCluster{}
-	err := c.Get(ctx, vsphereClusterKey, vsphereCluster)
-	return vsphereCluster, err
-}
-
 // ErrNoMachineIPAddr indicates that no valid IP addresses were found in a machine context.
 var ErrNoMachineIPAddr = errors.New("no IP addresses found for machine")
 
@@ -136,15 +111,21 @@ func IsControlPlaneMachine(machine metav1.Object) bool {
 	return ok
 }
 
-// GetMachineMetadata returns the cloud-init metadata as a base-64 encoded
+// GetMachineMetadata the cloud-init metadata as a base-64 encoded
 // string for a given VSphereMachine.
-func GetMachineMetadata(hostname string, vsphereVM infrav1.VSphereVM, networkStatuses ...infrav1.NetworkStatus) ([]byte, error) {
+// IPAM state includes IP and Gateways that should be added to each device.
+func GetMachineMetadata(hostname string, vsphereVM infrav1.VSphereVM, ipamState map[string]infrav1.NetworkDeviceSpec, networkStatuses ...infrav1.NetworkStatus) ([]byte, error) {
 	// Create a copy of the devices and add their MAC addresses from a network status.
 	devices := make([]infrav1.NetworkDeviceSpec, integer.IntMax(len(vsphereVM.Spec.Network.Devices), len(networkStatuses)))
 
 	var waitForIPv4, waitForIPv6 bool
 	for i := range vsphereVM.Spec.Network.Devices {
 		vsphereVM.Spec.Network.Devices[i].DeepCopyInto(&devices[i])
+		if state, ok := ipamState[devices[i].MACAddr]; ok {
+			devices[i].IPAddrs = append(devices[i].IPAddrs, state.IPAddrs...)
+			devices[i].Gateway4 = state.Gateway4
+			devices[i].Gateway6 = state.Gateway6
+		}
 
 		if waitForIPv4 && waitForIPv6 {
 			// break early as we already wait for ipv4 and ipv6

@@ -19,6 +19,7 @@ package govmomi
 import (
 	"encoding/base64"
 	"fmt"
+	"net/netip"
 
 	"github.com/pkg/errors"
 	"github.com/vmware/govmomi/object"
@@ -27,18 +28,24 @@ import (
 	"github.com/vmware/govmomi/property"
 	"github.com/vmware/govmomi/vim25/mo"
 	"github.com/vmware/govmomi/vim25/types"
+	"golang.org/x/exp/slices"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	apitypes "k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/pointer"
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
+	bootstrapv1 "sigs.k8s.io/cluster-api/bootstrap/kubeadm/api/v1beta1"
 	capierrors "sigs.k8s.io/cluster-api/errors"
+	ipamv1 "sigs.k8s.io/cluster-api/exp/ipam/api/v1alpha1"
 	"sigs.k8s.io/cluster-api/util/conditions"
 
 	infrav1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/v1beta1"
 	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/context"
 	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/services/govmomi/cluster"
+	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/services/govmomi/clustermodules"
 	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/services/govmomi/extra"
-	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/services/govmomi/net"
+	govmominet "sigs.k8s.io/cluster-api-provider-vsphere/pkg/services/govmomi/net"
 	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/util"
 )
 
@@ -46,10 +53,10 @@ import (
 type VMService struct{}
 
 // ReconcileVM makes sure that the VM is in the desired state by:
-//   1. Creating the VM if it does not exist, then...
-//   2. Updating the VM with the bootstrap data, such as the cloud-init meta and user data, before...
-//   3. Powering on the VM, and finally...
-//   4. Returning the real-time state of the VM to the caller
+//  1. Creating the VM if it does not exist, then...
+//  2. Updating the VM with the bootstrap data, such as the cloud-init meta and user data, before...
+//  3. Powering on the VM, and finally...
+//  4. Returning the real-time state of the VM to the caller
 func (vms *VMService) ReconcileVM(ctx *context.VMContext) (vm infrav1.VirtualMachine, _ error) {
 	// Initialize the result.
 	vm = infrav1.VirtualMachine{
@@ -92,14 +99,14 @@ func (vms *VMService) ReconcileVM(ctx *context.VMContext) (vm infrav1.VirtualMac
 		}
 
 		// Get the bootstrap data.
-		bootstrapData, err := vms.getBootstrapData(ctx)
+		bootstrapData, format, err := vms.getBootstrapData(ctx)
 		if err != nil {
 			conditions.MarkFalse(ctx.VSphereVM, infrav1.VMProvisionedCondition, infrav1.CloningFailedReason, clusterv1.ConditionSeverityWarning, err.Error())
 			return vm, err
 		}
 
 		// Create the VM.
-		err = createVM(ctx, bootstrapData)
+		err = createVM(ctx, bootstrapData, format)
 		if err != nil {
 			conditions.MarkFalse(ctx.VSphereVM, infrav1.VMProvisionedCondition, infrav1.CloningFailedReason, clusterv1.ConditionSeverityWarning, err.Error())
 		}
@@ -120,7 +127,19 @@ func (vms *VMService) ReconcileVM(ctx *context.VMContext) (vm infrav1.VirtualMac
 
 	vms.reconcileUUID(vmCtx)
 
+	if err := vms.reconcileHardwareVersion(vmCtx); err != nil {
+		return vm, err
+	}
+
 	if err := vms.reconcileNetworkStatus(vmCtx); err != nil {
+		return vm, err
+	}
+
+	if ok, err := vms.reconcileIPAddressClaims(vmCtx); err != nil || !ok {
+		return vm, err
+	}
+
+	if ok, err := vms.reconcileIPAddresses(vmCtx); err != nil || !ok {
 		return vm, err
 	}
 
@@ -136,7 +155,15 @@ func (vms *VMService) ReconcileVM(ctx *context.VMContext) (vm infrav1.VirtualMac
 		return vm, err
 	}
 
+	if err := vms.reconcileClusterModuleMembership(vmCtx); err != nil {
+		return vm, err
+	}
+
 	if ok, err := vms.reconcilePowerState(vmCtx); err != nil || !ok {
+		return vm, err
+	}
+
+	if err := vms.reconcileHostInfo(vmCtx); err != nil {
 		return vm, err
 	}
 
@@ -211,6 +238,15 @@ func (vms *VMService) DestroyVM(ctx *context.VMContext) (infrav1.VirtualMachine,
 		return vm, nil
 	}
 
+	if ctx.ClusterModuleInfo != nil {
+		provider := clustermodules.NewProvider(ctx.Session.TagManager.Client)
+		err := provider.RemoveMoRefFromModule(ctx, *ctx.ClusterModuleInfo, vmCtx.Ref)
+		if err != nil && !util.IsNotFoundError(err) {
+			return vm, err
+		}
+		ctx.VSphereVM.Status.ModuleUUID = nil
+	}
+
 	// At this point the VM is not powered on and can be destroyed. Store the
 	// destroy task's reference and return a requeue error.
 	ctx.Logger.Info("destroying vm")
@@ -232,13 +268,186 @@ func (vms *VMService) reconcileNetworkStatus(ctx *virtualMachineContext) error {
 	return nil
 }
 
+// reconcileIPAddressClaims ensures that VSphereVMs that are configured with
+// .spec.network.devices.addressFromPools have corresponding IPAddressClaims.
+func (vms *VMService) reconcileIPAddressClaims(ctx *virtualMachineContext) (bool, error) {
+	for devIdx, device := range ctx.VSphereVM.Spec.Network.Devices {
+		for poolRefIdx, poolRef := range device.AddressesFromPools {
+			// check if claim exists
+			ipAddrClaim := &ipamv1.IPAddressClaim{}
+			ipAddrClaimName := IPAddressClaimName(ctx.VSphereVM.Name, devIdx, poolRefIdx)
+			ipAddrClaimKey := apitypes.NamespacedName{
+				Namespace: ctx.VSphereVM.Namespace,
+				Name:      ipAddrClaimName,
+			}
+			var err error
+			if err = ctx.Client.Get(ctx, ipAddrClaimKey, ipAddrClaim); err != nil && !apierrors.IsNotFound(err) {
+				return false, err
+			}
+			if err == nil {
+				ctx.Logger.V(5).Info("IPAddressClaim found", "name", ipAddrClaimName)
+			}
+			if apierrors.IsNotFound(err) {
+				ctx.Logger.Info("creating IPAddressClaim", "name", ipAddrClaimName)
+				claim := &ipamv1.IPAddressClaim{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      ipAddrClaimName,
+						Namespace: ctx.VSphereVM.Namespace,
+						OwnerReferences: []metav1.OwnerReference{
+							{
+								APIVersion: ctx.VSphereVM.APIVersion,
+								Kind:       ctx.VSphereVM.Kind,
+								Name:       ctx.VSphereVM.Name,
+								UID:        ctx.VSphereVM.UID,
+							},
+						},
+						Finalizers: []string{infrav1.IPAddressClaimFinalizer},
+					},
+					Spec: ipamv1.IPAddressClaimSpec{PoolRef: poolRef},
+				}
+				if err = ctx.Client.Create(ctx, claim); err != nil {
+					return false, err
+				}
+				msg := "Waiting for IPAddressClaim to have an IPAddress bound"
+				markIPAddressClaimedConditionWaitingForClaimAddress(ctx.VSphereVM, msg)
+			}
+		}
+	}
+	return true, nil
+}
+
+// reconcileIPAddresses prevents successful reconcilliation of a VSphereVM
+// until an IPAM Provider updates each IPAddressClaim associated to the
+// VSphereVM with a reference to an IPAddress. This function is a no-op if the
+// VSphereVM has no associated IPAddressClaims. A discovered IPAddress is
+// expected to contain a valid IP, Prefix and Gateway.
+func (vms *VMService) reconcileIPAddresses(ctx *virtualMachineContext) (bool, error) {
+	ctx.IPAMState = map[string]infrav1.NetworkDeviceSpec{}
+	for devIdx, device := range ctx.VSphereVM.Spec.Network.Devices {
+		var ipAddrs []string
+		var gateway4 string
+		var gateway6 string
+
+		//TODO: Break this up into smaller functions
+		for poolRefIdx := range device.AddressesFromPools {
+			// check if claim exists
+			ipAddrClaim := &ipamv1.IPAddressClaim{}
+			ipAddrClaimName := IPAddressClaimName(ctx.VSphereVM.Name, devIdx, poolRefIdx)
+			ipAddrClaimKey := apitypes.NamespacedName{
+				Namespace: ctx.VSphereVM.Namespace,
+				Name:      ipAddrClaimName,
+			}
+			var err error
+			ctx.Logger.V(5).Info("fetching IPAddressClaim", "name", ipAddrClaimKey.String())
+			if err = ctx.Client.Get(ctx, ipAddrClaimKey, ipAddrClaim); err != nil && !apierrors.IsNotFound(err) {
+				ctx.Logger.Error(err, "error fetching IPAddressClaim", "name", ipAddrClaimName)
+				return false, err
+			}
+
+			ipAddrName := ipAddrClaim.Status.AddressRef.Name
+			ctx.Logger.V(5).Info("fetched IPAddressClaim", "name", ipAddrClaimName, "IPAddressClaim.Status.AddressRef.Name", ipAddrName)
+			if ipAddrName == "" {
+				ctx.Logger.V(5).Info("IPAddress name was empty on IPAddressClaim", "name", ipAddrClaimName, "IPAddressClaim.Status.AddressRef.Name", ipAddrName)
+				msg := "Waiting for IPAddressClaim to have an IPAddress bound"
+				markIPAddressClaimedConditionWaitingForClaimAddress(ctx.VSphereVM, msg)
+				return false, errors.New(msg)
+			}
+
+			ipAddr := &ipamv1.IPAddress{}
+			ipAddrKey := apitypes.NamespacedName{
+				Namespace: ctx.VSphereVM.Namespace,
+				Name:      ipAddrName,
+			}
+			if err = ctx.Client.Get(ctx, ipAddrKey, ipAddr); err != nil {
+				return false, err
+			}
+
+			toAdd := fmt.Sprintf("%s/%d", ipAddr.Spec.Address, ipAddr.Spec.Prefix)
+			parsedPrefix, err := netip.ParsePrefix(toAdd)
+			if err != nil {
+				msg := fmt.Sprintf("IPAddress %s/%s has invalid ip address: %q",
+					ipAddrKey.Namespace,
+					ipAddrKey.Name,
+					toAdd,
+				)
+				return markIPAddressClaimedConditionInvalidIPWithError(ctx.VSphereVM, msg)
+			}
+
+			if !slices.Contains(ipAddrs, toAdd) {
+				ipAddrs = append(ipAddrs, toAdd)
+
+				gatewayAddr, err := netip.ParseAddr(ipAddr.Spec.Gateway)
+				if err != nil {
+					msg := fmt.Sprintf("IPAddress %s/%s has invalid gateway: %q",
+						ipAddrKey.Namespace,
+						ipAddrKey.Name,
+						ipAddr.Spec.Gateway,
+					)
+					return markIPAddressClaimedConditionInvalidIPWithError(ctx.VSphereVM, msg)
+				}
+
+				if parsedPrefix.Addr().Is4() != gatewayAddr.Is4() {
+					msg := fmt.Sprintf("IPAddress %s/%s has mismatched gateway and address IP families",
+						ipAddrKey.Namespace,
+						ipAddrKey.Name,
+					)
+					return markIPAddressClaimedConditionInvalidIPWithError(ctx.VSphereVM, msg)
+				}
+
+				if gatewayAddr.Is4() {
+					if device.Gateway4 != "" && device.Gateway4 != ipAddr.Spec.Gateway {
+						msg := fmt.Sprintf("The IPv4 Gateway for IPAddress %s does not match the Gateway4 already configured on device (index %d)",
+							ipAddrName,
+							devIdx,
+						)
+						return markIPAddressClaimedConditionInvalidIPWithError(ctx.VSphereVM, msg)
+					}
+					if gateway4 != "" && gateway4 != ipAddr.Spec.Gateway {
+						msg := fmt.Sprintf("The IPv4 IPAddresses assigned to the same device (index %d) do not have the same gateway",
+							devIdx,
+						)
+						return markIPAddressClaimedConditionInvalidIPWithError(ctx.VSphereVM, msg)
+					}
+					gateway4 = ipAddr.Spec.Gateway
+				} else {
+					if device.Gateway6 != "" && device.Gateway6 != ipAddr.Spec.Gateway {
+						msg := fmt.Sprintf("The IPv6 Gateway for IPAddress %s does not match the Gateway6 already configured on device (index %d)",
+							ipAddrName,
+							devIdx,
+						)
+						return markIPAddressClaimedConditionInvalidIPWithError(ctx.VSphereVM, msg)
+					}
+					if gateway6 != "" && gateway6 != ipAddr.Spec.Gateway {
+						msg := fmt.Sprintf("The IPv6 IPAddresses assigned to the same device (index %d) do not have the same gateway",
+							devIdx,
+						)
+						return markIPAddressClaimedConditionInvalidIPWithError(ctx.VSphereVM, msg)
+					}
+					gateway6 = ipAddr.Spec.Gateway
+				}
+			}
+			ctx.IPAMState[device.MACAddr] = infrav1.NetworkDeviceSpec{
+				IPAddrs:  ipAddrs,
+				Gateway4: gateway4,
+				Gateway6: gateway6,
+			}
+		}
+	}
+
+	if len(ctx.IPAMState) > 0 {
+		conditions.MarkTrue(ctx.VSphereVM, infrav1.IPAddressClaimedCondition)
+	}
+
+	return true, nil
+}
+
 func (vms *VMService) reconcileMetadata(ctx *virtualMachineContext) (bool, error) {
 	existingMetadata, err := vms.getMetadata(ctx)
 	if err != nil {
 		return false, err
 	}
 
-	newMetadata, err := util.GetMachineMetadata(ctx.VSphereVM.Name, *ctx.VSphereVM, ctx.State.Network...)
+	newMetadata, err := util.GetMachineMetadata(ctx.VSphereVM.Name, *ctx.VSphereVM, ctx.IPAMState, ctx.State.Network...)
 	if err != nil {
 		return false, err
 	}
@@ -297,7 +506,7 @@ func (vms *VMService) reconcilePowerState(ctx *virtualMachineContext) (bool, err
 
 func (vms *VMService) reconcileStoragePolicy(ctx *virtualMachineContext) error {
 	if ctx.VSphereVM.Spec.StoragePolicyName == "" {
-		ctx.Logger.Info("storage policy not defined. skipping reconcile storage policy")
+		ctx.Logger.V(5).Info("storage policy not defined. skipping reconcile storage policy")
 		return nil
 	}
 
@@ -375,6 +584,32 @@ func (vms *VMService) reconcileUUID(ctx *virtualMachineContext) {
 	ctx.State.BiosUUID = ctx.Obj.UUID(ctx)
 }
 
+func (vms *VMService) reconcileHardwareVersion(ctx *virtualMachineContext) error {
+	if ctx.VSphereVM.Spec.HardwareVersion == "" {
+		return nil
+	}
+
+	var virtualMachine mo.VirtualMachine
+	if err := ctx.Obj.Properties(ctx, ctx.Obj.Reference(), []string{"config.version"}, &virtualMachine); err != nil {
+		return errors.Wrapf(err, "error getting guestInfo version information from VM %s", ctx.VSphereVM.Name)
+	}
+	toUpgrade, err := util.LessThan(virtualMachine.Config.Version, ctx.VSphereVM.Spec.HardwareVersion)
+	if err != nil {
+		return errors.Wrapf(err, "failed to parse hardware version")
+	}
+	if toUpgrade {
+		ctx.Logger.Info("upgrading hardware version",
+			"from", virtualMachine.Config.Version,
+			"to", ctx.VSphereVM.Spec.HardwareVersion)
+		task, err := ctx.Obj.UpgradeVM(ctx, ctx.VSphereVM.Spec.HardwareVersion)
+		if err != nil {
+			return errors.Wrapf(err, "error trigging upgrade op for machine %s", ctx)
+		}
+		ctx.VSphereVM.Status.TaskRef = task.Reference().Value
+	}
+	return nil
+}
+
 func (vms *VMService) getPowerState(ctx *virtualMachineContext) (infrav1.VirtualMachinePowerState, error) {
 	powerState, err := ctx.Obj.PowerState(ctx)
 	if err != nil {
@@ -437,11 +672,23 @@ func (vms *VMService) getMetadata(ctx *virtualMachineContext) (string, error) {
 	return string(metadataBuf), nil
 }
 
+func (vms *VMService) reconcileHostInfo(ctx *virtualMachineContext) error {
+	host, err := ctx.Obj.HostSystem(ctx)
+	if err != nil {
+		return err
+	}
+	name, err := host.ObjectName(ctx)
+	if err != nil {
+		return err
+	}
+	ctx.VSphereVM.Status.Host = name
+	return nil
+}
+
 func (vms *VMService) setMetadata(ctx *virtualMachineContext, metadata []byte) (string, error) {
 	var extraConfig extra.Config
-	if err := extraConfig.SetCloudInitMetadata(metadata); err != nil {
-		return "", errors.Wrapf(err, "unable to set metadata on vm %s", ctx)
-	}
+
+	extraConfig.SetCloudInitMetadata(metadata)
 
 	task, err := ctx.Obj.Reconfigure(ctx, types.VirtualMachineConfigSpec{
 		ExtraConfig: extraConfig,
@@ -454,7 +701,7 @@ func (vms *VMService) setMetadata(ctx *virtualMachineContext, metadata []byte) (
 }
 
 func (vms *VMService) getNetworkStatus(ctx *virtualMachineContext) ([]infrav1.NetworkStatus, error) {
-	allNetStatus, err := net.GetNetworkStatus(ctx, ctx.Session.Client.Client, ctx.Ref)
+	allNetStatus, err := govmominet.GetNetworkStatus(ctx, ctx.Session.Client.Client, ctx.Ref)
 	if err != nil {
 		return nil, err
 	}
@@ -471,10 +718,12 @@ func (vms *VMService) getNetworkStatus(ctx *virtualMachineContext) ([]infrav1.Ne
 	return apiNetStatus, nil
 }
 
-func (vms *VMService) getBootstrapData(ctx *context.VMContext) ([]byte, error) {
+// getBootstrapData obtains a machine's bootstrap data from the relevant k8s secret and returns the
+// data and its format.
+func (vms *VMService) getBootstrapData(ctx *context.VMContext) ([]byte, bootstrapv1.Format, error) {
 	if ctx.VSphereVM.Spec.BootstrapRef == nil {
 		ctx.Logger.Info("VM has no bootstrap data")
-		return nil, nil
+		return nil, "", nil
 	}
 
 	secret := &corev1.Secret{}
@@ -483,20 +732,26 @@ func (vms *VMService) getBootstrapData(ctx *context.VMContext) ([]byte, error) {
 		Name:      ctx.VSphereVM.Spec.BootstrapRef.Name,
 	}
 	if err := ctx.Client.Get(ctx, secretKey, secret); err != nil {
-		return nil, errors.Wrapf(err, "failed to retrieve bootstrap data secret for %s", ctx)
+		return nil, "", errors.Wrapf(err, "failed to retrieve bootstrap data secret for %s", ctx)
+	}
+
+	format, ok := secret.Data["format"]
+	if !ok || len(format) == 0 {
+		// Bootstrap data format is missing or empty - assume cloud-config.
+		format = []byte(bootstrapv1.CloudConfig)
 	}
 
 	value, ok := secret.Data["value"]
 	if !ok {
-		return nil, errors.New("error retrieving bootstrap data: secret value key is missing")
+		return nil, "", errors.New("error retrieving bootstrap data: secret value key is missing")
 	}
 
-	return value, nil
+	return value, bootstrapv1.Format(format), nil
 }
 
 func (vms *VMService) reconcileVMGroupInfo(ctx *virtualMachineContext) (bool, error) {
 	if ctx.VSphereFailureDomain == nil || ctx.VSphereFailureDomain.Spec.Topology.Hosts == nil {
-		ctx.Logger.Info("hosts topology in failure domain not defined. skipping reconcile VM group")
+		ctx.Logger.V(5).Info("hosts topology in failure domain not defined. skipping reconcile VM group")
 		return true, nil
 	}
 
@@ -525,7 +780,7 @@ func (vms *VMService) reconcileVMGroupInfo(ctx *virtualMachineContext) (bool, er
 
 func (vms *VMService) reconcileTags(ctx *virtualMachineContext) error {
 	if len(ctx.VSphereVM.Spec.TagIDs) == 0 {
-		ctx.Logger.Info("no tags defined. skipping tags reconciliation")
+		ctx.Logger.V(5).Info("no tags defined. skipping tags reconciliation")
 		return nil
 	}
 
@@ -535,4 +790,40 @@ func (vms *VMService) reconcileTags(ctx *virtualMachineContext) error {
 	}
 
 	return nil
+}
+
+func (vms *VMService) reconcileClusterModuleMembership(ctx *virtualMachineContext) error {
+	if ctx.ClusterModuleInfo != nil {
+		ctx.Logger.V(5).Info("add vm to module", "moduleUUID", *ctx.ClusterModuleInfo)
+		provider := clustermodules.NewProvider(ctx.Session.TagManager.Client)
+
+		if err := provider.AddMoRefToModule(ctx, *ctx.ClusterModuleInfo, ctx.Ref); err != nil {
+			return err
+		}
+		ctx.VSphereVM.Status.ModuleUUID = ctx.ClusterModuleInfo
+	}
+	return nil
+}
+
+func markIPAddressClaimedConditionInvalidIPWithError(vm *infrav1.VSphereVM, msg string) (bool, error) {
+	conditions.MarkFalse(vm,
+		infrav1.IPAddressClaimedCondition,
+		infrav1.IPAddressInvalidReason,
+		clusterv1.ConditionSeverityError,
+		msg)
+	return false, errors.New(msg)
+}
+
+func markIPAddressClaimedConditionWaitingForClaimAddress(vm *infrav1.VSphereVM, msg string) {
+	conditions.MarkFalse(vm,
+		infrav1.IPAddressClaimedCondition,
+		infrav1.WaitingForIPAddressReason,
+		clusterv1.ConditionSeverityInfo,
+		msg)
+}
+
+// IPAddressClaimName returns a name given a VsphereVM name, deviceIndex, and
+// poolIndex.
+func IPAddressClaimName(vmName string, deviceIndex, poolIndex int) string {
+	return fmt.Sprintf("%s-%d-%d", vmName, deviceIndex, poolIndex)
 }
