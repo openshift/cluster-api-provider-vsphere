@@ -16,11 +16,11 @@ images:
     loadBehavior: tryLoad
   - name: gcr.io/k8s-staging-cluster-api/capv-manager:e2e
     loadBehavior: mustLoad
-  - name: quay.io/jetstack/cert-manager-cainjector:v1.7.2
+  - name: quay.io/jetstack/cert-manager-cainjector:v1.9.1
     loadBehavior: tryLoad
-  - name: quay.io/jetstack/cert-manager-webhook:v1.7.2
+  - name: quay.io/jetstack/cert-manager-webhook:v1.9.1
     loadBehavior: tryLoad
-  - name: quay.io/jetstack/cert-manager-controller:v1.7.2
+  - name: quay.io/jetstack/cert-manager-controller:v1.9.1
     loadBehavior: tryLoad
 
 providers:
@@ -101,7 +101,7 @@ providers:
         files:
           - sourcePath: "../../../test/e2e/data/infrastructure-vsphere/capi-upgrades/v1alpha4/cluster-template.yaml"
           - sourcePath: "../../../metadata.yaml"
-      - name: v1.3.0
+      - name: v1.5.0
         # Use manifest from source files
         value: ../../../../cluster-api-provider-vsphere/config/default
         contract: v1beta1
@@ -114,19 +114,24 @@ providers:
           # Add a cluster template
           - sourcePath: "../../../test/e2e/data/infrastructure-vsphere/cluster-template.yaml"
           - sourcePath: "../../../test/e2e/data/infrastructure-vsphere/cluster-template-conformance.yaml"
-          - sourcePath: "../../../test/e2e/data/infrastructure-vsphere/cluster-template-remote-management.yaml"
+          - sourcePath: "../../../test/e2e/data/infrastructure-vsphere/cluster-template-hw-upgrade.yaml"
           - sourcePath: "../../../test/e2e/data/infrastructure-vsphere/cluster-template-kcp-remediation.yaml"
           - sourcePath: "../../../test/e2e/data/infrastructure-vsphere/cluster-template-md-remediation.yaml"
           - sourcePath: "../../../test/e2e/data/infrastructure-vsphere/cluster-template-node-drain.yaml"
           - sourcePath: "../../../test/e2e/data/infrastructure-vsphere/cluster-template-pci.yaml"
+          - sourcePath: "../../../test/e2e/data/infrastructure-vsphere/cluster-template-remote-management.yaml"
+          - sourcePath: "../../../test/e2e/data/infrastructure-vsphere/cluster-template-storage-policy.yaml"
           - sourcePath: "../../../test/e2e/data/infrastructure-vsphere/cluster-template-topology.yaml"
+          - sourcePath: "../../../test/e2e/data/infrastructure-vsphere/cluster-template-dhcp-overrides.yaml"
           - sourcePath: "../../../test/e2e/data/infrastructure-vsphere/clusterclass-quick-start.yaml"
+          - sourcePath: "../../../test/e2e/data/infrastructure-vsphere/cluster-template-ignition.yaml"
           - sourcePath: "../../../metadata.yaml"
 
 variables:
   KUBERNETES_VERSION: "v1.23.5"
   CNI: "./data/cni/calico/calico.yaml"
   EXP_CLUSTER_RESOURCE_SET: "true"
+  EXP_KUBEADM_BOOTSTRAP_FORMAT_IGNITION: "true"
   CONTROL_PLANE_MACHINE_COUNT: 1
   WORKER_MACHINE_COUNT: 1
   IP_FAMILY: "IPv4"
@@ -138,6 +143,7 @@ variables:
   VSPHERE_STORAGE_POLICY: "Cluster API vSphere Storage Policy"
   VSPHERE_NETWORK: "sddc-cgw-network-6"
   VSPHERE_TEMPLATE: "ubuntu-2004-kube-v1.23.5"
+  FLATCAR_VSPHERE_TEMPLATE: "flatcar-stable-3139.2.3-kube-v1.23.5"
   VSPHERE_INSECURE_CSI: "true"
   KUBETEST_CONFIGURATION: "./data/kubetest/conformance.yaml"
   NODE_DRAIN_TIMEOUT: "60s"
@@ -145,6 +151,9 @@ variables:
   # These IDs correspond to Tesla T4s, they are the decimal representation of the hex values.
   DEVICE_ID: 7864
   VENDOR_ID: 4318
+  # CAPV feature flags
+  EXP_NODE_ANTI_AFFINITY: "true"
+  EXP_NODE_LABELING: "true"
 
 intervals:
   default/wait-controllers: ["5m", "10s"]
@@ -157,3 +166,4 @@ intervals:
   mhc-remediation/mhc-remediation: ["30m", "10s"]
   node-drain/wait-deployment-available: ["3m", "10s"]
   node-drain/wait-machine-deleted: ["2m", "10s"]
+  anti-affinity/wait-vm-redistribution: ["5m", "10s"]

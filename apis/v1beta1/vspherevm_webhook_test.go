@@ -30,7 +30,7 @@ const (
 	linuxVMName   = "linux-control-plane-qkkbv"
 )
 
-//nolint
+// nolint
 func TestVSphereVM_Default(t *testing.T) {
 	g := NewWithT(t)
 
@@ -51,7 +51,7 @@ func TestVSphereVM_Default(t *testing.T) {
 	g.Expect(LinuxVM.Name).To(Equal("linux-control-plane-qkkbv"))
 }
 
-//nolint
+// nolint
 func TestVSphereVM_ValidateCreate(t *testing.T) {
 	g := NewWithT(t)
 
@@ -98,7 +98,7 @@ func TestVSphereVM_ValidateCreate(t *testing.T) {
 	}
 }
 
-//nolint
+// nolint
 func TestVSphereVM_ValidateUpdate(t *testing.T) {
 	g := NewWithT(t)
 
@@ -130,6 +130,18 @@ func TestVSphereVM_ValidateUpdate(t *testing.T) {
 			name:         "updating server cannot be done",
 			oldVSphereVM: createVSphereVM("vsphere-vm-1", "foo.com", "", "", []string{"192.168.0.1/32"}, nil, Linux),
 			vSphereVM:    createVSphereVM("vsphere-vm-1", "bar.com", biosUUID, "", []string{"192.168.0.1/32", "192.168.0.10/32"}, nil, Linux),
+			wantErr:      true,
+		},
+		{
+			name:         "updating OS can be done only when empty",
+			oldVSphereVM: createVSphereVM("vsphere-vm-1-os", "foo.com", "", "", []string{"192.168.0.1/32"}, nil, ""),
+			vSphereVM:    createVSphereVM("vsphere-vm-1-os", "foo.com", "", "", []string{"192.168.0.1/32"}, nil, Linux),
+			wantErr:      false,
+		},
+		{
+			name:         "updating OS cannot be done when alreadySet",
+			oldVSphereVM: createVSphereVM("vsphere-vm-1-os", "foo.com", "", "", []string{"192.168.0.1/32"}, nil, Windows),
+			vSphereVM:    createVSphereVM("vsphere-vm-1-os", "foo.com", "", "", []string{"192.168.0.1/32"}, nil, Linux),
 			wantErr:      true,
 		},
 	}

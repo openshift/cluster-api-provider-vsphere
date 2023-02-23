@@ -61,6 +61,12 @@ const (
 	// a static IP address.
 	WaitingForStaticIPAllocationReason = "WaitingForStaticIPAllocation"
 
+	// WaitingForIPAllocationReason (Severity=Info) documents a VSphereVM waiting for the allocation of
+	// an IP address.
+	// This is used when the dhcp4 or dhcp6 for a VSphereVM is set and the VSphereVM is waiting for the
+	// relevant IP address  to show up on the VM.
+	WaitingForIPAllocationReason = "WaitingForIPAllocation"
+
 	// CloningReason documents (Severity=Info) a VSphereMachine/VSphereVM currently executing the clone operation.
 	CloningReason = "Cloning"
 
@@ -101,6 +107,24 @@ const (
 	// VCenterUnreachableReason (Severity=Error) documents a controller detecting
 	// issues with VCenter reachability.
 	VCenterUnreachableReason = "VCenterUnreachable"
+)
+
+const (
+	// ClusterModulesAvailableCondition documents the availability of cluster modules for the VSphereCluster object.
+	ClusterModulesAvailableCondition clusterv1.ConditionType = "ClusterModulesAvailable"
+
+	// MissingVCenterVersionReason (Severity=Warning) documents a controller detecting
+	//  the scenario in which the vCenter version is not set in the status of the VSphereCluster object.
+	MissingVCenterVersionReason = "MissingVCenterVersion"
+
+	// VCenterVersionIncompatibleReason (Severity=Info) documents the case where the vCenter version of the
+	// VSphereCluster object does not support cluster modules.
+	VCenterVersionIncompatibleReason = "VCenterVersionIncompatible"
+
+	// ClusterModuleSetupFailedReason (Severity=Warning) documents a controller detecting
+	// issues when setting up anti-affinity constraints via cluster modules for objects
+	// belonging to the cluster.
+	ClusterModuleSetupFailedReason = "ClusterModuleSetupFailed"
 )
 
 const (
@@ -161,4 +185,18 @@ const (
 	// DatastoreNotFoundReason (Severity=Error) documents that the datastore in the topology for the Failure Domain
 	// associated to the VSphereDeploymentZone is misconfigured.
 	DatastoreNotFoundReason = "DatastoreNotFound"
+)
+
+const (
+	// IPAddressClaimedCondition documents the status of claiming an IP address
+	// from an IPAM provider.
+	IPAddressClaimedCondition clusterv1.ConditionType = "IPAddressClaimed"
+
+	// WaitingForIPAddressReason (Severity=Info) documents that the VSphereVM is
+	// currently waiting for an IP address to be provisioned.
+	WaitingForIPAddressReason = "WaitingForIPAddress"
+
+	// IPAddressInvalidReason (Severity=Error) documents that the IP address
+	// provided by the IPAM provider is not valid.
+	IPAddressInvalidReason = "IPAddressInvalid"
 )

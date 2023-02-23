@@ -38,10 +38,14 @@ func TestFuzzyConversion(t *testing.T) {
 	g.Expect(nextver.AddToScheme(scheme)).To(Succeed())
 
 	t.Run("for VSphereCluster", utilconversion.FuzzTestFunc(utilconversion.FuzzTestFuncInput{
-		Scheme:      scheme,
-		Hub:         &nextver.VSphereCluster{},
-		Spoke:       &VSphereCluster{},
-		FuzzerFuncs: []fuzzer.FuzzerFuncs{overrideVSphereClusterDeprecatedFieldsFuncs},
+		Scheme: scheme,
+		Hub:    &nextver.VSphereCluster{},
+		Spoke:  &VSphereCluster{},
+		FuzzerFuncs: []fuzzer.FuzzerFuncs{
+			overrideVSphereClusterDeprecatedFieldsFuncs,
+			overrideVSphereClusterSpecFieldsFuncs,
+			overrideVSphereClusterStatusFieldsFuncs,
+		},
 	}))
 	t.Run("for VSphereMachine", utilconversion.FuzzTestFunc(utilconversion.FuzzTestFuncInput{
 		Scheme:      scheme,
@@ -71,13 +75,31 @@ func overrideVSphereClusterDeprecatedFieldsFuncs(codecs runtimeserializer.CodecF
 	}
 }
 
+func overrideVSphereClusterSpecFieldsFuncs(codecs runtimeserializer.CodecFactory) []interface{} {
+	return []interface{}{
+		func(in *nextver.VSphereClusterSpec, c fuzz.Continue) {
+			c.FuzzNoCustom(in)
+			in.ClusterModules = nil
+		},
+	}
+}
+
+func overrideVSphereClusterStatusFieldsFuncs(codecs runtimeserializer.CodecFactory) []interface{} {
+	return []interface{}{
+		func(in *nextver.VSphereClusterStatus, c fuzz.Continue) {
+			c.FuzzNoCustom(in)
+			in.VCenterVersion = ""
+		},
+	}
+}
+
 func CustomObjectMetaFuzzFunc(_ runtimeserializer.CodecFactory) []interface{} {
 	return []interface{}{
 		CustomObjectMetaFuzzer,
 	}
 }
 
-//nolint
+// nolint
 func CustomObjectMetaFuzzer(in *clusterv1.ObjectMeta, c fuzz.Continue) {
 	c.FuzzNoCustom(in)
 
@@ -91,14 +113,23 @@ func CustomObjectMetaFuzzer(in *clusterv1.ObjectMeta, c fuzz.Continue) {
 
 func CustomNewFieldFuzzFunc(_ runtimeserializer.CodecFactory) []interface{} {
 	return []interface{}{
-		CustomNewFieldFuzzer,
+		CustomSpecNewFieldFuzzer,
+		CustomStatusNewFieldFuzzer,
 	}
 }
 
-func CustomNewFieldFuzzer(in *nextver.VirtualMachineCloneSpec, c fuzz.Continue) {
+func CustomSpecNewFieldFuzzer(in *nextver.VirtualMachineCloneSpec, c fuzz.Continue) {
 	c.FuzzNoCustom(in)
 
 	in.PciDevices = nil
 	in.AdditionalDisksGiB = nil
 	in.OS = ""
+	in.HardwareVersion = ""
+}
+
+func CustomStatusNewFieldFuzzer(in *nextver.VSphereVMStatus, c fuzz.Continue) {
+	c.FuzzNoCustom(in)
+
+	in.Host = ""
+	in.ModuleUUID = nil
 }

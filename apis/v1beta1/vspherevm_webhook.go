@@ -75,6 +75,7 @@ func (r *VSphereVM) ValidateCreate() error {
 }
 
 // ValidateUpdate implements webhook.Validator so a webhook will be registered for the type.
+//
 //nolint:forcetypeassert
 func (r *VSphereVM) ValidateUpdate(old runtime.Object) error {
 	newVSphereVM, err := runtime.DefaultUnstructuredConverter.ToUnstructured(r)
@@ -105,6 +106,12 @@ func (r *VSphereVM) ValidateUpdate(old runtime.Object) error {
 	// allow changes to the network devices
 	delete(oldVSphereVMNetwork, "devices")
 	delete(newVSphereVMNetwork, "devices")
+
+	// allow changes to os only if the old spec has empty OS field
+	if _, ok := oldVSphereVMSpec["os"]; !ok {
+		delete(oldVSphereVMSpec, "os")
+		delete(newVSphereVMSpec, "os")
+	}
 
 	if !reflect.DeepEqual(oldVSphereVMSpec, newVSphereVMSpec) {
 		allErrs = append(allErrs, field.Forbidden(field.NewPath("spec"), "cannot be modified"))

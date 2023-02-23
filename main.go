@@ -17,6 +17,7 @@ limitations under the License.
 package main
 
 import (
+	"crypto/tls"
 	"flag"
 	"fmt"
 	"math/rand"
@@ -24,6 +25,7 @@ import (
 	"net/http/pprof"
 	"os"
 	"reflect"
+	"strings"
 	"time"
 
 	"github.com/spf13/pflag"
@@ -44,6 +46,7 @@ import (
 	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/constants"
 	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/context"
 	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/manager"
+	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/session"
 	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/version"
 )
 
@@ -54,6 +57,8 @@ var (
 	managerOpts     manager.Options
 	syncPeriod      time.Duration
 	profilerAddress string
+	tlsMinVersion   string
+	tlsCipherSuites string
 
 	defaultProfilerAddr      = os.Getenv("PROFILER_ADDR")
 	defaultSyncPeriod        = manager.DefaultSyncPeriod
@@ -143,6 +148,20 @@ func InitFlags(fs *pflag.FlagSet) {
 		"",
 		"network provider to be used by Supervisor based clusters.",
 	)
+	flag.StringVar(
+		&tlsMinVersion,
+		"tls-min-version",
+		"",
+		"Minimum TLS version in use by the webhook server.\n"+
+			fmt.Sprintf("Possible values are %s.", strings.Join(cliflag.TLSPossibleVersions(), ", ")),
+	)
+	flag.StringVar(
+		&tlsCipherSuites,
+		"tls-cipher-suites",
+		"",
+		"Comma-separated list of cipher suites for the server. If omitted, the default Go cipher suites will be used.\n"+
+			fmt.Sprintf("Possible values are %s.", strings.Join(cliflag.TLSCipherPossibleValues(), ", ")),
+	)
 
 	feature.MutableGates.AddFlag(fs)
 }
@@ -226,6 +245,22 @@ func main() {
 		os.Exit(1)
 	}
 
+	minTLSVersionSetFunc, err := setMinTLSVersionFunc(tlsMinVersion)
+	if err != nil {
+		setupLog.Error(err, "unable to set TLS min version")
+		os.Exit(1)
+	}
+	mgr.GetWebhookServer().TLSOpts = append(mgr.GetWebhookServer().TLSOpts, minTLSVersionSetFunc)
+
+	if tlsCipherSuites != "" {
+		cipherSuitesSetFunc, err := setCipherSuiteFunc(tlsCipherSuites)
+		if err != nil {
+			setupLog.Error(err, "unable to set TLS Cipher suites")
+			os.Exit(1)
+		}
+		mgr.GetWebhookServer().TLSOpts = append(mgr.GetWebhookServer().TLSOpts, cipherSuitesSetFunc)
+	}
+
 	setupChecks(mgr)
 
 	sigHandler := ctrlsig.SetupSignalHandler()
@@ -244,6 +279,7 @@ func main() {
 	defer func(watch *fsnotify.Watcher) {
 		_ = watch.Close()
 	}(watch)
+	defer session.Clear()
 }
 
 func setupVAPIControllers(ctx *context.ControllerManagerContext, mgr ctrlmgr.Manager) error {
@@ -301,6 +337,12 @@ func setupVAPIControllers(ctx *context.ControllerManagerContext, mgr ctrlmgr.Man
 	if err := controllers.AddVSphereDeploymentZoneControllerToManager(ctx, mgr); err != nil {
 		return err
 	}
+
+	if feature.Gates.Enabled(feature.NodeLabeling) {
+		if err := controllers.AddNodeLabelControllerToManager(ctx, mgr); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -322,6 +364,27 @@ func setupSupervisorControllers(ctx *context.ControllerManagerContext, mgr ctrlm
 	}
 
 	return nil
+}
+
+func setCipherSuiteFunc(cipherSuiteString string) (func(cfg *tls.Config), error) {
+	cipherSuites := strings.Split(cipherSuiteString, ",")
+	suites, err := cliflag.TLSCipherSuites(cipherSuites)
+	if err != nil {
+		return nil, err
+	}
+	return func(cfg *tls.Config) {
+		cfg.CipherSuites = suites
+	}, nil
+}
+
+func setMinTLSVersionFunc(versionName string) (func(cfg *tls.Config), error) {
+	tlsVersion, err := cliflag.TLSVersion(versionName)
+	if err != nil {
+		return nil, err
+	}
+	return func(cfg *tls.Config) {
+		cfg.MinVersion = tlsVersion
+	}, nil
 }
 
 func setupChecks(mgr ctrlmgr.Manager) {

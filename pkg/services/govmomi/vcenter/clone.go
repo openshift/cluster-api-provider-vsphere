@@ -28,6 +28,7 @@ import (
 	"github.com/vmware/govmomi/vim25/mo"
 	"github.com/vmware/govmomi/vim25/types"
 	"k8s.io/utils/pointer"
+	bootstrapv1 "sigs.k8s.io/cluster-api/bootstrap/kubeadm/api/v1beta1"
 
 	infrav1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/v1beta1"
 	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/context"
@@ -45,7 +46,7 @@ const (
 // in VMContext.VSphereVM.Status.TaskRef.
 //
 //nolint:gocognit,gocyclo
-func Clone(ctx *context.VMContext, bootstrapData []byte) error {
+func Clone(ctx *context.VMContext, bootstrapData []byte, format bootstrapv1.Format) error {
 	ctx = &context.VMContext{
 		ControllerContext: ctx.ControllerContext,
 		VSphereVM:         ctx.VSphereVM,
@@ -58,8 +59,11 @@ func Clone(ctx *context.VMContext, bootstrapData []byte) error {
 	var extraConfig extra.Config
 	if len(bootstrapData) > 0 {
 		ctx.Logger.Info("applied bootstrap data to VM clone spec")
-		if err := extraConfig.SetCloudInitUserData(bootstrapData); err != nil {
-			return err
+		switch format {
+		case bootstrapv1.CloudConfig:
+			extraConfig.SetCloudInitUserData(bootstrapData)
+		case bootstrapv1.Ignition:
+			extraConfig.SetIgnitionUserData(bootstrapData)
 		}
 	}
 	if ctx.VSphereVM.Spec.CustomVMXKeys != nil {
@@ -267,7 +271,8 @@ func Clone(ctx *context.VMContext, bootstrapData []byte) error {
 	}
 
 	disks := devices.SelectByType((*types.VirtualDisk)(nil))
-	spec.Location.Disk = getDiskLocators(disks, *datastoreRef)
+	isLinkedClone := snapshotRef != nil
+	spec.Location.Disk = getDiskLocators(disks, *datastoreRef, isLinkedClone)
 
 	ctx.Logger.Info("cloning machine", "namespace", ctx.VSphereVM.Namespace, "name", ctx.VSphereVM.Name, "cloneType", ctx.VSphereVM.Status.CloneMode)
 	task, err := tpl.Clone(ctx, folder, ctx.VSphereVM.Name, spec)
@@ -293,7 +298,7 @@ func newVMFlagInfo() *types.VirtualMachineFlagInfo {
 	}
 }
 
-func getDiskLocators(disks object.VirtualDeviceList, datastoreRef types.ManagedObjectReference) []types.VirtualMachineRelocateSpecDiskLocator {
+func getDiskLocators(disks object.VirtualDeviceList, datastoreRef types.ManagedObjectReference, isLinkedClone bool) []types.VirtualMachineRelocateSpecDiskLocator {
 	diskLocators := make([]types.VirtualMachineRelocateSpecDiskLocator, 0, len(disks))
 	for _, disk := range disks {
 		dl := types.VirtualMachineRelocateSpecDiskLocator{
@@ -302,6 +307,9 @@ func getDiskLocators(disks object.VirtualDeviceList, datastoreRef types.ManagedO
 			Datastore:    datastoreRef,
 		}
 
+		if isLinkedClone {
+			dl.DiskMoveType = string(linkCloneDiskMoveType)
+		}
 		if vmDiskBacking, ok := disk.(*types.VirtualDisk).Backing.(*types.VirtualDiskFlatVer2BackingInfo); ok {
 			dl.DiskBackingInfo = vmDiskBacking
 		}
