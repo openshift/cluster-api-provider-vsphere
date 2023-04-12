@@ -1,10 +1,9 @@
-
 ---
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.7.0
+    controller-gen.kubebuilder.io/version: v0.10.0
   creationTimestamp: null
   name: virtualmachineimages.vmoperator.vmware.com
 spec:
@@ -14,25 +13,32 @@ spec:
     listKind: VirtualMachineImageList
     plural: virtualmachineimages
     shortNames:
+    - vmi
     - vmimage
     singular: virtualmachineimage
   scope: Cluster
   versions:
   - additionalPrinterColumns:
     - jsonPath: .spec.providerRef.name
-      name: ContentSourceName
+      name: Provider-Name
+      type: string
+    - jsonPath: .status.contentLibraryRef.name
+      name: Content-Library-Name
+      type: string
+    - jsonPath: .status.imageName
+      name: Image-Name
       type: string
     - jsonPath: .spec.productInfo.version
       name: Version
       type: string
     - jsonPath: .spec.osInfo.type
-      name: OsType
+      name: Os-Type
       type: string
     - jsonPath: .spec.type
       name: Format
       type: string
     - jsonPath: .status.imageSupported
-      name: ImageSupported
+      name: Image-Supported
       priority: 1
       type: boolean
     - jsonPath: .metadata.creationTimestamp
@@ -60,7 +66,7 @@ spec:
           metadata:
             type: object
           spec:
-            description: VirtualMachineImageSpec defines the desired state of VirtualMachineImage
+            description: VirtualMachineImageSpec defines the desired state of VirtualMachineImage.
             properties:
               hwVersion:
                 description: HardwareVersion describes the virtual hardware version
@@ -99,8 +105,16 @@ spec:
                       description: Default describes the default value of the ovf
                         key.
                       type: string
+                    description:
+                      description: Description contains the value of the OVF property's
+                        optional "Description" element.
+                      type: string
                     key:
                       description: Key describes the key of the ovf property.
+                      type: string
+                    label:
+                      description: Label contains the value of the OVF property's
+                        optional "Label" element.
                       type: string
                     type:
                       description: Type describes the type of the ovf property.
@@ -164,7 +178,7 @@ spec:
             - type
             type: object
           status:
-            description: VirtualMachineImageStatus defines the observed state of VirtualMachineImage
+            description: VirtualMachineImageStatus defines the observed state of VirtualMachineImage.
             properties:
               conditions:
                 description: Conditions describes the current condition information
@@ -204,14 +218,40 @@ spec:
                       description: Type of condition in CamelCase or in foo.example.com/CamelCase.
                         Many .condition.type values are consistent across resources
                         like Available, but because arbitrary conditions can be useful
-                        (see .node.status.conditions), the ability to deconflict is
-                        important.
+                        (see .node.status.conditions), the ability to disambiguate
+                        is important.
                       type: string
                   required:
                   - status
                   - type
                   type: object
                 type: array
+              contentLibraryRef:
+                description: ContentLibraryRef is a reference to the source ContentLibrary/ClusterContentLibrary
+                  resource.
+                properties:
+                  apiGroup:
+                    description: APIGroup is the group for the resource being referenced.
+                      If APIGroup is not specified, the specified Kind must be in
+                      the core API group. For any other third-party types, APIGroup
+                      is required.
+                    type: string
+                  kind:
+                    description: Kind is the type of resource being referenced
+                    type: string
+                  name:
+                    description: Name is the name of resource being referenced
+                    type: string
+                required:
+                - kind
+                - name
+                type: object
+                x-kubernetes-map-type: atomic
+              contentVersion:
+                description: ContentVersion describes the observed content version
+                  of this VirtualMachineImage that was last successfully synced with
+                  the vSphere content library item.
+                type: string
               imageName:
                 description: ImageName describes the display name of this VirtualMachineImage.
                 type: string
@@ -237,9 +277,3 @@ spec:
     storage: true
     subresources:
       status: {}
-status:
-  acceptedNames:
-    kind: ""
-    plural: ""
-  conditions: []
-  storedVersions: []

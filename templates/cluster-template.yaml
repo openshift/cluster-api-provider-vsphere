@@ -162,19 +162,19 @@ spec:
         criSocket: /var/run/containerd/containerd.sock
         kubeletExtraArgs:
           cloud-provider: external
-        name: '{{ ds.meta_data.hostname }}'
+        name: '{{ local_hostname }}'
     joinConfiguration:
       nodeRegistration:
         criSocket: /var/run/containerd/containerd.sock
         kubeletExtraArgs:
           cloud-provider: external
-        name: '{{ ds.meta_data.hostname }}'
+        name: '{{ local_hostname }}'
     preKubeadmCommands:
-    - hostname "{{ ds.meta_data.hostname }}"
-    - echo "::1         ipv6-localhost ipv6-loopback" >/etc/hosts
-    - echo "127.0.0.1   localhost" >>/etc/hosts
-    - echo "127.0.0.1   {{ ds.meta_data.hostname }}" >>/etc/hosts
-    - echo "{{ ds.meta_data.hostname }}" >/etc/hostname
+    - hostnamectl set-hostname "{{ ds.meta_data.hostname }}"
+    - echo "::1         ipv6-localhost ipv6-loopback localhost6 localhost6.localdomain6"
+      >/etc/hosts
+    - echo "127.0.0.1   {{ ds.meta_data.hostname }} {{ local_hostname }} localhost
+      localhost.localdomain localhost4 localhost4.localdomain4" >>/etc/hosts
     users:
     - name: capv
       sshAuthorizedKeys:
@@ -201,13 +201,13 @@ spec:
           criSocket: /var/run/containerd/containerd.sock
           kubeletExtraArgs:
             cloud-provider: external
-          name: '{{ ds.meta_data.hostname }}'
+          name: '{{ local_hostname }}'
       preKubeadmCommands:
-      - hostname "{{ ds.meta_data.hostname }}"
-      - echo "::1         ipv6-localhost ipv6-loopback" >/etc/hosts
-      - echo "127.0.0.1   localhost" >>/etc/hosts
-      - echo "127.0.0.1   {{ ds.meta_data.hostname }}" >>/etc/hosts
-      - echo "{{ ds.meta_data.hostname }}" >/etc/hostname
+      - hostnamectl set-hostname "{{ ds.meta_data.hostname }}"
+      - echo "::1         ipv6-localhost ipv6-loopback localhost6 localhost6.localdomain6"
+        >/etc/hosts
+      - echo "127.0.0.1   {{ ds.meta_data.hostname }} {{ local_hostname }} localhost
+        localhost.localdomain localhost4 localhost4.localdomain4" >>/etc/hosts
       users:
       - name: capv
         sshAuthorizedKeys:
@@ -720,6 +720,9 @@ data:
           - effect: NoSchedule
             key: node-role.kubernetes.io/master
             operator: Exists
+          - effect: NoSchedule
+            key: node-role.kubernetes.io/control-plane
+            operator: Exists
           volumes:
           - name: vsphere-config-volume
             secret:
@@ -741,6 +744,9 @@ stringData:
     apiVersion: v1
     kind: ServiceAccount
     metadata:
+      labels:
+        component: cloud-controller-manager
+        vsphere-cpi-infra: service-account
       name: cloud-controller-manager
       namespace: kube-system
 type: addons.cluster.x-k8s.io/resource-set
@@ -755,6 +761,9 @@ stringData:
     apiVersion: v1
     kind: Secret
     metadata:
+      labels:
+        component: cloud-controller-manager
+        vsphere-cpi-infra: secret
       name: cloud-provider-vsphere-credentials
       namespace: kube-system
     stringData:
@@ -770,6 +779,9 @@ data:
     apiVersion: rbac.authorization.k8s.io/v1
     kind: ClusterRole
     metadata:
+      labels:
+        component: cloud-controller-manager
+        vsphere-cpi-infra: role
       name: system:cloud-controller-manager
     rules:
     - apiGroups:
@@ -801,6 +813,12 @@ data:
       - patch
       - update
       - watch
+    - apiGroups:
+      - ""
+      resources:
+      - services/status
+      verbs:
+      - patch
     - apiGroups:
       - ""
       resources:
@@ -846,13 +864,15 @@ data:
       - get
       - watch
       - list
-      - delete
       - update
       - create
     ---
     apiVersion: rbac.authorization.k8s.io/v1
     kind: ClusterRoleBinding
     metadata:
+      labels:
+        component: cloud-controller-manager
+        vsphere-cpi-infra: cluster-role-binding
       name: system:cloud-controller-manager
     roleRef:
       apiGroup: rbac.authorization.k8s.io
@@ -869,6 +889,7 @@ data:
     data:
       vsphere.conf: |
         global:
+          port: 443
           secretName: cloud-provider-vsphere-credentials
           secretNamespace: kube-system
           thumbprint: '${VSPHERE_TLS_THUMBPRINT}'
@@ -876,10 +897,7 @@ data:
           ${VSPHERE_SERVER}:
             datacenters:
             - '${VSPHERE_DATACENTER}'
-            secretName: cloud-provider-vsphere-credentials
-            secretNamespace: kube-system
             server: '${VSPHERE_SERVER}'
-            thumbprint: '${VSPHERE_TLS_THUMBPRINT}'
     kind: ConfigMap
     metadata:
       name: vsphere-cloud-config
@@ -888,6 +906,9 @@ data:
     apiVersion: rbac.authorization.k8s.io/v1
     kind: RoleBinding
     metadata:
+      labels:
+        component: cloud-controller-manager
+        vsphere-cpi-infra: role-binding
       name: servicecatalog.k8s.io:apiserver-authentication-reader
       namespace: kube-system
     roleRef:
@@ -901,44 +922,41 @@ data:
     - kind: User
       name: cloud-controller-manager
     ---
-    apiVersion: v1
-    kind: Service
-    metadata:
-      labels:
-        component: cloud-controller-manager
-      name: cloud-controller-manager
-      namespace: kube-system
-    spec:
-      ports:
-      - port: 443
-        protocol: TCP
-        targetPort: 43001
-      selector:
-        component: cloud-controller-manager
-      type: NodePort
-    ---
     apiVersion: apps/v1
     kind: DaemonSet
     metadata:
       labels:
-        k8s-app: vsphere-cloud-controller-manager
+        component: cloud-controller-manager
+        tier: control-plane
       name: vsphere-cloud-controller-manager
       namespace: kube-system
     spec:
       selector:
         matchLabels:
-          k8s-app: vsphere-cloud-controller-manager
+          name: vsphere-cloud-controller-manager
       template:
         metadata:
           labels:
-            k8s-app: vsphere-cloud-controller-manager
+            component: cloud-controller-manager
+            name: vsphere-cloud-controller-manager
+            tier: control-plane
         spec:
+          affinity:
+            nodeAffinity:
+              requiredDuringSchedulingIgnoredDuringExecution:
+                nodeSelectorTerms:
+                - matchExpressions:
+                  - key: node-role.kubernetes.io/control-plane
+                    operator: Exists
+                - matchExpressions:
+                  - key: node-role.kubernetes.io/master
+                    operator: Exists
           containers:
           - args:
             - --v=2
             - --cloud-provider=vsphere
             - --cloud-config=/etc/cloud/vsphere.conf
-            image: gcr.io/cloud-provider-vsphere/cpi/release/manager:v1.18.1
+            image: gcr.io/cloud-provider-vsphere/cpi/release/manager:${CPI_IMAGE_K8S_VERSION}
             name: vsphere-cloud-controller-manager
             resources:
               requests:
@@ -948,6 +966,9 @@ data:
               name: vsphere-config-volume
               readOnly: true
           hostNetwork: true
+          priorityClassName: system-node-critical
+          securityContext:
+            runAsUser: 1001
           serviceAccountName: cloud-controller-manager
           tolerations:
           - effect: NoSchedule
@@ -955,8 +976,13 @@ data:
             value: "true"
           - effect: NoSchedule
             key: node-role.kubernetes.io/master
+            operator: Exists
+          - effect: NoSchedule
+            key: node-role.kubernetes.io/control-plane
+            operator: Exists
           - effect: NoSchedule
             key: node.kubernetes.io/not-ready
+            operator: Exists
           volumes:
           - configMap:
               name: vsphere-cloud-config

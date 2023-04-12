@@ -1,10 +1,9 @@
-
 ---
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.7.0
+    controller-gen.kubebuilder.io/version: v0.10.0
   creationTimestamp: null
   name: contentsources.vmoperator.vmware.com
 spec:
@@ -36,7 +35,7 @@ spec:
           metadata:
             type: object
           spec:
-            description: ContentSourceSpec defines the desired state of ContentSource
+            description: ContentSourceSpec defines the desired state of ContentSource.
             properties:
               providerRef:
                 description: ProviderRef is a reference to a content provider object
@@ -61,14 +60,8 @@ spec:
                 type: object
             type: object
           status:
-            description: ContentSourceStatus defines the observed state of ContentSource
+            description: ContentSourceStatus defines the observed state of ContentSource.
             type: object
         type: object
     served: true
     storage: true
-status:
-  acceptedNames:
-    kind: ""
-    plural: ""
-  conditions: []
-  storedVersions: []

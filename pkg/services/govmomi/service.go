@@ -46,6 +46,7 @@ import (
 	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/services/govmomi/clustermodules"
 	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/services/govmomi/extra"
 	govmominet "sigs.k8s.io/cluster-api-provider-vsphere/pkg/services/govmomi/net"
+	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/services/govmomi/pci"
 	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/util"
 )
 
@@ -75,6 +76,10 @@ func (vms *VMService) ReconcileVM(ctx *context.VMContext) (vm infrav1.VirtualMac
 	// there is no task for the VSphereVM resource then no reconcile
 	// event is triggered.
 	defer reconcileVSphereVMOnTaskCompletion(ctx)
+
+	if ok, err := vms.reconcileIPAddressClaims(ctx); err != nil || !ok {
+		return vm, err
+	}
 
 	// Before going further, we need the VM's managed object reference.
 	vmRef, err := findVM(ctx)
@@ -109,6 +114,7 @@ func (vms *VMService) ReconcileVM(ctx *context.VMContext) (vm infrav1.VirtualMac
 		err = createVM(ctx, bootstrapData, format)
 		if err != nil {
 			conditions.MarkFalse(ctx.VSphereVM, infrav1.VMProvisionedCondition, infrav1.CloningFailedReason, clusterv1.ConditionSeverityWarning, err.Error())
+			return vm, err
 		}
 		return vm, nil
 	}
@@ -127,15 +133,15 @@ func (vms *VMService) ReconcileVM(ctx *context.VMContext) (vm infrav1.VirtualMac
 
 	vms.reconcileUUID(vmCtx)
 
-	if err := vms.reconcileHardwareVersion(vmCtx); err != nil {
+	if ok, err := vms.reconcileHardwareVersion(vmCtx); err != nil || !ok {
+		return vm, err
+	}
+
+	if err := vms.reconcilePCIDevices(vmCtx); err != nil {
 		return vm, err
 	}
 
 	if err := vms.reconcileNetworkStatus(vmCtx); err != nil {
-		return vm, err
-	}
-
-	if ok, err := vms.reconcileIPAddressClaims(vmCtx); err != nil || !ok {
 		return vm, err
 	}
 
@@ -270,7 +276,7 @@ func (vms *VMService) reconcileNetworkStatus(ctx *virtualMachineContext) error {
 
 // reconcileIPAddressClaims ensures that VSphereVMs that are configured with
 // .spec.network.devices.addressFromPools have corresponding IPAddressClaims.
-func (vms *VMService) reconcileIPAddressClaims(ctx *virtualMachineContext) (bool, error) {
+func (vms *VMService) reconcileIPAddressClaims(ctx *context.VMContext) (bool, error) {
 	for devIdx, device := range ctx.VSphereVM.Spec.Network.Devices {
 		for poolRefIdx, poolRef := range device.AddressesFromPools {
 			// check if claim exists
@@ -288,24 +294,7 @@ func (vms *VMService) reconcileIPAddressClaims(ctx *virtualMachineContext) (bool
 				ctx.Logger.V(5).Info("IPAddressClaim found", "name", ipAddrClaimName)
 			}
 			if apierrors.IsNotFound(err) {
-				ctx.Logger.Info("creating IPAddressClaim", "name", ipAddrClaimName)
-				claim := &ipamv1.IPAddressClaim{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:      ipAddrClaimName,
-						Namespace: ctx.VSphereVM.Namespace,
-						OwnerReferences: []metav1.OwnerReference{
-							{
-								APIVersion: ctx.VSphereVM.APIVersion,
-								Kind:       ctx.VSphereVM.Kind,
-								Name:       ctx.VSphereVM.Name,
-								UID:        ctx.VSphereVM.UID,
-							},
-						},
-						Finalizers: []string{infrav1.IPAddressClaimFinalizer},
-					},
-					Spec: ipamv1.IPAddressClaimSpec{PoolRef: poolRef},
-				}
-				if err = ctx.Client.Create(ctx, claim); err != nil {
+				if err = createIPAddressClaim(ctx, ipAddrClaimName, poolRef); err != nil {
 					return false, err
 				}
 				msg := "Waiting for IPAddressClaim to have an IPAddress bound"
@@ -314,6 +303,29 @@ func (vms *VMService) reconcileIPAddressClaims(ctx *virtualMachineContext) (bool
 		}
 	}
 	return true, nil
+}
+
+// createIPAddressClaim sets up the ipam IPAddressClaim object and creates it in
+// the API.
+func createIPAddressClaim(ctx *context.VMContext, ipAddrClaimName string, poolRef corev1.TypedLocalObjectReference) error {
+	ctx.Logger.Info("creating IPAddressClaim", "name", ipAddrClaimName)
+	claim := &ipamv1.IPAddressClaim{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      ipAddrClaimName,
+			Namespace: ctx.VSphereVM.Namespace,
+			OwnerReferences: []metav1.OwnerReference{
+				{
+					APIVersion: ctx.VSphereVM.APIVersion,
+					Kind:       ctx.VSphereVM.Kind,
+					Name:       ctx.VSphereVM.Name,
+					UID:        ctx.VSphereVM.UID,
+				},
+			},
+			Finalizers: []string{infrav1.IPAddressClaimFinalizer},
+		},
+		Spec: ipamv1.IPAddressClaimSpec{PoolRef: poolRef},
+	}
+	return ctx.Client.Create(ctx, claim)
 }
 
 // reconcileIPAddresses prevents successful reconcilliation of a VSphereVM
@@ -584,28 +596,65 @@ func (vms *VMService) reconcileUUID(ctx *virtualMachineContext) {
 	ctx.State.BiosUUID = ctx.Obj.UUID(ctx)
 }
 
-func (vms *VMService) reconcileHardwareVersion(ctx *virtualMachineContext) error {
-	if ctx.VSphereVM.Spec.HardwareVersion == "" {
-		return nil
-	}
-
-	var virtualMachine mo.VirtualMachine
-	if err := ctx.Obj.Properties(ctx, ctx.Obj.Reference(), []string{"config.version"}, &virtualMachine); err != nil {
-		return errors.Wrapf(err, "error getting guestInfo version information from VM %s", ctx.VSphereVM.Name)
-	}
-	toUpgrade, err := util.LessThan(virtualMachine.Config.Version, ctx.VSphereVM.Spec.HardwareVersion)
-	if err != nil {
-		return errors.Wrapf(err, "failed to parse hardware version")
-	}
-	if toUpgrade {
-		ctx.Logger.Info("upgrading hardware version",
-			"from", virtualMachine.Config.Version,
-			"to", ctx.VSphereVM.Spec.HardwareVersion)
-		task, err := ctx.Obj.UpgradeVM(ctx, ctx.VSphereVM.Spec.HardwareVersion)
-		if err != nil {
-			return errors.Wrapf(err, "error trigging upgrade op for machine %s", ctx)
+func (vms *VMService) reconcileHardwareVersion(ctx *virtualMachineContext) (bool, error) {
+	if ctx.VSphereVM.Spec.HardwareVersion != "" {
+		var virtualMachine mo.VirtualMachine
+		if err := ctx.Obj.Properties(ctx, ctx.Obj.Reference(), []string{"config.version"}, &virtualMachine); err != nil {
+			return false, errors.Wrapf(err, "error getting guestInfo version information from VM %s", ctx.VSphereVM.Name)
 		}
-		ctx.VSphereVM.Status.TaskRef = task.Reference().Value
+		toUpgrade, err := util.LessThan(virtualMachine.Config.Version, ctx.VSphereVM.Spec.HardwareVersion)
+		if err != nil {
+			return false, errors.Wrapf(err, "failed to parse hardware version")
+		}
+		if toUpgrade {
+			ctx.Logger.Info("upgrading hardware version",
+				"from", virtualMachine.Config.Version,
+				"to", ctx.VSphereVM.Spec.HardwareVersion)
+			task, err := ctx.Obj.UpgradeVM(ctx, ctx.VSphereVM.Spec.HardwareVersion)
+			if err != nil {
+				return false, errors.Wrapf(err, "error trigging upgrade op for machine %s", ctx)
+			}
+			ctx.VSphereVM.Status.TaskRef = task.Reference().Value
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+func (vms *VMService) reconcilePCIDevices(ctx *virtualMachineContext) error {
+	if expectedPciDevices := ctx.VSphereVM.Spec.VirtualMachineCloneSpec.PciDevices; len(expectedPciDevices) != 0 {
+		specsToBeAdded, err := pci.CalculateDevicesToBeAdded(ctx, ctx.Obj, expectedPciDevices)
+		if err != nil {
+			return err
+		}
+
+		if len(specsToBeAdded) == 0 {
+			if conditions.Has(ctx.VSphereVM, infrav1.PCIDevicesDetachedCondition) {
+				conditions.Delete(ctx.VSphereVM, infrav1.PCIDevicesDetachedCondition)
+			}
+			ctx.Logger.V(5).Info("no new PCI devices to be added")
+			return nil
+		}
+
+		powerState, err := ctx.Obj.PowerState(ctx)
+		if err != nil {
+			return err
+		}
+		if powerState == types.VirtualMachinePowerStatePoweredOn {
+			// This would arise only when the PCI device is manually removed from
+			// the VM post creation.
+			ctx.Logger.Info("PCI device cannot be attached in powered on state")
+			conditions.MarkFalse(ctx.VSphereVM,
+				infrav1.PCIDevicesDetachedCondition,
+				infrav1.NotFoundReason,
+				clusterv1.ConditionSeverityWarning,
+				"PCI devices removed after VM was powered on")
+			return errors.Errorf("missing PCI devices")
+		}
+		ctx.Logger.Info("PCI devices to be added", "number", len(specsToBeAdded))
+		if err := ctx.Obj.AddDevice(ctx, pci.ConstructDeviceSpecs(specsToBeAdded)...); err != nil {
+			return errors.Wrapf(err, "error adding pci devices for %q", ctx)
+		}
 	}
 	return nil
 }
