@@ -24,14 +24,20 @@ import (
 	"os"
 	"path"
 	goruntime "runtime"
+	"sync"
+	"time"
 
+	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/tools/clientcmd/api"
+	"k8s.io/klog/v2"
+	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
@@ -39,6 +45,17 @@ import (
 	"sigs.k8s.io/cluster-api/test/framework/exec"
 	"sigs.k8s.io/cluster-api/test/framework/internal/log"
 	"sigs.k8s.io/cluster-api/test/infrastructure/container"
+)
+
+const (
+	retryableOperationInterval = 3 * time.Second
+	// retryableOperationTimeout requires a higher value especially for self-hosted upgrades.
+	// Short unavailability of the Kube APIServer due to joining etcd members paired with unreachable conversion webhooks due to
+	// failed leader election and thus controller restarts lead to longer taking retries.
+	// The timeout occurs when listing machines in `GetControlPlaneMachinesByCluster`.
+	retryableOperationTimeout = 3 * time.Minute
+
+	initialCacheSyncTimeout = time.Minute
 )
 
 // ClusterProxy defines the behavior of a type that acts as an intermediary with an existing Kubernetes cluster.
@@ -63,6 +80,9 @@ type ClusterProxy interface {
 
 	// GetRESTConfig returns the REST config for direct use with client-go if needed.
 	GetRESTConfig() *rest.Config
+
+	// GetCache returns a controller-runtime cache to create informer from.
+	GetCache(ctx context.Context) cache.Cache
 
 	// GetLogCollector returns the machine log collector for the Kubernetes cluster.
 	GetLogCollector() ClusterLogCollector
@@ -106,6 +126,8 @@ type clusterProxy struct {
 	scheme                  *runtime.Scheme
 	shouldCleanupKubeconfig bool
 	logCollector            ClusterLogCollector
+	cache                   cache.Cache
+	onceCache               sync.Once
 }
 
 // NewClusterProxy returns a clusterProxy given a KubeconfigPath and the scheme defining the types hosted in the cluster.
@@ -168,8 +190,18 @@ func (p *clusterProxy) GetScheme() *runtime.Scheme {
 func (p *clusterProxy) GetClient() client.Client {
 	config := p.GetRESTConfig()
 
-	c, err := client.New(config, client.Options{Scheme: p.scheme})
-	Expect(err).ToNot(HaveOccurred(), "Failed to get controller-runtime client")
+	var c client.Client
+	var newClientErr error
+	err := wait.PollImmediate(retryableOperationInterval, retryableOperationTimeout, func() (bool, error) {
+		c, newClientErr = client.New(config, client.Options{Scheme: p.scheme})
+		if newClientErr != nil {
+			return false, nil //nolint:nilerr
+		}
+		return true, nil
+	})
+	errorString := "Failed to get controller-runtime client"
+	Expect(newClientErr).ToNot(HaveOccurred(), errorString)
+	Expect(err).ToNot(HaveOccurred(), errorString)
 
 	return c
 }
@@ -182,6 +214,29 @@ func (p *clusterProxy) GetClientSet() *kubernetes.Clientset {
 	Expect(err).ToNot(HaveOccurred(), "Failed to get client-go client")
 
 	return cs
+}
+
+func (p *clusterProxy) GetCache(ctx context.Context) cache.Cache {
+	p.onceCache.Do(func() {
+		var err error
+		p.cache, err = cache.New(p.GetRESTConfig(), cache.Options{
+			Scheme: p.scheme,
+			Mapper: p.GetClient().RESTMapper(),
+		})
+		Expect(err).ToNot(HaveOccurred(), "Failed to create controller-runtime cache")
+
+		go func() {
+			defer GinkgoRecover()
+			Expect(p.cache.Start(ctx)).To(Succeed())
+		}()
+
+		cacheSyncCtx, cacheSyncCtxCancel := context.WithTimeout(ctx, initialCacheSyncTimeout)
+		defer cacheSyncCtxCancel()
+		Expect(p.cache.WaitForCacheSync(cacheSyncCtx)).
+			To(BeTrue(), fmt.Sprintf("failed waiting for cache for cluster proxy to sync: %v", ctx.Err()))
+	})
+
+	return p.cache
 }
 
 // Apply wraps `kubectl apply ...` and prints the output so we can see what gets applied to the cluster.
@@ -231,27 +286,35 @@ func (p *clusterProxy) CollectWorkloadClusterLogs(ctx context.Context, namespace
 		return
 	}
 
-	machines, err := getMachinesInCluster(ctx, p.GetClient(), namespace, name)
-	Expect(err).ToNot(HaveOccurred(), "Failed to get machines for the %s/%s cluster", namespace, name)
+	var machines *clusterv1.MachineList
+	Eventually(func() error {
+		var err error
+		machines, err = getMachinesInCluster(ctx, p.GetClient(), namespace, name)
+		return err
+	}, retryableOperationTimeout, retryableOperationInterval).Should(Succeed(), "Failed to get Machines for the Cluster %s", klog.KRef(namespace, name))
 
 	for i := range machines.Items {
 		m := &machines.Items[i]
 		err := p.logCollector.CollectMachineLog(ctx, p.GetClient(), m, path.Join(outputPath, "machines", m.GetName()))
 		if err != nil {
 			// NB. we are treating failures in collecting logs as a non blocking operation (best effort)
-			fmt.Printf("Failed to get logs for machine %s, cluster %s/%s: %v\n", m.GetName(), namespace, name, err)
+			fmt.Printf("Failed to get logs for Machine %s, Cluster %s: %v\n", m.GetName(), klog.KRef(namespace, name), err)
 		}
 	}
 
-	machinePools, err := getMachinePoolsInCluster(ctx, p.GetClient(), namespace, name)
-	Expect(err).ToNot(HaveOccurred(), "Failed to get machine pools for the %s/%s cluster", namespace, name)
+	var machinePools *expv1.MachinePoolList
+	Eventually(func() error {
+		var err error
+		machinePools, err = getMachinePoolsInCluster(ctx, p.GetClient(), namespace, name)
+		return err
+	}, retryableOperationTimeout, retryableOperationInterval).Should(Succeed(), "Failed to get MachinePools for Cluster %s", klog.KRef(namespace, name))
 
 	for i := range machinePools.Items {
 		mp := &machinePools.Items[i]
 		err := p.logCollector.CollectMachinePoolLog(ctx, p.GetClient(), mp, path.Join(outputPath, "machine-pools", mp.GetName()))
 		if err != nil {
 			// NB. we are treating failures in collecting logs as a non blocking operation (best effort)
-			fmt.Printf("Failed to get logs for machine pool %s, cluster %s/%s: %v\n", mp.GetName(), namespace, name, err)
+			fmt.Printf("Failed to get logs for MachinePool %s, Cluster %s: %v\n", mp.GetName(), klog.KRef(namespace, name), err)
 		}
 	}
 }
@@ -262,7 +325,7 @@ func getMachinesInCluster(ctx context.Context, c client.Client, namespace, name 
 	}
 
 	machineList := &clusterv1.MachineList{}
-	labels := map[string]string{clusterv1.ClusterLabelName: name}
+	labels := map[string]string{clusterv1.ClusterNameLabel: name}
 	if err := c.List(ctx, machineList, client.InNamespace(namespace), client.MatchingLabels(labels)); err != nil {
 		return nil, err
 	}
@@ -276,7 +339,7 @@ func getMachinePoolsInCluster(ctx context.Context, c client.Client, namespace, n
 	}
 
 	machinePoolList := &expv1.MachinePoolList{}
-	labels := map[string]string{clusterv1.ClusterLabelName: name}
+	labels := map[string]string{clusterv1.ClusterNameLabel: name}
 	if err := c.List(ctx, machinePoolList, client.InNamespace(namespace), client.MatchingLabels(labels)); err != nil {
 		return nil, err
 	}
@@ -292,7 +355,9 @@ func (p *clusterProxy) getKubeconfig(ctx context.Context, namespace string, name
 		Name:      fmt.Sprintf("%s-kubeconfig", name),
 		Namespace: namespace,
 	}
-	Expect(cl.Get(ctx, key, secret)).To(Succeed(), "Failed to get %s", key)
+	Eventually(func() error {
+		return cl.Get(ctx, key, secret)
+	}, retryableOperationTimeout, retryableOperationInterval).Should(Succeed(), "Failed to get %s", key)
 	Expect(secret.Data).To(HaveKey("value"), "Invalid secret %s", key)
 
 	config, err := clientcmd.Load(secret.Data["value"])
@@ -309,7 +374,9 @@ func (p *clusterProxy) isDockerCluster(ctx context.Context, namespace string, na
 		Name:      name,
 		Namespace: namespace,
 	}
-	Expect(cl.Get(ctx, key, cluster)).To(Succeed(), "Failed to get %s", key)
+	Eventually(func() error {
+		return cl.Get(ctx, key, cluster)
+	}, retryableOperationTimeout, retryableOperationInterval).Should(Succeed(), "Failed to get %s", key)
 
 	return cluster.Spec.InfrastructureRef.Kind == "DockerCluster"
 }
@@ -320,6 +387,20 @@ func (p *clusterProxy) fixConfig(ctx context.Context, name string, config *api.C
 	ctx = container.RuntimeInto(ctx, containerRuntime)
 
 	lbContainerName := name + "-lb"
+
+	// Check if the container exists locally.
+	filters := container.FilterBuilder{}
+	filters.AddKeyValue("name", lbContainerName)
+	containers, err := containerRuntime.ListContainers(ctx, filters)
+	Expect(err).ToNot(HaveOccurred())
+	if len(containers) == 0 {
+		// Return without changing the config if the container does not exist locally.
+		// Note: This is necessary when running the tests with Tilt and a remote Docker
+		// engine as the lb container running on the remote Docker engine is accessible
+		// under its normal address but not via 127.0.0.1.
+		return
+	}
+
 	port, err := containerRuntime.GetHostPort(ctx, lbContainerName, "6443/tcp")
 	Expect(err).ToNot(HaveOccurred(), "Failed to get load balancer port")
 

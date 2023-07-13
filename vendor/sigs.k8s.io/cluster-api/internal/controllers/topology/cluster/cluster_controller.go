@@ -19,6 +19,7 @@ package cluster
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/pkg/errors"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -30,13 +31,23 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	"sigs.k8s.io/controller-runtime/pkg/source"
 
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	"sigs.k8s.io/cluster-api/api/v1beta1/index"
 	"sigs.k8s.io/cluster-api/controllers/external"
+	runtimecatalog "sigs.k8s.io/cluster-api/exp/runtime/catalog"
+	runtimehooksv1 "sigs.k8s.io/cluster-api/exp/runtime/hooks/api/v1alpha1"
+	"sigs.k8s.io/cluster-api/feature"
 	"sigs.k8s.io/cluster-api/internal/controllers/topology/cluster/patches"
 	"sigs.k8s.io/cluster-api/internal/controllers/topology/cluster/scope"
+	"sigs.k8s.io/cluster-api/internal/controllers/topology/cluster/structuredmerge"
+	"sigs.k8s.io/cluster-api/internal/hooks"
+	tlog "sigs.k8s.io/cluster-api/internal/log"
+	runtimeclient "sigs.k8s.io/cluster-api/internal/runtime/client"
+	"sigs.k8s.io/cluster-api/internal/util/ssa"
+	"sigs.k8s.io/cluster-api/internal/webhooks"
 	"sigs.k8s.io/cluster-api/util"
 	"sigs.k8s.io/cluster-api/util/annotations"
 	"sigs.k8s.io/cluster-api/util/patch"
@@ -58,6 +69,8 @@ type Reconciler struct {
 	// race conditions caused by an outdated cache.
 	APIReader client.Reader
 
+	RuntimeClient runtimeclient.Client
+
 	// WatchFilterValue is the label value used to filter events prior to reconciliation.
 	WatchFilterValue string
 
@@ -70,6 +83,8 @@ type Reconciler struct {
 
 	// patchEngine is used to apply patches during computeDesiredState.
 	patchEngine patches.Engine
+
+	patchHelperFactory structuredmerge.PatchHelperFactoryFunc
 }
 
 func (r *Reconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manager, options controller.Options) error {
@@ -100,15 +115,19 @@ func (r *Reconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manager, opt
 	r.externalTracker = external.ObjectTracker{
 		Controller: c,
 	}
-	r.patchEngine = patches.NewEngine()
+	r.patchEngine = patches.NewEngine(r.RuntimeClient)
 	r.recorder = mgr.GetEventRecorderFor("topology/cluster")
+	if r.patchHelperFactory == nil {
+		r.patchHelperFactory = serverSideApplyPatchHelperFactory(r.Client, ssa.NewCache())
+	}
 	return nil
 }
 
 // SetupForDryRun prepares the Reconciler for a dry run execution.
 func (r *Reconciler) SetupForDryRun(recorder record.EventRecorder) {
-	r.patchEngine = patches.NewEngine()
+	r.patchEngine = patches.NewEngine(r.RuntimeClient)
 	r.recorder = recorder
+	r.patchHelperFactory = dryRunPatchHelperFactory(r.Client)
 }
 
 func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (_ ctrl.Result, reterr error) {
@@ -127,6 +146,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (_ ctrl.Re
 		// Error reading the object - requeue the request.
 		return ctrl.Result{}, err
 	}
+	cluster.APIVersion = clusterv1.GroupVersion.String()
 	cluster.Kind = "Cluster"
 
 	// Return early, if the Cluster does not use a managed topology.
@@ -147,9 +167,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (_ ctrl.Re
 	// In case the object is deleted, the managed topology stops to reconcile;
 	// (the other controllers will take care of deletion).
 	if !cluster.ObjectMeta.DeletionTimestamp.IsZero() {
-		// TODO: When external patching is supported, we should handle the deletion
-		// of those external CRDs we created.
-		return ctrl.Result{}, nil
+		return r.reconcileDelete(ctx, cluster)
 	}
 
 	patchHelper, err := patch.NewHelper(cluster, r.Client)
@@ -186,9 +204,32 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (_ ctrl.Re
 func (r *Reconciler) reconcile(ctx context.Context, s *scope.Scope) (ctrl.Result, error) {
 	var err error
 
+	// Get ClusterClass.
+	clusterClass := &clusterv1.ClusterClass{}
+	key := client.ObjectKey{Name: s.Current.Cluster.Spec.Topology.Class, Namespace: s.Current.Cluster.Namespace}
+	if err := r.Client.Get(ctx, key, clusterClass); err != nil {
+		return ctrl.Result{}, errors.Wrapf(err, "failed to retrieve ClusterClass %s", s.Current.Cluster.Spec.Topology.Class)
+	}
+
+	s.Blueprint.ClusterClass = clusterClass
+	// If the ClusterClass `metadata.Generation` doesn't match the `status.ObservedGeneration` return as the ClusterClass
+	// is not up to date.
+	// Note: This doesn't require requeue as a change to ClusterClass observedGeneration will cause an additional reconcile
+	// in the Cluster.
+	if clusterClass.GetGeneration() != clusterClass.Status.ObservedGeneration {
+		return ctrl.Result{}, nil
+	}
+
+	// Default and Validate the Cluster variables based on information from the ClusterClass.
+	// This step is needed as if the ClusterClass does not exist at Cluster creation some fields may not be defaulted or
+	// validated in the webhook.
+	if errs := webhooks.DefaultAndValidateVariables(s.Current.Cluster, clusterClass); len(errs) > 0 {
+		return ctrl.Result{}, apierrors.NewInvalid(clusterv1.GroupVersion.WithKind("Cluster").GroupKind(), s.Current.Cluster.Name, errs)
+	}
+
 	// Gets the blueprint with the ClusterClass and the referenced templates
 	// and store it in the request scope.
-	s.Blueprint, err = r.getBlueprint(ctx, s.Current.Cluster)
+	s.Blueprint, err = r.getBlueprint(ctx, s.Current.Cluster, s.Blueprint.ClusterClass)
 	if err != nil {
 		return ctrl.Result{}, errors.Wrap(err, "error reading the ClusterClass")
 	}
@@ -197,6 +238,17 @@ func (r *Reconciler) reconcile(ctx context.Context, s *scope.Scope) (ctrl.Result
 	s.Current, err = r.getCurrentState(ctx, s)
 	if err != nil {
 		return ctrl.Result{}, errors.Wrap(err, "error reading current state of the Cluster topology")
+	}
+
+	// The cluster topology is yet to be created. Call the BeforeClusterCreate hook before proceeding.
+	if feature.Gates.Enabled(feature.RuntimeSDK) {
+		res, err := r.callBeforeClusterCreateHook(ctx, s)
+		if err != nil {
+			return reconcile.Result{}, err
+		}
+		if !res.IsZero() {
+			return res, nil
+		}
 	}
 
 	// Setup watches for InfrastructureCluster and ControlPlane CRs when they exist.
@@ -213,6 +265,12 @@ func (r *Reconciler) reconcile(ctx context.Context, s *scope.Scope) (ctrl.Result
 	// Reconciles current and desired state of the Cluster
 	if err := r.reconcileState(ctx, s); err != nil {
 		return ctrl.Result{}, errors.Wrap(err, "error reconciling the Cluster topology")
+	}
+
+	// requeueAfter will not be 0 if any of the runtime hooks returns a blocking response.
+	requeueAfter := s.HookResponseTracker.AggregateRetryAfter()
+	if requeueAfter != 0 {
+		return ctrl.Result{RequeueAfter: requeueAfter}, nil
 	}
 
 	return ctrl.Result{}, nil
@@ -237,6 +295,27 @@ func (r *Reconciler) setupDynamicWatches(ctx context.Context, s *scope.Scope) er
 		}
 	}
 	return nil
+}
+
+func (r *Reconciler) callBeforeClusterCreateHook(ctx context.Context, s *scope.Scope) (reconcile.Result, error) {
+	// If the cluster objects (InfraCluster, ControlPlane, etc) are not yet created we are in the creation phase.
+	// Call the BeforeClusterCreate hook before proceeding.
+	log := tlog.LoggerFrom(ctx)
+	if s.Current.Cluster.Spec.InfrastructureRef == nil && s.Current.Cluster.Spec.ControlPlaneRef == nil {
+		hookRequest := &runtimehooksv1.BeforeClusterCreateRequest{
+			Cluster: *s.Current.Cluster,
+		}
+		hookResponse := &runtimehooksv1.BeforeClusterCreateResponse{}
+		if err := r.RuntimeClient.CallAllExtensions(ctx, runtimehooksv1.BeforeClusterCreate, s.Current.Cluster, hookRequest, hookResponse); err != nil {
+			return ctrl.Result{}, err
+		}
+		s.HookResponseTracker.Add(runtimehooksv1.BeforeClusterCreate, hookResponse)
+		if hookResponse.RetryAfterSeconds != 0 {
+			log.Infof("Creation of Cluster topology is blocked by %s hook", runtimecatalog.HookName(runtimehooksv1.BeforeClusterCreate))
+			return ctrl.Result{RequeueAfter: time.Duration(hookResponse.RetryAfterSeconds) * time.Second}, nil
+		}
+	}
+	return ctrl.Result{}, nil
 }
 
 // clusterClassToCluster is a handler.ToRequestsFunc to be used to enqueue requests for reconciliation
@@ -283,4 +362,45 @@ func (r *Reconciler) machineDeploymentToCluster(o client.Object) []ctrl.Request 
 			Name:      md.Spec.ClusterName,
 		},
 	}}
+}
+
+func (r *Reconciler) reconcileDelete(ctx context.Context, cluster *clusterv1.Cluster) (ctrl.Result, error) {
+	// Call the BeforeClusterDelete hook if the 'ok-to-delete' annotation is not set
+	// and add the annotation to the cluster after receiving a successful non-blocking response.
+	log := tlog.LoggerFrom(ctx)
+	if feature.Gates.Enabled(feature.RuntimeSDK) {
+		if !hooks.IsOkToDelete(cluster) {
+			hookRequest := &runtimehooksv1.BeforeClusterDeleteRequest{
+				Cluster: *cluster,
+			}
+			hookResponse := &runtimehooksv1.BeforeClusterDeleteResponse{}
+			if err := r.RuntimeClient.CallAllExtensions(ctx, runtimehooksv1.BeforeClusterDelete, cluster, hookRequest, hookResponse); err != nil {
+				return ctrl.Result{}, err
+			}
+			if hookResponse.RetryAfterSeconds != 0 {
+				log.Infof("Cluster deletion is blocked by %q hook", runtimecatalog.HookName(runtimehooksv1.BeforeClusterDelete))
+				return ctrl.Result{RequeueAfter: time.Duration(hookResponse.RetryAfterSeconds) * time.Second}, nil
+			}
+			// The BeforeClusterDelete hook returned a non-blocking response. Now the cluster is ready to be deleted.
+			// Lets mark the cluster as `ok-to-delete`
+			if err := hooks.MarkAsOkToDelete(ctx, r.Client, cluster); err != nil {
+				return ctrl.Result{}, err
+			}
+		}
+	}
+	return ctrl.Result{}, nil
+}
+
+// serverSideApplyPatchHelperFactory makes use of managed fields provided by server side apply and is used by the controller.
+func serverSideApplyPatchHelperFactory(c client.Client, ssaCache ssa.Cache) structuredmerge.PatchHelperFactoryFunc {
+	return func(ctx context.Context, original, modified client.Object, opts ...structuredmerge.HelperOption) (structuredmerge.PatchHelper, error) {
+		return structuredmerge.NewServerSidePatchHelper(ctx, original, modified, c, ssaCache, opts...)
+	}
+}
+
+// dryRunPatchHelperFactory makes use of a two-ways patch and is used in situations where we cannot rely on managed fields.
+func dryRunPatchHelperFactory(c client.Client) structuredmerge.PatchHelperFactoryFunc {
+	return func(ctx context.Context, original, modified client.Object, opts ...structuredmerge.HelperOption) (structuredmerge.PatchHelper, error) {
+		return structuredmerge.NewTwoWaysPatchHelper(original, modified, c, opts...)
+	}
 }
