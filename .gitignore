@@ -1,3 +1,6 @@
+# openshift specific
+.github/
+
 # Do not commit the manager binary at the project's root.
 /manager
 
