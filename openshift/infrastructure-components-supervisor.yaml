@@ -10,8 +10,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.7.0
-  creationTimestamp: null
+    controller-gen.kubebuilder.io/version: v0.11.4
   labels:
     cluster.x-k8s.io/provider: infrastructure-vsphere
     cluster.x-k8s.io/v1beta1: v1beta1
@@ -98,6 +97,7 @@ spec:
                     description: 'UID of the referent. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#uids'
                     type: string
                 type: object
+                x-kubernetes-map-type: atomic
               rules:
                 description: Rules specifies the privileges that need to be granted
                   to the service account.
@@ -110,7 +110,8 @@ spec:
                       description: APIGroups is the name of the APIGroup that contains
                         the resources.  If multiple API groups are specified, any
                         action requested against one of the enumerated resources in
-                        any API group will be allowed.
+                        any API group will be allowed. "" represents the core API
+                        group and "*" represents all API groups.
                       items:
                         type: string
                       type: array
@@ -168,19 +169,12 @@ spec:
     storage: true
     subresources:
       status: {}
-status:
-  acceptedNames:
-    kind: ""
-    plural: ""
-  conditions: []
-  storedVersions: []
 ---
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.7.0
-  creationTimestamp: null
+    controller-gen.kubebuilder.io/version: v0.11.4
   labels:
     cluster.x-k8s.io/provider: infrastructure-vsphere
     cluster.x-k8s.io/v1beta1: v1beta1
@@ -315,19 +309,12 @@ spec:
     storage: true
     subresources:
       status: {}
-status:
-  acceptedNames:
-    kind: ""
-    plural: ""
-  conditions: []
-  storedVersions: []
 ---
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.7.0
-  creationTimestamp: null
+    controller-gen.kubebuilder.io/version: v0.11.4
   labels:
     cluster.x-k8s.io/provider: infrastructure-vsphere
     cluster.x-k8s.io/v1beta1: v1beta1
@@ -396,19 +383,12 @@ spec:
         type: object
     served: true
     storage: true
-status:
-  acceptedNames:
-    kind: ""
-    plural: ""
-  conditions: []
-  storedVersions: []
 ---
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.7.0
-  creationTimestamp: null
+    controller-gen.kubebuilder.io/version: v0.11.4
   labels:
     cluster.x-k8s.io/provider: infrastructure-vsphere
     cluster.x-k8s.io/v1beta1: v1beta1
@@ -624,19 +604,12 @@ spec:
     storage: true
     subresources:
       status: {}
-status:
-  acceptedNames:
-    kind: ""
-    plural: ""
-  conditions: []
-  storedVersions: []
 ---
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.7.0
-  creationTimestamp: null
+    controller-gen.kubebuilder.io/version: v0.11.4
   labels:
     cluster.x-k8s.io/provider: infrastructure-vsphere
     cluster.x-k8s.io/v1beta1: v1beta1
@@ -744,12 +717,6 @@ spec:
         type: object
     served: true
     storage: true
-status:
-  acceptedNames:
-    kind: ""
-    plural: ""
-  conditions: []
-  storedVersions: []
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
@@ -799,13 +766,28 @@ rules:
   - patch
   - delete
 ---
+aggregationRule:
+  clusterRoleSelectors:
+  - matchLabels:
+      capv.infrastucture.cluster.x-k8s.io/aggregate-to-manager: "true"
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
   labels:
+    cluster.x-k8s.io/provider: infrastructure-vsphere
+    cluster.x-k8s.io/v1beta1: v1beta1
+  name: capv-aggregated-manager-role
+rules: []
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    capv.infrastucture.cluster.x-k8s.io/aggregate-to-manager: "true"
     cluster.x-k8s.io/aggregate-to-manager: "true"
     cluster.x-k8s.io/provider: infrastructure-vsphere
     cluster.x-k8s.io/v1beta1: v1beta1
+    kubeadm.controlplane.cluster.x-k8s.io/aggregate-to-manager: "true"
   name: capv-manager-role
 rules:
 - apiGroups:
@@ -901,15 +883,6 @@ rules:
   verbs:
   - get
 - apiGroups:
-  - bootstrap.cluster.x-k8s.io
-  resources:
-  - kubeadmconfigtemplates
-  verbs:
-  - delete
-  - get
-  - list
-  - watch
-- apiGroups:
   - cluster.x-k8s.io
   resources:
   - clusters
@@ -921,8 +894,41 @@ rules:
 - apiGroups:
   - cluster.x-k8s.io
   resources:
+  - machinedeployments
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - cluster.x-k8s.io
+  resources:
+  - machinedeployments
+  - machinesets
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - cluster.x-k8s.io
+  resources:
   - machines
+  verbs:
+  - get
+  - list
+  - patch
+  - watch
+- apiGroups:
+  - cluster.x-k8s.io
+  resources:
   - machines/status
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - controlplane.cluster.x-k8s.io
+  resources:
+  - kubeadmcontrolplanes
   verbs:
   - get
   - list
@@ -935,6 +941,14 @@ rules:
   - get
   - list
   - watch
+- apiGroups:
+  - ""
+  resources:
+  - nodes
+  verbs:
+  - delete
+  - get
+  - list
 - apiGroups:
   - ""
   resources:
@@ -1042,6 +1056,14 @@ rules:
 - apiGroups:
   - infrastructure.cluster.x-k8s.io
   resources:
+  - vspheremachinetemplates
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - infrastructure.cluster.x-k8s.io
+  resources:
   - vspherevms
   verbs:
   - create
@@ -1059,6 +1081,25 @@ rules:
   - get
   - patch
   - update
+- apiGroups:
+  - ipam.cluster.x-k8s.io
+  resources:
+  - ipaddressclaims
+  verbs:
+  - create
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - ipam.cluster.x-k8s.io
+  resources:
+  - ipaddresses
+  verbs:
+  - get
+  - list
+  - watch
 - apiGroups:
   - netoperator.vmware.com
   resources:
@@ -1199,6 +1240,18 @@ rules:
 - apiGroups:
   - vmware.infrastructure.cluster.x-k8s.io
   resources:
+  - vsphereclustertemplates
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - vmware.infrastructure.cluster.x-k8s.io
+  resources:
   - vspheremachines
   verbs:
   - create
@@ -1264,7 +1317,7 @@ metadata:
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: capv-manager-role
+  name: capv-aggregated-manager-role
 subjects:
 - kind: ServiceAccount
   name: default
@@ -1325,9 +1378,15 @@ spec:
     spec:
       containers:
       - args:
-        - --enable-leader-election
-        - --logtostderr
+        - --leader-elect
         - --v=4
+        - --enable-keep-alive
+        - --feature-gates=NodeAntiAffinity=${EXP_NODE_ANTI_AFFINITY:=false}
+        env:
+        - name: SERVICE_ACCOUNTS_CM_NAMESPACE
+          value: ${SERVICE_ACCOUNTS_CM_NAMESPACE}
+        - name: SERVICE_ACCOUNTS_CM_NAME
+          value: ${SERVICE_ACCOUNTS_CM_NAME}
         imagePullPolicy: Always
         livenessProbe:
           httpGet:
@@ -1345,6 +1404,13 @@ spec:
           httpGet:
             path: /readyz
             port: healthz
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          runAsGroup: 65532
+          runAsUser: 65532
         volumeMounts:
         - mountPath: /tmp/k8s-webhook-server/serving-certs
           name: cert
@@ -1352,10 +1418,16 @@ spec:
         - mountPath: /etc/capv
           name: manager-bootstrap-credentials
           readOnly: true
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
       terminationGracePeriodSeconds: 10
       tolerations:
       - effect: NoSchedule
         key: node-role.kubernetes.io/master
+      - effect: NoSchedule
+        key: node-role.kubernetes.io/control-plane
       volumes:
       - name: cert
         secret:
@@ -1465,6 +1537,27 @@ webhooks:
     - UPDATE
     resources:
     - vspheremachines
+  sideEffects: None
+- admissionReviewVersions:
+  - v1beta1
+  clientConfig:
+    service:
+      name: capv-webhook-service
+      namespace: capv-system
+      path: /mutate-infrastructure-cluster-x-k8s-io-v1beta1-vspherevm
+  failurePolicy: Fail
+  matchPolicy: Equivalent
+  name: default.vspherevm.infrastructure.x-k8s.io
+  rules:
+  - apiGroups:
+    - infrastructure.cluster.x-k8s.io
+    apiVersions:
+    - v1beta1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - vspherevms
   sideEffects: None
 ---
 apiVersion: admissionregistration.k8s.io/v1
