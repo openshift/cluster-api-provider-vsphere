@@ -27,9 +27,11 @@ import (
 	apiv1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/types"
 	kerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/utils/pointer"
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	clusterutilv1 "sigs.k8s.io/cluster-api/util"
 	"sigs.k8s.io/cluster-api/util/annotations"
@@ -60,7 +62,7 @@ type clusterReconciler struct {
 }
 
 // Reconcile ensures the back-end state reflects the Kubernetes resource state intent.
-func (r clusterReconciler) Reconcile(ctx goctx.Context, req ctrl.Request) (_ ctrl.Result, reterr error) {
+func (r clusterReconciler) Reconcile(_ goctx.Context, req ctrl.Request) (_ ctrl.Result, reterr error) {
 	// Get the VSphereCluster resource for this request.
 	vsphereCluster := &infrav1.VSphereCluster{}
 	if err := r.Client.Get(r, req.NamespacedName, vsphereCluster); err != nil {
@@ -321,6 +323,7 @@ func (r clusterReconciler) reconcileVCenterConnectivity(ctx *context.ClusterCont
 		WithServer(ctx.VSphereCluster.Spec.Server).
 		WithThumbprint(ctx.VSphereCluster.Spec.Thumbprint).
 		WithFeatures(session.Feature{
+			EnableKeepAlive:   r.EnableKeepAlive,
 			KeepAliveDuration: r.KeepAliveDuration,
 		})
 
@@ -358,15 +361,33 @@ func (r clusterReconciler) reconcileDeploymentZones(ctx *context.ClusterContext)
 	failureDomains := clusterv1.FailureDomains{}
 	for _, zone := range deploymentZoneList.Items {
 		if zone.Spec.Server == ctx.VSphereCluster.Spec.Server {
+			// If users are deploying a non-multi-az workload cluster in a multi-az enabled management cluster,
+			// FailureDomainSelector shouldn't be set, it would be a null label selector, and no zone should be
+			// selected
+			if ctx.VSphereCluster.Spec.FailureDomainSelector == nil {
+				continue
+			}
+
+			selector, err := metav1.LabelSelectorAsSelector(ctx.VSphereCluster.Spec.FailureDomainSelector)
+			if err != nil {
+				return false, errors.Wrapf(err, "zone label selector is misconfigured")
+			}
+
+			// An empty selector allows the zone to be selected
+			if !selector.Empty() && !selector.Matches(labels.Set(zone.GetLabels())) {
+				r.Logger.V(5).Info("skipping the deployment zone due to label mismatch", "name", zone.Name)
+				continue
+			}
+
 			if zone.Status.Ready == nil {
 				readyNotReported++
 				failureDomains[zone.Name] = clusterv1.FailureDomainSpec{
-					ControlPlane: *zone.Spec.ControlPlane,
+					ControlPlane: pointer.BoolDeref(zone.Spec.ControlPlane, true),
 				}
 			} else {
 				if *zone.Status.Ready {
 					failureDomains[zone.Name] = clusterv1.FailureDomainSpec{
-						ControlPlane: *zone.Spec.ControlPlane,
+						ControlPlane: pointer.BoolDeref(zone.Spec.ControlPlane, true),
 					}
 				} else {
 					notReady++

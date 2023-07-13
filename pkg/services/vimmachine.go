@@ -19,6 +19,7 @@ package services
 import (
 	goctx "context"
 	"encoding/json"
+	"strings"
 
 	"github.com/pkg/errors"
 	corev1 "k8s.io/api/core/v1"
@@ -120,7 +121,7 @@ func (v *VimMachineService) ReconcileNormal(c context.MachineContext) (bool, err
 		return false, err
 	}
 
-	vm, err := v.createOrPatchVSPhereVM(ctx, vsphereVM)
+	vm, err := v.createOrPatchVSphereVM(ctx, vsphereVM)
 	if err != nil {
 		ctx.Logger.Error(err, "error creating or patching VM", "vsphereVM", vsphereVM)
 		return false, err
@@ -181,8 +182,8 @@ func (v *VimMachineService) GetHostInfo(c context.MachineContext) (string, error
 
 	vsphereVM := &infrav1.VSphereVM{}
 	if err := ctx.Client.Get(ctx, client.ObjectKey{
-		Namespace: ctx.Machine.Namespace,
-		Name:      ctx.Machine.Name,
+		Namespace: ctx.VSphereMachine.Namespace,
+		Name:      generateVMObjectName(ctx, ctx.Machine.Name),
 	}, vsphereVM); err != nil {
 		return "", err
 	}
@@ -199,7 +200,7 @@ func (v *VimMachineService) findVMPre7(ctx *context.VIMMachineContext) (*infrav1
 	vm := &infrav1.VSphereVM{}
 	vmKey := types.NamespacedName{
 		Namespace: ctx.VSphereMachine.Namespace,
-		Name:      ctx.Machine.Name,
+		Name:      generateVMObjectName(ctx, ctx.Machine.Name),
 	}
 	// Attempt to find the associated VSphereVM resource.
 	if err := ctx.Client.Get(ctx, vmKey, vm); err != nil {
@@ -328,12 +329,12 @@ func (v *VimMachineService) reconcileNetwork(ctx *context.VIMMachineContext, vm 
 	return true, nil
 }
 
-func (v *VimMachineService) createOrPatchVSPhereVM(ctx *context.VIMMachineContext, vsphereVM *infrav1.VSphereVM) (runtime.Object, error) {
+func (v *VimMachineService) createOrPatchVSphereVM(ctx *context.VIMMachineContext, vsphereVM *infrav1.VSphereVM) (runtime.Object, error) {
 	// Create or update the VSphereVM resource.
 	vm := &infrav1.VSphereVM{
 		ObjectMeta: metav1.ObjectMeta{
 			Namespace: ctx.VSphereMachine.Namespace,
-			Name:      ctx.Machine.Name,
+			Name:      generateVMObjectName(ctx, ctx.Machine.Name),
 		},
 	}
 	mutateFn := func() (err error) {
@@ -363,12 +364,12 @@ func (v *VimMachineService) createOrPatchVSPhereVM(ctx *context.VIMMachineContex
 
 		// Ensure the VSphereVM has a label that can be used when searching for
 		// resources associated with the target cluster.
-		vm.Labels[clusterv1.ClusterLabelName] = ctx.Machine.Labels[clusterv1.ClusterLabelName]
+		vm.Labels[clusterv1.ClusterNameLabel] = ctx.Machine.Labels[clusterv1.ClusterNameLabel]
 
 		// For convenience, add a label that makes it easy to figure out if the
 		// VSphereVM resource is part of some control plane.
-		if val, ok := ctx.Machine.Labels[clusterv1.MachineControlPlaneLabelName]; ok {
-			vm.Labels[clusterv1.MachineControlPlaneLabelName] = val
+		if val, ok := ctx.Machine.Labels[clusterv1.MachineControlPlaneLabel]; ok {
+			vm.Labels[clusterv1.MachineControlPlaneLabel] = val
 		}
 
 		// Copy the VSphereMachine's VM clone spec into the VSphereVM's
@@ -448,6 +449,16 @@ func (v *VimMachineService) createOrPatchVSPhereVM(ctx *context.VIMMachineContex
 	}
 
 	return vm, nil
+}
+
+// generateVMObjectName returns a new VM object name in specific cases, otherwise return the same
+// passed in the parameter.
+func generateVMObjectName(ctx *context.VIMMachineContext, machineName string) string {
+	// Windows VM names must have 15 characters length at max.
+	if ctx.VSphereMachine.Spec.OS == infrav1.Windows && len(machineName) > 15 {
+		return strings.TrimSuffix(machineName[0:9], "-") + "-" + machineName[len(machineName)-5:]
+	}
+	return machineName
 }
 
 // generateOverrideFunc returns a function which can override the values in the VSphereVM Spec

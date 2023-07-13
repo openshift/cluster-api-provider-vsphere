@@ -1,11 +1,9 @@
-
 ---
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.7.0
-  creationTimestamp: null
+    controller-gen.kubebuilder.io/version: v0.11.4
   name: vspheremachinetemplates.infrastructure.cluster.x-k8s.io
 spec:
   group: infrastructure.cluster.x-k8s.io
@@ -150,6 +148,7 @@ spec:
                           - name
                           - uid
                           type: object
+                          x-kubernetes-map-type: atomic
                         type: array
                     type: object
                   spec:
@@ -209,7 +208,7 @@ spec:
                           devices:
                             description: Devices is the list of network devices used
                               by the virtual machine. TODO(akutz) Make sure at least
-                              one network matches the             ClusterSpec.CloudProviderConfiguration.Network.Name
+                              one network matches the ClusterSpec.CloudProviderConfiguration.Network.Name
                             items:
                               description: NetworkDeviceSpec defines the network configuration
                                 for a virtual machine's network device.
@@ -497,7 +496,7 @@ spec:
                           devices:
                             description: Devices is the list of network devices used
                               by the virtual machine. TODO(akutz) Make sure at least
-                              one network matches the             ClusterSpec.CloudProviderConfiguration.Network.Name
+                              one network matches the ClusterSpec.CloudProviderConfiguration.Network.Name
                             items:
                               description: NetworkDeviceSpec defines the network configuration
                                 for a virtual machine's network device.
@@ -802,7 +801,7 @@ spec:
                           devices:
                             description: Devices is the list of network devices used
                               by the virtual machine. TODO(akutz) Make sure at least
-                              one network matches the             ClusterSpec.CloudProviderConfiguration.Network.Name
+                              one network matches the ClusterSpec.CloudProviderConfiguration.Network.Name
                             items:
                               description: NetworkDeviceSpec defines the network configuration
                                 for a virtual machine's network device.
@@ -833,6 +832,7 @@ spec:
                                           being referenced
                                         type: string
                                     required:
+                                    - apiGroup
                                     - kind
                                     - name
                                     type: object
@@ -976,7 +976,7 @@ spec:
                                   type: string
                                 gateway6:
                                   description: Gateway4 is the IPv4 gateway used by
-                                    this device. Required when DHCP6 is false.
+                                    this device.
                                   type: string
                                 ipAddrs:
                                   description: IPAddrs is a list of one or more IPv4
@@ -1167,9 +1167,3 @@ spec:
         type: object
     served: true
     storage: true
-status:
-  acceptedNames:
-    kind: ""
-    plural: ""
-  conditions: []
-  storedVersions: []

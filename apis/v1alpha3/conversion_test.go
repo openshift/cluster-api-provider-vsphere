@@ -80,6 +80,7 @@ func overrideVSphereClusterSpecFieldsFuncs(codecs runtimeserializer.CodecFactory
 		func(in *nextver.VSphereClusterSpec, c fuzz.Continue) {
 			c.FuzzNoCustom(in)
 			in.ClusterModules = nil
+			in.FailureDomainSelector = nil
 		},
 	}
 }
@@ -132,4 +133,5 @@ func CustomStatusNewFieldFuzzer(in *nextver.VSphereVMStatus, c fuzz.Continue) {
 
 	in.Host = ""
 	in.ModuleUUID = nil
+	in.VMRef = ""
 }

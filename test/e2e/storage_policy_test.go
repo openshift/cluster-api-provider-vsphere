@@ -20,7 +20,7 @@ import (
 	"context"
 	"fmt"
 
-	. "github.com/onsi/ginkgo"
+	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/vmware/govmomi/object"
 	"github.com/vmware/govmomi/pbm"
@@ -146,7 +146,7 @@ func getVSphereVMsForCluster(clusterName, namespace string) *infrav1.VSphereVMLi
 		&vms,
 		client.InNamespace(namespace),
 		client.MatchingLabels{
-			v1beta1.ClusterLabelName: clusterName,
+			v1beta1.ClusterNameLabel: clusterName,
 		},
 	)
 	Expect(err).NotTo(HaveOccurred())

@@ -139,10 +139,16 @@ type VSphereVMStatus struct {
 	// the VMs on separate hosts.
 	// +optional
 	ModuleUUID *string `json:"moduleUUID,omitempty"`
+
+	// VMRef is the the VM's Managed Object Reference on vSphere. It can be used by consumers
+	// to programatically get this VM representation on vSphere in case of the need to retrieve informations.
+	// This field is set once the machine is created and should not be changed
+	// +optional
+	VMRef string `json:"vmRef,omitempty"`
 }
 
 // +kubebuilder:object:root=true
-// +kubebuilder:resource:path=vspherevms,scope=Namespaced
+// +kubebuilder:resource:path=vspherevms,scope=Namespaced,categories=cluster-api
 // +kubebuilder:storageversion
 // +kubebuilder:subresource:status
 

@@ -1028,6 +1028,7 @@ func autoConvert_v1beta1_VSphereClusterSpec_To_v1alpha4_VSphereClusterSpec(in *v
 	}
 	out.IdentityRef = (*VSphereIdentityReference)(unsafe.Pointer(in.IdentityRef))
 	// WARNING: in.ClusterModules requires manual conversion: does not exist in peer-type
+	// WARNING: in.FailureDomainSelector requires manual conversion: does not exist in peer-type
 	return nil
 }
 
@@ -1767,6 +1768,7 @@ func autoConvert_v1beta1_VSphereVMStatus_To_v1alpha4_VSphereVMStatus(in *v1beta1
 	out.FailureMessage = (*string)(unsafe.Pointer(in.FailureMessage))
 	out.Conditions = *(*apiv1alpha4.Conditions)(unsafe.Pointer(&in.Conditions))
 	// WARNING: in.ModuleUUID requires manual conversion: does not exist in peer-type
+	// WARNING: in.VMRef requires manual conversion: does not exist in peer-type
 	return nil
 }
 
@@ -1775,6 +1777,7 @@ func autoConvert_v1alpha4_VirtualMachine_To_v1beta1_VirtualMachine(in *VirtualMa
 	out.BiosUUID = in.BiosUUID
 	out.State = v1beta1.VirtualMachineState(in.State)
 	out.Network = *(*[]v1beta1.NetworkStatus)(unsafe.Pointer(&in.Network))
+	out.VMRef = in.VMRef
 	return nil
 }
 
@@ -1788,6 +1791,7 @@ func autoConvert_v1beta1_VirtualMachine_To_v1alpha4_VirtualMachine(in *v1beta1.V
 	out.BiosUUID = in.BiosUUID
 	out.State = VirtualMachineState(in.State)
 	out.Network = *(*[]NetworkStatus)(unsafe.Pointer(&in.Network))
+	out.VMRef = in.VMRef
 	return nil
 }
 

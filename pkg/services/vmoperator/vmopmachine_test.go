@@ -19,9 +19,9 @@ package vmoperator
 import (
 	"time"
 
-	. "github.com/onsi/ginkgo"
+	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	vmoprv1 "github.com/vmware-tanzu/vm-operator-api/api/v1alpha1"
+	vmoprv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -60,7 +60,7 @@ var _ = Describe("VirtualMachine tests", func() {
 	const (
 		machineName              = "test-machine"
 		clusterName              = "test-cluster"
-		controlPlaneLabelTrue    = "true"
+		controlPlaneLabelTrue    = true
 		k8sVersion               = "test-k8sVersion"
 		className                = "test-className"
 		imageName                = "test-imageName"
@@ -106,8 +106,8 @@ var _ = Describe("VirtualMachine tests", func() {
 		// Create all necessary dependencies
 		cluster = util.CreateCluster(clusterName)
 		vsphereCluster = util.CreateVSphereCluster(clusterName)
-		machine = util.CreateMachine(machineName, clusterName, controlPlaneLabelTrue, k8sVersion)
-		vsphereMachine = util.CreateVSphereMachine(machineName, clusterName, controlPlaneLabelTrue, className, imageName, storageClass)
+		machine = util.CreateMachine(machineName, clusterName, k8sVersion, controlPlaneLabelTrue)
+		vsphereMachine = util.CreateVSphereMachine(machineName, clusterName, className, imageName, storageClass, controlPlaneLabelTrue)
 		clusterContext := util.CreateClusterContext(cluster, vsphereCluster)
 		ctx = util.CreateMachineContext(clusterContext, machine, vsphereMachine)
 		ctx.ControllerContext = clusterContext.ControllerContext

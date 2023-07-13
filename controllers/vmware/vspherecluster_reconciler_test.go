@@ -19,7 +19,7 @@ package vmware
 import (
 	"testing"
 
-	. "github.com/onsi/ginkgo"
+	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	topologyv1 "github.com/vmware-tanzu/vm-operator/external/tanzu-topology/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
@@ -43,7 +43,7 @@ var _ = Describe("Cluster Controller Tests", func() {
 	const (
 		clusterName           = "test-cluster"
 		machineName           = "test-machine"
-		controlPlaneLabelTrue = "true"
+		controlPlaneLabelTrue = true
 		className             = "test-className"
 		imageName             = "test-imageName"
 		storageClass          = "test-storageClass"
@@ -62,7 +62,7 @@ var _ = Describe("Cluster Controller Tests", func() {
 		cluster = util.CreateCluster(clusterName)
 		vsphereCluster = util.CreateVSphereCluster(clusterName)
 		ctx = util.CreateClusterContext(cluster, vsphereCluster)
-		vsphereMachine = util.CreateVSphereMachine(machineName, clusterName, controlPlaneLabelTrue, className, imageName, storageClass)
+		vsphereMachine = util.CreateVSphereMachine(machineName, clusterName, className, imageName, storageClass, controlPlaneLabelTrue)
 
 		reconciler = &ClusterReconciler{
 			ControllerContext:   ctx.ControllerContext,
