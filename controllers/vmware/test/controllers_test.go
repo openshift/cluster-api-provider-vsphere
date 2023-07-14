@@ -23,15 +23,14 @@ import (
 	"reflect"
 	"time"
 
-	. "github.com/onsi/ginkgo"
-	"github.com/onsi/ginkgo/extensions/table"
+	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	vmoprv1 "github.com/vmware-tanzu/vm-operator-api/api/v1alpha1"
+	vmoprv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1alpha3"
+	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	ctrlmgr "sigs.k8s.io/controller-runtime/pkg/manager"
@@ -157,8 +156,8 @@ func deployCAPIMachine(namespace string, cluster *clusterv1.Cluster, k8sClient c
 			Namespace:    namespace,
 			Finalizers:   []string{"test"},
 			Labels: map[string]string{
-				clusterv1.ClusterLabelName:             cluster.Name,
-				clusterv1.MachineControlPlaneLabelName: "true",
+				clusterv1.ClusterNameLabel:         cluster.Name,
+				clusterv1.MachineControlPlaneLabel: "",
 			},
 			OwnerReferences: []metav1.OwnerReference{
 				{
@@ -237,10 +236,7 @@ func getManager(cfg *rest.Config, networkProvider string) manager.Manager {
 			return err
 		}
 
-		if err := controllers.AddMachineControllerToManager(ctx, mgr, &vmwarev1.VSphereMachine{}); err != nil {
-			return err
-		}
-		return nil
+		return controllers.AddMachineControllerToManager(ctx, mgr, &vmwarev1.VSphereMachine{})
 	}
 
 	mgr, err := manager.New(opts)
@@ -308,7 +304,7 @@ var _ = Describe("Conformance tests", func() {
 		key = nil
 	})
 
-	table.DescribeTable("Check infra cluster spec conformance",
+	DescribeTable("Check infra cluster spec conformance",
 		func(objectGenerator func(string) client.Object) {
 			k8sClient, managerCancel = prepareClient(false)
 			defer managerCancel()
@@ -327,9 +323,8 @@ var _ = Describe("Conformance tests", func() {
 
 			assertObjEventuallyExists()
 		},
-
-		table.Entry("For infra-cluster "+infraClusterTypeName, newAnonInfraCluster),
-		table.Entry("For infra-machine "+infraMachineTypeName, newAnonInfraMachine),
+		Entry("For infra-cluster "+infraClusterTypeName, newAnonInfraCluster),
+		Entry("For infra-machine "+infraMachineTypeName, newAnonInfraMachine),
 	)
 
 })
@@ -398,7 +393,7 @@ var _ = Describe("Reconciliation tests", func() {
 		managerCancel = nil
 	})
 
-	table.DescribeTable("Infrastructure resources should have finalizers after reconciliation",
+	DescribeTable("Infrastructure resources should have finalizers after reconciliation",
 		func(isLB bool) {
 			k8sClient, managerCancel = prepareClient(isLB)
 			defer managerCancel()
@@ -452,11 +447,11 @@ var _ = Describe("Reconciliation tests", func() {
 			By("Delete the CAPI cluster and wait for it to be removed")
 			deleteAndWait(clusterKey, cluster, true)
 		},
-		table.Entry("With no load balancer", dontUseLoadBalancer),
-		table.Entry("With load balancer", useLoadBalancer),
+		Entry("With no load balancer", dontUseLoadBalancer),
+		Entry("With load balancer", useLoadBalancer),
 	)
 
-	table.DescribeTable("VSphereClusters can be deleted without a corresponding Cluster",
+	DescribeTable("VSphereClusters can be deleted without a corresponding Cluster",
 		func(isLB bool) {
 			k8sClient, managerCancel = prepareClient(isLB)
 			defer managerCancel()
@@ -481,11 +476,11 @@ var _ = Describe("Reconciliation tests", func() {
 			By("Deleting the infrastructure cluster and waiting for it to be removed")
 			deleteAndWait(infraClusterKey, infraCluster, false)
 		},
-		table.Entry("With no load balancer", dontUseLoadBalancer),
-		table.Entry("With load balancer", useLoadBalancer),
+		Entry("With no load balancer", dontUseLoadBalancer),
+		Entry("With load balancer", useLoadBalancer),
 	)
 
-	table.DescribeTable("Create and Delete a VSphereMachine with a Machine but without a Cluster",
+	DescribeTable("Create and Delete a VSphereMachine with a Machine but without a Cluster",
 		func(isLB bool) {
 			k8sClient, managerCancel = prepareClient(isLB)
 			defer managerCancel()
@@ -522,11 +517,11 @@ var _ = Describe("Reconciliation tests", func() {
 			By("Delete the InfraMachine and wait for it to be removed")
 			deleteAndWait(infraMachineKey, infraMachine, false)
 		},
-		table.Entry("With no load balancer", dontUseLoadBalancer),
-		table.Entry("With load balancer", useLoadBalancer),
+		Entry("With no load balancer", dontUseLoadBalancer),
+		Entry("With load balancer", useLoadBalancer),
 	)
 
-	table.DescribeTable("A VM gets properly reconciled for a Machine and reflects appropriate VM status",
+	DescribeTable("A VM gets properly reconciled for a Machine and reflects appropriate VM status",
 		func(isLB bool) {
 			k8sClient, managerCancel = prepareClient(isLB)
 			defer managerCancel()
@@ -637,7 +632,7 @@ var _ = Describe("Reconciliation tests", func() {
 				assertEventuallyControlPlaneEndpoint(infraClusterKey, infraCluster, newVM.Status.VmIp)
 			}
 		},
-		table.Entry("With no load balancer", dontUseLoadBalancer),
-		table.Entry("With load balancer", useLoadBalancer),
+		Entry("With no load balancer", dontUseLoadBalancer),
+		Entry("With load balancer", useLoadBalancer),
 	)
 })

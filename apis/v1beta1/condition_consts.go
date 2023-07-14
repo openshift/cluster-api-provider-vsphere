@@ -93,8 +93,19 @@ const (
 	// NOTE: This reason does not apply to VSphereVM (this state happens after the VSphereVM is in ready state).
 	WaitingForNetworkAddressesReason = "WaitingForNetworkAddresses"
 
-	// TagsAttachmentFailedReason (Severity=Error) documents a VSPhereMachine/VSphereVM tags attachment failure.
+	// TagsAttachmentFailedReason (Severity=Error) documents a VSphereMachine/VSphereVM tags attachment failure.
 	TagsAttachmentFailedReason = "TagsAttachmentFailed"
+
+	// PCIDevicesDetachedCondition documents the status of the attached PCI devices on the VSphereVM.
+	// It is a negative condition to notify the user that the device(s) is no longer attached to
+	// the underlying VM and would require manual intervention to fix the situation.
+	//
+	// NOTE: This condition does not apply to VSphereMachine.
+	PCIDevicesDetachedCondition clusterv1.ConditionType = "PCIDevicesDetached"
+
+	// NotFoundReason (Severity=Warning) documents the VSphereVM not having the PCI device attached during VM startup.
+	// This would indicate that the PCI devices were removed out of band by an external entity.
+	NotFoundReason = "NotFound"
 )
 
 // Conditions and Reasons related to utilizing a VSphereIdentity to make connections to a VCenter.
@@ -192,6 +203,10 @@ const (
 	// from an IPAM provider.
 	IPAddressClaimedCondition clusterv1.ConditionType = "IPAddressClaimed"
 
+	// IPAddressClaimsBeingCreatedReason (Severity=Info) documents that claims for the
+	// IP addresses required by the VSphereVM are being created.
+	IPAddressClaimsBeingCreatedReason = "IPAddressClaimsBeingCreated"
+
 	// WaitingForIPAddressReason (Severity=Info) documents that the VSphereVM is
 	// currently waiting for an IP address to be provisioned.
 	WaitingForIPAddressReason = "WaitingForIPAddress"
@@ -199,4 +214,8 @@ const (
 	// IPAddressInvalidReason (Severity=Error) documents that the IP address
 	// provided by the IPAM provider is not valid.
 	IPAddressInvalidReason = "IPAddressInvalid"
+
+	// IPAddressClaimNotFoundReason (Severity=Error) documents that the IPAddressClaim
+	// cannot be found.
+	IPAddressClaimNotFoundReason = "IPAddressClaimNotFound"
 )

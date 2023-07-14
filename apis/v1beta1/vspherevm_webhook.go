@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"net"
 	"reflect"
-	"strings"
 
 	"github.com/pkg/errors"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -43,11 +42,6 @@ func (r *VSphereVM) Default() {
 	// Set Linux as default OS value
 	if r.Spec.OS == "" {
 		r.Spec.OS = Linux
-	}
-
-	// Windows hostnames must be < 16 characters in length
-	if r.Spec.OS == Windows && len(r.Name) > 15 {
-		r.Name = strings.TrimSuffix(r.Name[0:9], "-") + "-" + r.Name[len(r.Name)-5:]
 	}
 }
 
@@ -92,26 +86,22 @@ func (r *VSphereVM) ValidateUpdate(old runtime.Object) error {
 	newVSphereVMSpec := newVSphereVM["spec"].(map[string]interface{})
 	oldVSphereVMSpec := oldVSphereVM["spec"].(map[string]interface{})
 
-	// allow changes to biosUUID
-	delete(oldVSphereVMSpec, "biosUUID")
-	delete(newVSphereVMSpec, "biosUUID")
-
-	// allow changes to bootstrapRef
-	delete(oldVSphereVMSpec, "bootstrapRef")
-	delete(newVSphereVMSpec, "bootstrapRef")
+	// allow changes to biosUUID, bootstrapRef, thumbprint
+	keys := []string{"biosUUID", "bootstrapRef", "thumbprint"}
+	// allow changes to os only if the old spec has empty OS field
+	if _, ok := oldVSphereVMSpec["os"]; !ok {
+		keys = append(keys, "os")
+	}
+	r.deleteSpecKeys(oldVSphereVMSpec, keys)
+	r.deleteSpecKeys(newVSphereVMSpec, keys)
 
 	newVSphereVMNetwork := newVSphereVMSpec["network"].(map[string]interface{})
 	oldVSphereVMNetwork := oldVSphereVMSpec["network"].(map[string]interface{})
 
 	// allow changes to the network devices
-	delete(oldVSphereVMNetwork, "devices")
-	delete(newVSphereVMNetwork, "devices")
-
-	// allow changes to os only if the old spec has empty OS field
-	if _, ok := oldVSphereVMSpec["os"]; !ok {
-		delete(oldVSphereVMSpec, "os")
-		delete(newVSphereVMSpec, "os")
-	}
+	networkKeys := []string{"devices"}
+	r.deleteSpecKeys(oldVSphereVMNetwork, networkKeys)
+	r.deleteSpecKeys(newVSphereVMNetwork, networkKeys)
 
 	if !reflect.DeepEqual(oldVSphereVMSpec, newVSphereVMSpec) {
 		allErrs = append(allErrs, field.Forbidden(field.NewPath("spec"), "cannot be modified"))
@@ -123,4 +113,14 @@ func (r *VSphereVM) ValidateUpdate(old runtime.Object) error {
 // ValidateDelete implements webhook.Validator so a webhook will be registered for the type.
 func (r *VSphereVM) ValidateDelete() error {
 	return nil
+}
+
+func (r *VSphereVM) deleteSpecKeys(spec map[string]interface{}, keys []string) {
+	if len(spec) == 0 || len(keys) == 0 {
+		return
+	}
+
+	for _, key := range keys {
+		delete(spec, key)
+	}
 }

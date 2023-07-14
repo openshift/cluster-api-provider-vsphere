@@ -22,6 +22,7 @@ SHELL := /usr/bin/env bash
 
 VERSION ?= $(shell cat clusterctl-settings.json | jq .config.nextVersion -r)
 
+GO_VERSION ?=1.19.3
 # Use GOPROXY environment variable if set
 GOPROXY := $(shell go env GOPROXY)
 ifeq (,$(strip $(GOPROXY)))
@@ -35,7 +36,7 @@ export GO111MODULE := on
 #
 # Kubebuilder.
 #
-export KUBEBUILDER_ENVTEST_KUBERNETES_VERSION ?= 1.23.3
+export KUBEBUILDER_ENVTEST_KUBERNETES_VERSION ?= 1.25.0
 
 # Directories
 ROOT_DIR:=$(shell dirname $(realpath $(firstword $(MAKEFILE_LIST))))
@@ -66,7 +67,7 @@ CONVERSION_VERIFIER := $(abspath $(TOOLS_BIN_DIR)/conversion-verifier)
 GO_APIDIFF := $(TOOLS_BIN_DIR)/go-apidiff
 RELEASE_NOTES := $(TOOLS_BIN_DIR)/release-notes
 TOOLING_BINARIES := $(CONTROLLER_GEN) $(CONVERSION_GEN) $(GINKGO) $(GOLANGCI_LINT) $(GOVC) $(KIND) $(KUSTOMIZE) $(CONVERSION_VERIFIER) $(GO_APIDIFF) $(RELEASE_NOTES)
-ARTIFACTS_PATH := $(ROOT_DIR)/_artifacts
+ARTIFACTS ?= $(ROOT_DIR)/_artifacts
 
 # Set --output-base for conversion-gen if we are not within GOPATH
 ifneq ($(abspath $(ROOT_DIR)),$(shell go env GOPATH)/src/sigs.k8s.io/cluster-api-provider-vsphere)
@@ -127,7 +128,7 @@ KUBEBUILDER_ASSETS ?= $(shell $(SETUP_ENVTEST) use --use-env -p path $(KUBEBUILD
 
 .PHONY: test
 test: $(SETUP_ENVTEST) $(GOVC)
-	$(MAKE) generate lint-go
+	$(MAKE) generate
 	KUBEBUILDER_ASSETS="$(KUBEBUILDER_ASSETS)" GOVC_BIN_PATH=$(GOVC) go test -v ./apis/... ./controllers/... ./pkg/... $(TEST_ARGS)
 
 
@@ -162,10 +163,11 @@ e2e-templates: ## Generate e2e cluster templates
 .PHONY: test-integration
 test-integration: e2e-image
 test-integration: $(GINKGO) $(KUSTOMIZE) $(KIND)
-	time $(GINKGO) -v ./test/integration -- --config="$(INTEGRATION_CONF_FILE)" --artifacts-folder="$(ARTIFACTS_PATH)"
+	time $(GINKGO) -v ./test/integration -- --config="$(INTEGRATION_CONF_FILE)" --artifacts-folder="$(ARTIFACTS)"
 
 GINKGO_FOCUS ?=
 GINKGO_SKIP ?=
+GINKGO_TEST_TIMEOUT ?= 2h
 
 # to set multiple ginkgo skip flags, if any
 ifneq ($(strip $(GINKGO_SKIP)),)
@@ -180,9 +182,10 @@ e2e: $(GINKGO) $(KUSTOMIZE) $(KIND) $(GOVC) ## Run e2e tests
 	@echo Contents of $(TOOLS_BIN_DIR):
 	@ls $(TOOLS_BIN_DIR)
 	@echo
-	time $(GINKGO) -v -focus="$(GINKGO_FOCUS)" $(_SKIP_ARGS) ./test/e2e -- \
+	time $(GINKGO) -v -focus="$(GINKGO_FOCUS)" $(_SKIP_ARGS) -timeout=$(GINKGO_TEST_TIMEOUT) \
+		--output-dir="$(ARTIFACTS)" --junit-report="junit.e2e_suite.1.xml" ./test/e2e -- \
 		--e2e.config="$(E2E_CONF_FILE)" \
-		--e2e.artifacts-folder="$(ARTIFACTS_PATH)" \
+		--e2e.artifacts-folder="$(ARTIFACTS)" \
 		--e2e.skip-resource-cleanup=$(SKIP_RESOURCE_CLEANUP) \
 		--e2e.use-existing-cluster="$(USE_EXISTING_CLUSTER)"
 
@@ -302,7 +305,7 @@ generate-manifests: $(CONTROLLER_GEN) ## Generate manifests e.g. CRD, RBAC etc.
 		output:crd:dir=$(SUPERVISOR_CRD_ROOT)
 	# vm-operator crds are loaded to be used for integration tests.
 	$(CONTROLLER_GEN) \
-		paths=github.com/vmware-tanzu/vm-operator-api/api/... \
+		paths=github.com/vmware-tanzu/vm-operator/api/... \
 		crd:crdVersions=v1 \
 		output:crd:dir=$(VMOP_CRD_ROOT)
 
@@ -313,6 +316,7 @@ generate-flavors: $(FLAVOR_DIR)
 	go run ./packaging/flavorgen -f cluster-class > $(FLAVOR_DIR)/clusterclass-template.yaml
 	go run ./packaging/flavorgen -f cluster-topology > $(FLAVOR_DIR)/cluster-template-topology.yaml
 	go run ./packaging/flavorgen -f ignition > $(FLAVOR_DIR)/cluster-template-ignition.yaml
+	go run ./packaging/flavorgen -f node-ipam > $(FLAVOR_DIR)/cluster-template-node-ipam.yaml
 ## --------------------------------------
 ## Release
 ## --------------------------------------
@@ -408,6 +412,10 @@ verify-modules: modules  ## Verify go modules are up to date
 verify-conversions: $(CONVERSION_VERIFIER)  ## Verifies expected API conversion are in place
 	$(CONVERSION_VERIFIER)
 
+.PHONY: verify-container-images
+verify-container-images: ## Verify container images
+	TRACE=$(TRACE) ./hack/verify-container-images.sh
+
 .PHONY: release-flavors ## Create release flavor manifests
 release-flavors: release-version-check
 	$(MAKE) generate-flavors FLAVOR_DIR=$(RELEASE_DIR)
@@ -471,7 +479,7 @@ check: ## Verify and lint the project
 .PHONY: docker-build
 docker-build: ## Build the docker image for controller-manager
 	docker buildx build --platform linux/$(ARCH) --output=type=docker \
-		--pull --build-arg ldflags="$(LDFLAGS)" \
+		--pull --build-arg ldflags="$(LDFLAGS)" --build-arg GOLANG_VERSION=golang:$(GO_VERSION) \
 		-t $(DEV_CONTROLLER_IMG):$(DEV_TAG) .
 
 .PHONY: docker-push
@@ -481,3 +489,6 @@ docker-push: ## Push the docker image
 		--pull --build-arg ldflags="$(LDFLAGS)" \
 		-t $(DEV_CONTROLLER_IMG):$(DEV_TAG) .
 	docker buildx rm capv
+
+go-version: ## Print the go version we use to compile our binaries and images
+	@echo $(GO_VERSION)

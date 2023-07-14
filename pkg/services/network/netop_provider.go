@@ -20,7 +20,7 @@ import (
 	"fmt"
 
 	netopv1 "github.com/vmware-tanzu/net-operator-api/api/v1alpha1"
-	vmopv1 "github.com/vmware-tanzu/vm-operator-api/api/v1alpha1"
+	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/cluster-api/util/conditions"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -55,7 +55,7 @@ func (np *netopNetworkProvider) getDefaultClusterNetwork(ctx *vmware.ClusterCont
 		return networkWithLabel, nil
 	}
 
-	ctx.Logger.Info("falling back to legacy label %s to identify default network", legacyDefaultNetworkLabel)
+	ctx.Logger.Info("falling back to legacy label to identify default network", "label", legacyDefaultNetworkLabel)
 	return np.getDefaultClusterNetworkWithLabel(ctx, legacyDefaultNetworkLabel)
 }
 
@@ -123,7 +123,7 @@ func (np *netopNetworkProvider) ConfigureVirtualMachine(ctx *vmware.ClusterConte
 	return nil
 }
 
-func (np *netopNetworkProvider) VerifyNetworkStatus(ctx *vmware.ClusterContext, obj runtime.Object) error {
+func (np *netopNetworkProvider) VerifyNetworkStatus(_ *vmware.ClusterContext, obj runtime.Object) error {
 	if _, ok := obj.(*netopv1.Network); !ok {
 		return fmt.Errorf("expected Net Operator Network but got %T", obj)
 	}

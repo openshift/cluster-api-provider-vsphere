@@ -1,0 +1,54 @@
+4.13.5:
+  - Performance improvement for deepMatch (thanks @pmatseykanets)
+  - Added manpage, included in tar.gz downloads as well as a separate tar.gz (#961)
+  - Fixed expression parsing bug #970
+  - Rebuild fixes CVE (#964)
+  - Bumped docker alpine version
+
+
+4.13.4:
+  - Fixed select bug (#958)
+  - Improved performance of `explode` (this will also speed up json conversion)
+  - Improved performance of `merge` (significantly if your merging a small file into a big one)
+
+4.13.3:
+
+- Updated go compiler to 1.17 to fix CVE (#944)
+
+4.13.2:
+
+- Fixing Docker build timeout issues when attempting to release
+
+4.13.1:
+
+- Update to `with` operator, allow for no leading space on the `;`.
+
+4.13.0:
+
+BREAKING CHANGE - the `as` variable operator (e.g. `.a as $x`) now makes a _copy_ of the node(s) at the 
+path rather than a reference. This is in order to make it work more like the `jq` equivalent. 
+
+This means any updates made to that variable do not update the original.
+
+There's a new operator `ref` that will make a reference (and allow multiple updates to the original path by referencing the variable).
+Sorry for any inconvenience caused!.
+
+
+- New `with` operator for making multiple changes to a given path
+- New `contains` operator, works like the `jq` equivalent
+- Subtract operator now supports subtracting elements from arrays!
+- Fixed Swapping values using variables #934
+- Github Action now properly supports multiline output #936, thanks @pjxiao
+- Fixed missing closing bracket validation #932
+
+4.12.2:
+- Fix processing of hex numbers #929
+- Fixed alternative and union operator issues #930
+
+4.12.1:
+ - Merge comment fix #919
+
+4.12.0:
+- Can now convert yaml to properties properties format (`-o=props`), See [docs](https://mikefarah.gitbook.io/yq/v/v4.x/usage/properties) for more info.
+- Fixed document header/footer comment handling when merging (https://github.com/mikefarah/yq/issues/919)
+- pretty print yaml 1.1 compatibility  (https://github.com/mikefarah/yq/issues/914)

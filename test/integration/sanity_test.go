@@ -20,9 +20,9 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
-	. "github.com/onsi/ginkgo"
+	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	vmoprv1 "github.com/vmware-tanzu/vm-operator-api/api/v1alpha1"
+	vmoprv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/pointer"
@@ -70,8 +70,8 @@ var _ = Describe("Sanity tests", func() {
 		// and that the VSphereCluster has an OwnerRef that points to the CAPI Cluster.
 		cluster := assertEventuallyExists(clustersResource, mf.ClusterComponents.Cluster.Name, mf.ClusterComponents.Cluster.Namespace, nil)
 		clusterOwnerRef := toOwnerRef(cluster)
-		clusterOwnerRef.Controller = pointer.BoolPtr(true)
-		clusterOwnerRef.BlockOwnerDeletion = pointer.BoolPtr(true)
+		clusterOwnerRef.Controller = pointer.Bool(true)
+		clusterOwnerRef.BlockOwnerDeletion = pointer.Bool(true)
 		assertEventuallyExists(vsphereclustersResource, mf.ClusterComponents.Cluster.Name, mf.ClusterComponents.Cluster.Namespace, clusterOwnerRef)
 
 		// CREATE the CAPI Machine, VSphereMachine, and KubeadmConfig resources for
@@ -86,8 +86,8 @@ var _ = Describe("Sanity tests", func() {
 		// the CAPI Machine.
 		machine := assertEventuallyExists(machinesResource, controlPlane.Machine.Name, controlPlane.Machine.Namespace, nil)
 		machineOwnerRef := toOwnerRef(machine)
-		machineOwnerRef.Controller = pointer.BoolPtr(true)
-		machineOwnerRef.BlockOwnerDeletion = pointer.BoolPtr(true)
+		machineOwnerRef.Controller = pointer.Bool(true)
+		machineOwnerRef.BlockOwnerDeletion = pointer.Bool(true)
 		assertEventuallyExists(vspheremachinesResource, controlPlane.Machine.Name, controlPlane.Machine.Namespace, machineOwnerRef)
 		assertEventuallyExists(kubeadmconfigResources, controlPlane.Machine.Name, controlPlane.Machine.Namespace, machineOwnerRef)
 	})

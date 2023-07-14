@@ -1,11 +1,9 @@
-
 ---
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.7.0
-  creationTimestamp: null
+    controller-gen.kubebuilder.io/version: v0.11.4
   name: virtualmachinesetresourcepolicies.vmoperator.vmware.com
 spec:
   group: vmoperator.vmware.com
@@ -36,7 +34,7 @@ spec:
             type: object
           spec:
             description: VirtualMachineSetResourcePolicySpec defines the desired state
-              of VirtualMachineSetResourcePolicy
+              of VirtualMachineSetResourcePolicy.
             properties:
               clustermodules:
                 items:
@@ -54,7 +52,7 @@ spec:
                   type: object
                 type: array
               folder:
-                description: Folder defines a Folder
+                description: FolderSpec defines a Folder.
                 properties:
                   name:
                     description: Name describes the name of the Folder
@@ -105,7 +103,7 @@ spec:
             type: object
           status:
             description: VirtualMachineSetResourcePolicyStatus defines the observed
-              state of VirtualMachineSetResourcePolicy
+              state of VirtualMachineSetResourcePolicy.
             properties:
               clustermodules:
                 items:
@@ -128,9 +126,3 @@ spec:
     storage: true
     subresources:
       status: {}
-status:
-  acceptedNames:
-    kind: ""
-    plural: ""
-  conditions: []
-  storedVersions: []

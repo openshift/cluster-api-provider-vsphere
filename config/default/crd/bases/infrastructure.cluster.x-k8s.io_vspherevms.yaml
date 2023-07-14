@@ -1,15 +1,15 @@
-
 ---
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.7.0
-  creationTimestamp: null
+    controller-gen.kubebuilder.io/version: v0.11.4
   name: vspherevms.infrastructure.cluster.x-k8s.io
 spec:
   group: infrastructure.cluster.x-k8s.io
   names:
+    categories:
+    - cluster-api
     kind: VSphereVM
     listKind: VSphereVMList
     plural: vspherevms
@@ -80,6 +80,7 @@ spec:
                     description: 'UID of the referent. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#uids'
                     type: string
                 type: object
+                x-kubernetes-map-type: atomic
               cloneMode:
                 description: CloneMode specifies the type of clone operation. The
                   LinkedClone mode is only support for templates that have at least
@@ -126,7 +127,7 @@ spec:
                   devices:
                     description: Devices is the list of network devices used by the
                       virtual machine. TODO(akutz) Make sure at least one network
-                      matches the             ClusterSpec.CloudProviderConfiguration.Network.Name
+                      matches the ClusterSpec.CloudProviderConfiguration.Network.Name
                     items:
                       description: NetworkDeviceSpec defines the network configuration
                         for a virtual machine's network device.
@@ -536,7 +537,7 @@ spec:
                   devices:
                     description: Devices is the list of network devices used by the
                       virtual machine. TODO(akutz) Make sure at least one network
-                      matches the             ClusterSpec.CloudProviderConfiguration.Network.Name
+                      matches the ClusterSpec.CloudProviderConfiguration.Network.Name
                     items:
                       description: NetworkDeviceSpec defines the network configuration
                         for a virtual machine's network device.
@@ -961,7 +962,7 @@ spec:
                   devices:
                     description: Devices is the list of network devices used by the
                       virtual machine. TODO(akutz) Make sure at least one network
-                      matches the             ClusterSpec.CloudProviderConfiguration.Network.Name
+                      matches the ClusterSpec.CloudProviderConfiguration.Network.Name
                     items:
                       description: NetworkDeviceSpec defines the network configuration
                         for a virtual machine's network device.
@@ -989,6 +990,7 @@ spec:
                                 description: Name is the name of resource being referenced
                                 type: string
                             required:
+                            - apiGroup
                             - kind
                             - name
                             type: object
@@ -1120,7 +1122,6 @@ spec:
                           type: string
                         gateway6:
                           description: Gateway4 is the IPv4 gateway used by this device.
-                            Required when DHCP6 is false.
                           type: string
                         ipAddrs:
                           description: IPAddrs is a list of one or more IPv4 and/or
@@ -1429,15 +1430,15 @@ spec:
                   to the machine. This value is set automatically at runtime and should
                   not be set or modified by users.
                 type: string
+              vmRef:
+                description: VMRef is the the VM's Managed Object Reference on vSphere.
+                  It can be used by consumers to programatically get this VM representation
+                  on vSphere in case of the need to retrieve informations. This field
+                  is set once the machine is created and should not be changed
+                type: string
             type: object
         type: object
     served: true
     storage: true
     subresources:
       status: {}
-status:
-  acceptedNames:
-    kind: ""
-    plural: ""
-  conditions: []
-  storedVersions: []

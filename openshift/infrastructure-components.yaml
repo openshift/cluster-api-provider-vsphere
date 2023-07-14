@@ -9,8 +9,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.7.0
-  creationTimestamp: null
+    controller-gen.kubebuilder.io/version: v0.11.4
   labels:
     cluster.x-k8s.io/provider: infrastructure-vsphere
     cluster.x-k8s.io/v1beta1: v1beta1
@@ -96,6 +95,7 @@ spec:
                           "value". The requirements are ANDed.
                         type: object
                     type: object
+                    x-kubernetes-map-type: atomic
                 type: object
               secretName:
                 description: SecretName references a Secret inside the controller
@@ -420,19 +420,13 @@ spec:
     storage: true
     subresources:
       status: {}
-status:
-  acceptedNames:
-    kind: ""
-    plural: ""
-  conditions: []
-  storedVersions: []
 ---
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
     cert-manager.io/inject-ca-from: capv-system/capv-serving-cert
-    controller-gen.kubebuilder.io/version: v0.7.0
+    controller-gen.kubebuilder.io/version: v0.11.4
   labels:
     cluster.x-k8s.io/provider: infrastructure-vsphere
     cluster.x-k8s.io/v1beta1: v1beta1
@@ -474,6 +468,10 @@ spec:
       name: ControlPlaneEndpoint
       priority: 1
       type: string
+    - description: Time duration since creation of Machine
+      jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
     name: v1alpha3
     schema:
       openAPIV3Schema:
@@ -554,9 +552,9 @@ spec:
                           may be found. This may used in the event that: 1. It is
                           not desirable to use the K8s API to watch changes to secrets
                           2. The cloud controller manager is not running in a K8s
-                          environment,    such as DC/OS. For example, the container
-                          storage interface (CSI) is    container orcehstrator (CO)
-                          agnostic, and should support non-K8s COs. Defaults to /etc/cloud/credentials.'
+                          environment, such as DC/OS. For example, the container storage
+                          interface (CSI) is container orcehstrator (CO) agnostic,
+                          and should support non-K8s COs. Defaults to /etc/cloud/credentials.'
                         type: string
                       serviceAccount:
                         description: ServiceAccount is the Kubernetes service account
@@ -761,6 +759,7 @@ spec:
                     description: 'UID of the referent. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#uids'
                     type: string
                 type: object
+                x-kubernetes-map-type: atomic
               server:
                 description: Server is the address of the vSphere endpoint.
                 type: string
@@ -859,6 +858,10 @@ spec:
       name: ControlPlaneEndpoint
       priority: 1
       type: string
+    - description: Time duration since creation of Machine
+      jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
     name: v1alpha4
     schema:
       openAPIV3Schema:
@@ -1010,6 +1013,10 @@ spec:
       name: ControlPlaneEndpoint
       priority: 1
       type: string
+    - description: Time duration since creation of Machine
+      jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
     name: v1beta1
     schema:
       openAPIV3Schema:
@@ -1030,6 +1037,36 @@ spec:
           spec:
             description: VSphereClusterSpec defines the desired state of VSphereCluster
             properties:
+              clusterModules:
+                description: ClusterModules hosts information regarding the anti-affinity
+                  vSphere constructs for each of the objects responsible for creation
+                  of VM objects belonging to the cluster.
+                items:
+                  description: ClusterModule holds the anti affinity construct `ClusterModule`
+                    identifier in use by the VMs owned by the object referred by the
+                    TargetObjectName field.
+                  properties:
+                    controlPlane:
+                      description: ControlPlane indicates whether the referred object
+                        is responsible for control plane nodes. Currently, only the
+                        KubeadmControlPlane objects have this flag set to true. Only
+                        a single object in the slice can have this value set to true.
+                      type: boolean
+                    moduleUUID:
+                      description: ModuleUUID is the unique identifier of the `ClusterModule`
+                        used by the object.
+                      type: string
+                    targetObjectName:
+                      description: TargetObjectName points to the object that uses
+                        the Cluster Module information to enforce anti-affinity amongst
+                        its descendant VM objects.
+                      type: string
+                  required:
+                  - controlPlane
+                  - moduleUUID
+                  - targetObjectName
+                  type: object
+                type: array
               controlPlaneEndpoint:
                 description: ControlPlaneEndpoint represents the endpoint used to
                   communicate with the control plane.
@@ -1044,6 +1081,53 @@ spec:
                 required:
                 - host
                 - port
+                type: object
+              failureDomainSelector:
+                description: FailureDomainSelector is the label selector to use for
+                  failure domain selection for the control plane nodes of the cluster.
+                  An empty value for the selector includes all the related failure
+                  domains.
+                properties:
+                  matchExpressions:
+                    description: matchExpressions is a list of label selector requirements.
+                      The requirements are ANDed.
+                    items:
+                      description: A label selector requirement is a selector that
+                        contains values, a key, and an operator that relates the key
+                        and values.
+                      properties:
+                        key:
+                          description: key is the label key that the selector applies
+                            to.
+                          type: string
+                        operator:
+                          description: operator represents a key's relationship to
+                            a set of values. Valid operators are In, NotIn, Exists
+                            and DoesNotExist.
+                          type: string
+                        values:
+                          description: values is an array of string values. If the
+                            operator is In or NotIn, the values array must be non-empty.
+                            If the operator is Exists or DoesNotExist, the values
+                            array must be empty. This array is replaced during a strategic
+                            merge patch.
+                          items:
+                            type: string
+                          type: array
+                      required:
+                      - key
+                      - operator
+                      type: object
+                    type: array
+                  matchLabels:
+                    additionalProperties:
+                      type: string
+                    description: matchLabels is a map of {key,value} pairs. A single
+                      {key,value} in the matchLabels map is equivalent to an element
+                      of matchExpressions, whose key field is "key", the operator
+                      is "In", and the values array contains only "value". The requirements
+                      are ANDed.
+                    type: object
                 type: object
               identityRef:
                 description: IdentityRef is a reference to either a Secret or VSphereClusterIdentity
@@ -1142,25 +1226,23 @@ spec:
                 type: object
               ready:
                 type: boolean
+              vCenterVersion:
+                description: VCenterVersion defines the version of the vCenter server
+                  defined in the spec.
+                type: string
             type: object
         type: object
     served: true
     storage: true
     subresources:
       status: {}
-status:
-  acceptedNames:
-    kind: ""
-    plural: ""
-  conditions: []
-  storedVersions: []
 ---
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
     cert-manager.io/inject-ca-from: capv-system/capv-serving-cert
-    controller-gen.kubebuilder.io/version: v0.7.0
+    controller-gen.kubebuilder.io/version: v0.11.4
   labels:
     cluster.x-k8s.io/provider: infrastructure-vsphere
     cluster.x-k8s.io/v1beta1: v1beta1
@@ -1292,6 +1374,38 @@ spec:
                   spec:
                     description: VSphereClusterSpec defines the desired state of VSphereCluster
                     properties:
+                      clusterModules:
+                        description: ClusterModules hosts information regarding the
+                          anti-affinity vSphere constructs for each of the objects
+                          responsible for creation of VM objects belonging to the
+                          cluster.
+                        items:
+                          description: ClusterModule holds the anti affinity construct
+                            `ClusterModule` identifier in use by the VMs owned by
+                            the object referred by the TargetObjectName field.
+                          properties:
+                            controlPlane:
+                              description: ControlPlane indicates whether the referred
+                                object is responsible for control plane nodes. Currently,
+                                only the KubeadmControlPlane objects have this flag
+                                set to true. Only a single object in the slice can
+                                have this value set to true.
+                              type: boolean
+                            moduleUUID:
+                              description: ModuleUUID is the unique identifier of
+                                the `ClusterModule` used by the object.
+                              type: string
+                            targetObjectName:
+                              description: TargetObjectName points to the object that
+                                uses the Cluster Module information to enforce anti-affinity
+                                amongst its descendant VM objects.
+                              type: string
+                          required:
+                          - controlPlane
+                          - moduleUUID
+                          - targetObjectName
+                          type: object
+                        type: array
                       controlPlaneEndpoint:
                         description: ControlPlaneEndpoint represents the endpoint
                           used to communicate with the control plane.
@@ -1306,6 +1420,54 @@ spec:
                         required:
                         - host
                         - port
+                        type: object
+                      failureDomainSelector:
+                        description: FailureDomainSelector is the label selector to
+                          use for failure domain selection for the control plane nodes
+                          of the cluster. An empty value for the selector includes
+                          all the related failure domains.
+                        properties:
+                          matchExpressions:
+                            description: matchExpressions is a list of label selector
+                              requirements. The requirements are ANDed.
+                            items:
+                              description: A label selector requirement is a selector
+                                that contains values, a key, and an operator that
+                                relates the key and values.
+                              properties:
+                                key:
+                                  description: key is the label key that the selector
+                                    applies to.
+                                  type: string
+                                operator:
+                                  description: operator represents a key's relationship
+                                    to a set of values. Valid operators are In, NotIn,
+                                    Exists and DoesNotExist.
+                                  type: string
+                                values:
+                                  description: values is an array of string values.
+                                    If the operator is In or NotIn, the values array
+                                    must be non-empty. If the operator is Exists or
+                                    DoesNotExist, the values array must be empty.
+                                    This array is replaced during a strategic merge
+                                    patch.
+                                  items:
+                                    type: string
+                                  type: array
+                              required:
+                              - key
+                              - operator
+                              type: object
+                            type: array
+                          matchLabels:
+                            additionalProperties:
+                              type: string
+                            description: matchLabels is a map of {key,value} pairs.
+                              A single {key,value} in the matchLabels map is equivalent
+                              to an element of matchExpressions, whose key field is
+                              "key", the operator is "In", and the values array contains
+                              only "value". The requirements are ANDed.
+                            type: object
                         type: object
                       identityRef:
                         description: IdentityRef is a reference to either a Secret
@@ -1344,19 +1506,13 @@ spec:
         type: object
     served: true
     storage: true
-status:
-  acceptedNames:
-    kind: ""
-    plural: ""
-  conditions: []
-  storedVersions: []
 ---
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
     cert-manager.io/inject-ca-from: capv-system/capv-serving-cert
-    controller-gen.kubebuilder.io/version: v0.7.0
+    controller-gen.kubebuilder.io/version: v0.11.4
   labels:
     cluster.x-k8s.io/provider: infrastructure-vsphere
     cluster.x-k8s.io/v1beta1: v1beta1
@@ -1697,19 +1853,13 @@ spec:
     storage: true
     subresources:
       status: {}
-status:
-  acceptedNames:
-    kind: ""
-    plural: ""
-  conditions: []
-  storedVersions: []
 ---
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
     cert-manager.io/inject-ca-from: capv-system/capv-serving-cert
-    controller-gen.kubebuilder.io/version: v0.7.0
+    controller-gen.kubebuilder.io/version: v0.11.4
   labels:
     cluster.x-k8s.io/provider: infrastructure-vsphere
     cluster.x-k8s.io/v1beta1: v1beta1
@@ -2099,19 +2249,13 @@ spec:
         type: object
     served: true
     storage: true
-status:
-  acceptedNames:
-    kind: ""
-    plural: ""
-  conditions: []
-  storedVersions: []
 ---
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
     cert-manager.io/inject-ca-from: capv-system/capv-serving-cert
-    controller-gen.kubebuilder.io/version: v0.7.0
+    controller-gen.kubebuilder.io/version: v0.11.4
   labels:
     cluster.x-k8s.io/provider: infrastructure-vsphere
     cluster.x-k8s.io/v1beta1: v1beta1
@@ -2157,6 +2301,10 @@ spec:
       name: Machine
       priority: 1
       type: string
+    - description: Time duration since creation of Machine
+      jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
     name: v1alpha3
     schema:
       openAPIV3Schema:
@@ -2229,7 +2377,7 @@ spec:
                   devices:
                     description: Devices is the list of network devices used by the
                       virtual machine. TODO(akutz) Make sure at least one network
-                      matches the             ClusterSpec.CloudProviderConfiguration.Network.Name
+                      matches the ClusterSpec.CloudProviderConfiguration.Network.Name
                     items:
                       description: NetworkDeviceSpec defines the network configuration
                         for a virtual machine's network device.
@@ -2548,6 +2696,10 @@ spec:
       name: Machine
       priority: 1
       type: string
+    - description: Time duration since creation of Machine
+      jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
     name: v1alpha4
     schema:
       openAPIV3Schema:
@@ -2620,7 +2772,7 @@ spec:
                   devices:
                     description: Devices is the list of network devices used by the
                       virtual machine. TODO(akutz) Make sure at least one network
-                      matches the             ClusterSpec.CloudProviderConfiguration.Network.Name
+                      matches the ClusterSpec.CloudProviderConfiguration.Network.Name
                     items:
                       description: NetworkDeviceSpec defines the network configuration
                         for a virtual machine's network device.
@@ -2939,6 +3091,10 @@ spec:
       name: Machine
       priority: 1
       type: string
+    - description: Time duration since creation of Machine
+      jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
     name: v1beta1
     schema:
       openAPIV3Schema:
@@ -3007,6 +3163,12 @@ spec:
                 description: Folder is the name or inventory path of the folder in
                   which the virtual machine is created/located.
                 type: string
+              hardwareVersion:
+                description: HardwareVersion is the hardware version of the virtual
+                  machine. Defaults to the eponymous property value in the template
+                  from which the virtual machine is cloned. Check the compatibility
+                  with the ESXi version before setting the value.
+                type: string
               memoryMiB:
                 description: MemoryMiB is the size of a virtual machine's memory,
                   in MiB. Defaults to the eponymous property value in the template
@@ -3020,11 +3182,39 @@ spec:
                   devices:
                     description: Devices is the list of network devices used by the
                       virtual machine. TODO(akutz) Make sure at least one network
-                      matches the             ClusterSpec.CloudProviderConfiguration.Network.Name
+                      matches the ClusterSpec.CloudProviderConfiguration.Network.Name
                     items:
                       description: NetworkDeviceSpec defines the network configuration
                         for a virtual machine's network device.
                       properties:
+                        addressesFromPools:
+                          description: AddressesFromPools is a list of IPAddressPools
+                            that should be assigned to IPAddressClaims. The machine's
+                            cloud-init metadata will be populated with IPAddresses
+                            fulfilled by an IPAM provider.
+                          items:
+                            description: TypedLocalObjectReference contains enough
+                              information to let you locate the typed referenced object
+                              inside the same namespace.
+                            properties:
+                              apiGroup:
+                                description: APIGroup is the group for the resource
+                                  being referenced. If APIGroup is not specified,
+                                  the specified Kind must be in the core API group.
+                                  For any other third-party types, APIGroup is required.
+                                type: string
+                              kind:
+                                description: Kind is the type of resource being referenced
+                                type: string
+                              name:
+                                description: Name is the name of resource being referenced
+                                type: string
+                            required:
+                            - apiGroup
+                            - kind
+                            - name
+                            type: object
+                          type: array
                         deviceName:
                           description: DeviceName may be used to explicitly assign
                             a name to the network device as it exists in the guest
@@ -3035,18 +3225,123 @@ spec:
                             to use DHCP for IPv4 on this device. If true then IPAddrs
                             should not contain any IPv4 addresses.
                           type: boolean
+                        dhcp4Overrides:
+                          description: DHCP4Overrides allows for the control over
+                            several DHCP behaviors. Overrides will only be applied
+                            when the corresponding DHCP flag is set. Only configured
+                            values will be sent, omitted values will default to distribution
+                            defaults. Dependent on support in the network stack for
+                            your distribution. For more information see the netplan
+                            reference (https://netplan.io/reference#dhcp-overrides)
+                          properties:
+                            hostname:
+                              description: Hostname is the name which will be sent
+                                to the DHCP server instead of the machine's hostname.
+                              type: string
+                            routeMetric:
+                              description: RouteMetric is used to prioritize routes
+                                for devices. A lower metric for an interface will
+                                have a higher priority.
+                              type: integer
+                            sendHostname:
+                              description: SendHostname when `true`, the hostname
+                                of the machine will be sent to the DHCP server.
+                              type: boolean
+                            useDNS:
+                              description: UseDNS when `true`, the DNS servers in
+                                the DHCP server will be used and take precedence.
+                              type: boolean
+                            useDomains:
+                              description: UseDomains can take the values `true`,
+                                `false`, or `route`. When `true`, the domain name
+                                from the DHCP server will be used as the DNS search
+                                domain for this device. When `route`, the domain name
+                                from the DHCP response will be used for routing DNS
+                                only, not for searching.
+                              type: string
+                            useHostname:
+                              description: UseHostname when `true`, the hostname from
+                                the DHCP server will be set as the transient hostname
+                                of the machine.
+                              type: boolean
+                            useMTU:
+                              description: UseMTU when `true`, the MTU from the DHCP
+                                server will be set as the MTU of the device.
+                              type: boolean
+                            useNTP:
+                              description: UseNTP when `true`, the NTP servers from
+                                the DHCP server will be used by systemd-timesyncd
+                                and take precedence.
+                              type: boolean
+                            useRoutes:
+                              description: UseRoutes when `true`, the routes from
+                                the DHCP server will be installed in the routing table.
+                              type: string
+                          type: object
                         dhcp6:
                           description: DHCP6 is a flag that indicates whether or not
                             to use DHCP for IPv6 on this device. If true then IPAddrs
                             should not contain any IPv6 addresses.
                           type: boolean
+                        dhcp6Overrides:
+                          description: DHCP6Overrides allows for the control over
+                            several DHCP behaviors. Overrides will only be applied
+                            when the corresponding DHCP flag is set. Only configured
+                            values will be sent, omitted values will default to distribution
+                            defaults. Dependent on support in the network stack for
+                            your distribution. For more information see the netplan
+                            reference (https://netplan.io/reference#dhcp-overrides)
+                          properties:
+                            hostname:
+                              description: Hostname is the name which will be sent
+                                to the DHCP server instead of the machine's hostname.
+                              type: string
+                            routeMetric:
+                              description: RouteMetric is used to prioritize routes
+                                for devices. A lower metric for an interface will
+                                have a higher priority.
+                              type: integer
+                            sendHostname:
+                              description: SendHostname when `true`, the hostname
+                                of the machine will be sent to the DHCP server.
+                              type: boolean
+                            useDNS:
+                              description: UseDNS when `true`, the DNS servers in
+                                the DHCP server will be used and take precedence.
+                              type: boolean
+                            useDomains:
+                              description: UseDomains can take the values `true`,
+                                `false`, or `route`. When `true`, the domain name
+                                from the DHCP server will be used as the DNS search
+                                domain for this device. When `route`, the domain name
+                                from the DHCP response will be used for routing DNS
+                                only, not for searching.
+                              type: string
+                            useHostname:
+                              description: UseHostname when `true`, the hostname from
+                                the DHCP server will be set as the transient hostname
+                                of the machine.
+                              type: boolean
+                            useMTU:
+                              description: UseMTU when `true`, the MTU from the DHCP
+                                server will be set as the MTU of the device.
+                              type: boolean
+                            useNTP:
+                              description: UseNTP when `true`, the NTP servers from
+                                the DHCP server will be used by systemd-timesyncd
+                                and take precedence.
+                              type: boolean
+                            useRoutes:
+                              description: UseRoutes when `true`, the routes from
+                                the DHCP server will be installed in the routing table.
+                              type: string
+                          type: object
                         gateway4:
                           description: Gateway4 is the IPv4 gateway used by this device.
                             Required when DHCP4 is false.
                           type: string
                         gateway6:
                           description: Gateway4 is the IPv4 gateway used by this device.
-                            Required when DHCP6 is false.
                           type: string
                         ipAddrs:
                           description: IPAddrs is a list of one or more IPv4 and/or
@@ -3153,6 +3448,30 @@ spec:
                   value in the template from which the virtual machine is cloned.
                 format: int32
                 type: integer
+              os:
+                description: OS is the Operating System of the virtual machine Defaults
+                  to Linux
+                type: string
+              pciDevices:
+                description: PciDevices is the list of pci devices used by the virtual
+                  machine.
+                items:
+                  description: PCIDeviceSpec defines virtual machine's PCI configuration
+                  properties:
+                    deviceId:
+                      description: DeviceID is the device ID of a virtual machine's
+                        PCI, in integer. Defaults to the eponymous property value
+                        in the template from which the virtual machine is cloned.
+                      format: int32
+                      type: integer
+                    vendorId:
+                      description: VendorId is the vendor ID of a virtual machine's
+                        PCI, in integer. Defaults to the eponymous property value
+                        in the template from which the virtual machine is cloned.
+                      format: int32
+                      type: integer
+                  type: object
+                type: array
               providerID:
                 description: ProviderID is the virtual machine's BIOS UUID formated
                   as vsphere://12345678-1234-1234-1234-123456789abc
@@ -3176,6 +3495,7 @@ spec:
                 type: string
               tagIDs:
                 description: TagIDs is an optional set of tags to add to an instance.
+                  Specified tagIDs must use URN-notation instead of display names.
                 items:
                   type: string
                 type: array
@@ -3208,8 +3528,8 @@ spec:
                       description: The machine address.
                       type: string
                     type:
-                      description: Machine address type, one of Hostname, ExternalIP
-                        or InternalIP.
+                      description: Machine address type, one of Hostname, ExternalIP,
+                        InternalIP, ExternalDNS or InternalDNS.
                       type: string
                   required:
                   - address
@@ -3327,19 +3647,13 @@ spec:
     storage: true
     subresources:
       status: {}
-status:
-  acceptedNames:
-    kind: ""
-    plural: ""
-  conditions: []
-  storedVersions: []
 ---
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
     cert-manager.io/inject-ca-from: capv-system/capv-serving-cert
-    controller-gen.kubebuilder.io/version: v0.7.0
+    controller-gen.kubebuilder.io/version: v0.11.4
   labels:
     cluster.x-k8s.io/provider: infrastructure-vsphere
     cluster.x-k8s.io/v1beta1: v1beta1
@@ -3472,7 +3786,10 @@ spec:
                             blockOwnerDeletion:
                               description: If true, AND if the owner has the "foregroundDeletion"
                                 finalizer, then the owner cannot be deleted from the
-                                key-value store until this reference is removed. Defaults
+                                key-value store until this reference is removed. See
+                                https://kubernetes.io/docs/concepts/architecture/garbage-collection/#foreground-deletion
+                                for how the garbage collector interacts with this
+                                field and enforces the foreground deletion. Defaults
                                 to false. To set this field, a user needs "delete"
                                 permission of the owner, otherwise 422 (Unprocessable
                                 Entity) will be returned.
@@ -3496,6 +3813,7 @@ spec:
                           - name
                           - uid
                           type: object
+                          x-kubernetes-map-type: atomic
                         type: array
                     type: object
                   spec:
@@ -3555,7 +3873,7 @@ spec:
                           devices:
                             description: Devices is the list of network devices used
                               by the virtual machine. TODO(akutz) Make sure at least
-                              one network matches the             ClusterSpec.CloudProviderConfiguration.Network.Name
+                              one network matches the ClusterSpec.CloudProviderConfiguration.Network.Name
                             items:
                               description: NetworkDeviceSpec defines the network configuration
                                 for a virtual machine's network device.
@@ -3843,7 +4161,7 @@ spec:
                           devices:
                             description: Devices is the list of network devices used
                               by the virtual machine. TODO(akutz) Make sure at least
-                              one network matches the             ClusterSpec.CloudProviderConfiguration.Network.Name
+                              one network matches the ClusterSpec.CloudProviderConfiguration.Network.Name
                             items:
                               description: NetworkDeviceSpec defines the network configuration
                                 for a virtual machine's network device.
@@ -4128,6 +4446,13 @@ spec:
                         description: Folder is the name or inventory path of the folder
                           in which the virtual machine is created/located.
                         type: string
+                      hardwareVersion:
+                        description: HardwareVersion is the hardware version of the
+                          virtual machine. Defaults to the eponymous property value
+                          in the template from which the virtual machine is cloned.
+                          Check the compatibility with the ESXi version before setting
+                          the value.
+                        type: string
                       memoryMiB:
                         description: MemoryMiB is the size of a virtual machine's
                           memory, in MiB. Defaults to the eponymous property value
@@ -4141,11 +4466,42 @@ spec:
                           devices:
                             description: Devices is the list of network devices used
                               by the virtual machine. TODO(akutz) Make sure at least
-                              one network matches the             ClusterSpec.CloudProviderConfiguration.Network.Name
+                              one network matches the ClusterSpec.CloudProviderConfiguration.Network.Name
                             items:
                               description: NetworkDeviceSpec defines the network configuration
                                 for a virtual machine's network device.
                               properties:
+                                addressesFromPools:
+                                  description: AddressesFromPools is a list of IPAddressPools
+                                    that should be assigned to IPAddressClaims. The
+                                    machine's cloud-init metadata will be populated
+                                    with IPAddresses fulfilled by an IPAM provider.
+                                  items:
+                                    description: TypedLocalObjectReference contains
+                                      enough information to let you locate the typed
+                                      referenced object inside the same namespace.
+                                    properties:
+                                      apiGroup:
+                                        description: APIGroup is the group for the
+                                          resource being referenced. If APIGroup is
+                                          not specified, the specified Kind must be
+                                          in the core API group. For any other third-party
+                                          types, APIGroup is required.
+                                        type: string
+                                      kind:
+                                        description: Kind is the type of resource
+                                          being referenced
+                                        type: string
+                                      name:
+                                        description: Name is the name of resource
+                                          being referenced
+                                        type: string
+                                    required:
+                                    - apiGroup
+                                    - kind
+                                    - name
+                                    type: object
+                                  type: array
                                 deviceName:
                                   description: DeviceName may be used to explicitly
                                     assign a name to the network device as it exists
@@ -4157,19 +4513,135 @@ spec:
                                     true then IPAddrs should not contain any IPv4
                                     addresses.
                                   type: boolean
+                                dhcp4Overrides:
+                                  description: DHCP4Overrides allows for the control
+                                    over several DHCP behaviors. Overrides will only
+                                    be applied when the corresponding DHCP flag is
+                                    set. Only configured values will be sent, omitted
+                                    values will default to distribution defaults.
+                                    Dependent on support in the network stack for
+                                    your distribution. For more information see the
+                                    netplan reference (https://netplan.io/reference#dhcp-overrides)
+                                  properties:
+                                    hostname:
+                                      description: Hostname is the name which will
+                                        be sent to the DHCP server instead of the
+                                        machine's hostname.
+                                      type: string
+                                    routeMetric:
+                                      description: RouteMetric is used to prioritize
+                                        routes for devices. A lower metric for an
+                                        interface will have a higher priority.
+                                      type: integer
+                                    sendHostname:
+                                      description: SendHostname when `true`, the hostname
+                                        of the machine will be sent to the DHCP server.
+                                      type: boolean
+                                    useDNS:
+                                      description: UseDNS when `true`, the DNS servers
+                                        in the DHCP server will be used and take precedence.
+                                      type: boolean
+                                    useDomains:
+                                      description: UseDomains can take the values
+                                        `true`, `false`, or `route`. When `true`,
+                                        the domain name from the DHCP server will
+                                        be used as the DNS search domain for this
+                                        device. When `route`, the domain name from
+                                        the DHCP response will be used for routing
+                                        DNS only, not for searching.
+                                      type: string
+                                    useHostname:
+                                      description: UseHostname when `true`, the hostname
+                                        from the DHCP server will be set as the transient
+                                        hostname of the machine.
+                                      type: boolean
+                                    useMTU:
+                                      description: UseMTU when `true`, the MTU from
+                                        the DHCP server will be set as the MTU of
+                                        the device.
+                                      type: boolean
+                                    useNTP:
+                                      description: UseNTP when `true`, the NTP servers
+                                        from the DHCP server will be used by systemd-timesyncd
+                                        and take precedence.
+                                      type: boolean
+                                    useRoutes:
+                                      description: UseRoutes when `true`, the routes
+                                        from the DHCP server will be installed in
+                                        the routing table.
+                                      type: string
+                                  type: object
                                 dhcp6:
                                   description: DHCP6 is a flag that indicates whether
                                     or not to use DHCP for IPv6 on this device. If
                                     true then IPAddrs should not contain any IPv6
                                     addresses.
                                   type: boolean
+                                dhcp6Overrides:
+                                  description: DHCP6Overrides allows for the control
+                                    over several DHCP behaviors. Overrides will only
+                                    be applied when the corresponding DHCP flag is
+                                    set. Only configured values will be sent, omitted
+                                    values will default to distribution defaults.
+                                    Dependent on support in the network stack for
+                                    your distribution. For more information see the
+                                    netplan reference (https://netplan.io/reference#dhcp-overrides)
+                                  properties:
+                                    hostname:
+                                      description: Hostname is the name which will
+                                        be sent to the DHCP server instead of the
+                                        machine's hostname.
+                                      type: string
+                                    routeMetric:
+                                      description: RouteMetric is used to prioritize
+                                        routes for devices. A lower metric for an
+                                        interface will have a higher priority.
+                                      type: integer
+                                    sendHostname:
+                                      description: SendHostname when `true`, the hostname
+                                        of the machine will be sent to the DHCP server.
+                                      type: boolean
+                                    useDNS:
+                                      description: UseDNS when `true`, the DNS servers
+                                        in the DHCP server will be used and take precedence.
+                                      type: boolean
+                                    useDomains:
+                                      description: UseDomains can take the values
+                                        `true`, `false`, or `route`. When `true`,
+                                        the domain name from the DHCP server will
+                                        be used as the DNS search domain for this
+                                        device. When `route`, the domain name from
+                                        the DHCP response will be used for routing
+                                        DNS only, not for searching.
+                                      type: string
+                                    useHostname:
+                                      description: UseHostname when `true`, the hostname
+                                        from the DHCP server will be set as the transient
+                                        hostname of the machine.
+                                      type: boolean
+                                    useMTU:
+                                      description: UseMTU when `true`, the MTU from
+                                        the DHCP server will be set as the MTU of
+                                        the device.
+                                      type: boolean
+                                    useNTP:
+                                      description: UseNTP when `true`, the NTP servers
+                                        from the DHCP server will be used by systemd-timesyncd
+                                        and take precedence.
+                                      type: boolean
+                                    useRoutes:
+                                      description: UseRoutes when `true`, the routes
+                                        from the DHCP server will be installed in
+                                        the routing table.
+                                      type: string
+                                  type: object
                                 gateway4:
                                   description: Gateway4 is the IPv4 gateway used by
                                     this device. Required when DHCP4 is false.
                                   type: string
                                 gateway6:
                                   description: Gateway4 is the IPv4 gateway used by
-                                    this device. Required when DHCP6 is false.
+                                    this device.
                                   type: string
                                 ipAddrs:
                                   description: IPAddrs is a list of one or more IPv4
@@ -4280,6 +4752,33 @@ spec:
                           virtual machine is cloned.
                         format: int32
                         type: integer
+                      os:
+                        description: OS is the Operating System of the virtual machine
+                          Defaults to Linux
+                        type: string
+                      pciDevices:
+                        description: PciDevices is the list of pci devices used by
+                          the virtual machine.
+                        items:
+                          description: PCIDeviceSpec defines virtual machine's PCI
+                            configuration
+                          properties:
+                            deviceId:
+                              description: DeviceID is the device ID of a virtual
+                                machine's PCI, in integer. Defaults to the eponymous
+                                property value in the template from which the virtual
+                                machine is cloned.
+                              format: int32
+                              type: integer
+                            vendorId:
+                              description: VendorId is the vendor ID of a virtual
+                                machine's PCI, in integer. Defaults to the eponymous
+                                property value in the template from which the virtual
+                                machine is cloned.
+                              format: int32
+                              type: integer
+                          type: object
+                        type: array
                       providerID:
                         description: ProviderID is the virtual machine's BIOS UUID
                           formated as vsphere://12345678-1234-1234-1234-123456789abc
@@ -4303,7 +4802,8 @@ spec:
                         type: string
                       tagIDs:
                         description: TagIDs is an optional set of tags to add to an
-                          instance.
+                          instance. Specified tagIDs must use URN-notation instead
+                          of display names.
                         items:
                           type: string
                         type: array
@@ -4332,19 +4832,13 @@ spec:
         type: object
     served: true
     storage: true
-status:
-  acceptedNames:
-    kind: ""
-    plural: ""
-  conditions: []
-  storedVersions: []
 ---
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
     cert-manager.io/inject-ca-from: capv-system/capv-serving-cert
-    controller-gen.kubebuilder.io/version: v0.7.0
+    controller-gen.kubebuilder.io/version: v0.11.4
   labels:
     cluster.x-k8s.io/provider: infrastructure-vsphere
     cluster.x-k8s.io/v1beta1: v1beta1
@@ -4364,6 +4858,8 @@ spec:
       - v1beta1
   group: infrastructure.cluster.x-k8s.io
   names:
+    categories:
+    - cluster-api
     kind: VSphereVM
     listKind: VSphereVMList
     plural: vspherevms
@@ -4434,6 +4930,7 @@ spec:
                     description: 'UID of the referent. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#uids'
                     type: string
                 type: object
+                x-kubernetes-map-type: atomic
               cloneMode:
                 description: CloneMode specifies the type of clone operation. The
                   LinkedClone mode is only support for templates that have at least
@@ -4480,7 +4977,7 @@ spec:
                   devices:
                     description: Devices is the list of network devices used by the
                       virtual machine. TODO(akutz) Make sure at least one network
-                      matches the             ClusterSpec.CloudProviderConfiguration.Network.Name
+                      matches the ClusterSpec.CloudProviderConfiguration.Network.Name
                     items:
                       description: NetworkDeviceSpec defines the network configuration
                         for a virtual machine's network device.
@@ -4890,7 +5387,7 @@ spec:
                   devices:
                     description: Devices is the list of network devices used by the
                       virtual machine. TODO(akutz) Make sure at least one network
-                      matches the             ClusterSpec.CloudProviderConfiguration.Network.Name
+                      matches the ClusterSpec.CloudProviderConfiguration.Network.Name
                     items:
                       description: NetworkDeviceSpec defines the network configuration
                         for a virtual machine's network device.
@@ -5296,6 +5793,12 @@ spec:
                 description: Folder is the name or inventory path of the folder in
                   which the virtual machine is created/located.
                 type: string
+              hardwareVersion:
+                description: HardwareVersion is the hardware version of the virtual
+                  machine. Defaults to the eponymous property value in the template
+                  from which the virtual machine is cloned. Check the compatibility
+                  with the ESXi version before setting the value.
+                type: string
               memoryMiB:
                 description: MemoryMiB is the size of a virtual machine's memory,
                   in MiB. Defaults to the eponymous property value in the template
@@ -5309,11 +5812,39 @@ spec:
                   devices:
                     description: Devices is the list of network devices used by the
                       virtual machine. TODO(akutz) Make sure at least one network
-                      matches the             ClusterSpec.CloudProviderConfiguration.Network.Name
+                      matches the ClusterSpec.CloudProviderConfiguration.Network.Name
                     items:
                       description: NetworkDeviceSpec defines the network configuration
                         for a virtual machine's network device.
                       properties:
+                        addressesFromPools:
+                          description: AddressesFromPools is a list of IPAddressPools
+                            that should be assigned to IPAddressClaims. The machine's
+                            cloud-init metadata will be populated with IPAddresses
+                            fulfilled by an IPAM provider.
+                          items:
+                            description: TypedLocalObjectReference contains enough
+                              information to let you locate the typed referenced object
+                              inside the same namespace.
+                            properties:
+                              apiGroup:
+                                description: APIGroup is the group for the resource
+                                  being referenced. If APIGroup is not specified,
+                                  the specified Kind must be in the core API group.
+                                  For any other third-party types, APIGroup is required.
+                                type: string
+                              kind:
+                                description: Kind is the type of resource being referenced
+                                type: string
+                              name:
+                                description: Name is the name of resource being referenced
+                                type: string
+                            required:
+                            - apiGroup
+                            - kind
+                            - name
+                            type: object
+                          type: array
                         deviceName:
                           description: DeviceName may be used to explicitly assign
                             a name to the network device as it exists in the guest
@@ -5324,18 +5855,123 @@ spec:
                             to use DHCP for IPv4 on this device. If true then IPAddrs
                             should not contain any IPv4 addresses.
                           type: boolean
+                        dhcp4Overrides:
+                          description: DHCP4Overrides allows for the control over
+                            several DHCP behaviors. Overrides will only be applied
+                            when the corresponding DHCP flag is set. Only configured
+                            values will be sent, omitted values will default to distribution
+                            defaults. Dependent on support in the network stack for
+                            your distribution. For more information see the netplan
+                            reference (https://netplan.io/reference#dhcp-overrides)
+                          properties:
+                            hostname:
+                              description: Hostname is the name which will be sent
+                                to the DHCP server instead of the machine's hostname.
+                              type: string
+                            routeMetric:
+                              description: RouteMetric is used to prioritize routes
+                                for devices. A lower metric for an interface will
+                                have a higher priority.
+                              type: integer
+                            sendHostname:
+                              description: SendHostname when `true`, the hostname
+                                of the machine will be sent to the DHCP server.
+                              type: boolean
+                            useDNS:
+                              description: UseDNS when `true`, the DNS servers in
+                                the DHCP server will be used and take precedence.
+                              type: boolean
+                            useDomains:
+                              description: UseDomains can take the values `true`,
+                                `false`, or `route`. When `true`, the domain name
+                                from the DHCP server will be used as the DNS search
+                                domain for this device. When `route`, the domain name
+                                from the DHCP response will be used for routing DNS
+                                only, not for searching.
+                              type: string
+                            useHostname:
+                              description: UseHostname when `true`, the hostname from
+                                the DHCP server will be set as the transient hostname
+                                of the machine.
+                              type: boolean
+                            useMTU:
+                              description: UseMTU when `true`, the MTU from the DHCP
+                                server will be set as the MTU of the device.
+                              type: boolean
+                            useNTP:
+                              description: UseNTP when `true`, the NTP servers from
+                                the DHCP server will be used by systemd-timesyncd
+                                and take precedence.
+                              type: boolean
+                            useRoutes:
+                              description: UseRoutes when `true`, the routes from
+                                the DHCP server will be installed in the routing table.
+                              type: string
+                          type: object
                         dhcp6:
                           description: DHCP6 is a flag that indicates whether or not
                             to use DHCP for IPv6 on this device. If true then IPAddrs
                             should not contain any IPv6 addresses.
                           type: boolean
+                        dhcp6Overrides:
+                          description: DHCP6Overrides allows for the control over
+                            several DHCP behaviors. Overrides will only be applied
+                            when the corresponding DHCP flag is set. Only configured
+                            values will be sent, omitted values will default to distribution
+                            defaults. Dependent on support in the network stack for
+                            your distribution. For more information see the netplan
+                            reference (https://netplan.io/reference#dhcp-overrides)
+                          properties:
+                            hostname:
+                              description: Hostname is the name which will be sent
+                                to the DHCP server instead of the machine's hostname.
+                              type: string
+                            routeMetric:
+                              description: RouteMetric is used to prioritize routes
+                                for devices. A lower metric for an interface will
+                                have a higher priority.
+                              type: integer
+                            sendHostname:
+                              description: SendHostname when `true`, the hostname
+                                of the machine will be sent to the DHCP server.
+                              type: boolean
+                            useDNS:
+                              description: UseDNS when `true`, the DNS servers in
+                                the DHCP server will be used and take precedence.
+                              type: boolean
+                            useDomains:
+                              description: UseDomains can take the values `true`,
+                                `false`, or `route`. When `true`, the domain name
+                                from the DHCP server will be used as the DNS search
+                                domain for this device. When `route`, the domain name
+                                from the DHCP response will be used for routing DNS
+                                only, not for searching.
+                              type: string
+                            useHostname:
+                              description: UseHostname when `true`, the hostname from
+                                the DHCP server will be set as the transient hostname
+                                of the machine.
+                              type: boolean
+                            useMTU:
+                              description: UseMTU when `true`, the MTU from the DHCP
+                                server will be set as the MTU of the device.
+                              type: boolean
+                            useNTP:
+                              description: UseNTP when `true`, the NTP servers from
+                                the DHCP server will be used by systemd-timesyncd
+                                and take precedence.
+                              type: boolean
+                            useRoutes:
+                              description: UseRoutes when `true`, the routes from
+                                the DHCP server will be installed in the routing table.
+                              type: string
+                          type: object
                         gateway4:
                           description: Gateway4 is the IPv4 gateway used by this device.
                             Required when DHCP4 is false.
                           type: string
                         gateway6:
                           description: Gateway4 is the IPv4 gateway used by this device.
-                            Required when DHCP6 is false.
                           type: string
                         ipAddrs:
                           description: IPAddrs is a list of one or more IPv4 and/or
@@ -5442,6 +6078,30 @@ spec:
                   value in the template from which the virtual machine is cloned.
                 format: int32
                 type: integer
+              os:
+                description: OS is the Operating System of the virtual machine Defaults
+                  to Linux
+                type: string
+              pciDevices:
+                description: PciDevices is the list of pci devices used by the virtual
+                  machine.
+                items:
+                  description: PCIDeviceSpec defines virtual machine's PCI configuration
+                  properties:
+                    deviceId:
+                      description: DeviceID is the device ID of a virtual machine's
+                        PCI, in integer. Defaults to the eponymous property value
+                        in the template from which the virtual machine is cloned.
+                      format: int32
+                      type: integer
+                    vendorId:
+                      description: VendorId is the vendor ID of a virtual machine's
+                        PCI, in integer. Defaults to the eponymous property value
+                        in the template from which the virtual machine is cloned.
+                      format: int32
+                      type: integer
+                  type: object
+                type: array
               resourcePool:
                 description: ResourcePool is the name or inventory path of the resource
                   pool in which the virtual machine is created/located.
@@ -5461,6 +6121,7 @@ spec:
                 type: string
               tagIDs:
                 description: TagIDs is an optional set of tags to add to an instance.
+                  Specified tagIDs must use URN-notation instead of display names.
                 items:
                   type: string
                 type: array
@@ -5564,6 +6225,16 @@ spec:
                   of vspherevms can be added as events to the vspherevm object and/or
                   logged in the controller's output."
                 type: string
+              host:
+                description: Host describes the hostname or IP address of the infrastructure
+                  host that the VSphereVM is residing on.
+                type: string
+              moduleUUID:
+                description: ModuleUUID is the unique identifier for the vCenter cluster
+                  module construct which is used to configure anti-affinity. Objects
+                  with the same ModuleUUID will be anti-affined, meaning that the
+                  vCenter DRS will best effort schedule the VMs on separate hosts.
+                type: string
               network:
                 description: Network returns the network status for each of the machine's
                   configured network interfaces.
@@ -5609,18 +6280,18 @@ spec:
                   to the machine. This value is set automatically at runtime and should
                   not be set or modified by users.
                 type: string
+              vmRef:
+                description: VMRef is the the VM's Managed Object Reference on vSphere.
+                  It can be used by consumers to programatically get this VM representation
+                  on vSphere in case of the need to retrieve informations. This field
+                  is set once the machine is created and should not be changed
+                type: string
             type: object
         type: object
     served: true
     storage: true
     subresources:
       status: {}
-status:
-  acceptedNames:
-    kind: ""
-    plural: ""
-  conditions: []
-  storedVersions: []
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
@@ -5669,12 +6340,26 @@ rules:
   - patch
   - delete
 ---
+aggregationRule:
+  clusterRoleSelectors:
+  - matchLabels:
+      capv.infrastucture.cluster.x-k8s.io/aggregate-to-manager: "true"
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
   labels:
+    cluster.x-k8s.io/provider: infrastructure-vsphere
+  name: capv-aggregated-manager-role
+rules: []
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    capv.infrastucture.cluster.x-k8s.io/aggregate-to-manager: "true"
     cluster.x-k8s.io/aggregate-to-manager: "true"
     cluster.x-k8s.io/provider: infrastructure-vsphere
+    kubeadm.controlplane.cluster.x-k8s.io/aggregate-to-manager: "true"
   name: capv-manager-role
 rules:
 - apiGroups:
@@ -5770,15 +6455,6 @@ rules:
   verbs:
   - get
 - apiGroups:
-  - bootstrap.cluster.x-k8s.io
-  resources:
-  - kubeadmconfigtemplates
-  verbs:
-  - delete
-  - get
-  - list
-  - watch
-- apiGroups:
   - cluster.x-k8s.io
   resources:
   - clusters
@@ -5790,8 +6466,41 @@ rules:
 - apiGroups:
   - cluster.x-k8s.io
   resources:
+  - machinedeployments
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - cluster.x-k8s.io
+  resources:
+  - machinedeployments
+  - machinesets
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - cluster.x-k8s.io
+  resources:
   - machines
+  verbs:
+  - get
+  - list
+  - patch
+  - watch
+- apiGroups:
+  - cluster.x-k8s.io
+  resources:
   - machines/status
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - controlplane.cluster.x-k8s.io
+  resources:
+  - kubeadmcontrolplanes
   verbs:
   - get
   - list
@@ -5804,6 +6513,14 @@ rules:
   - get
   - list
   - watch
+- apiGroups:
+  - ""
+  resources:
+  - nodes
+  verbs:
+  - delete
+  - get
+  - list
 - apiGroups:
   - ""
   resources:
@@ -5911,6 +6628,14 @@ rules:
 - apiGroups:
   - infrastructure.cluster.x-k8s.io
   resources:
+  - vspheremachinetemplates
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - infrastructure.cluster.x-k8s.io
+  resources:
   - vspherevms
   verbs:
   - create
@@ -5928,6 +6653,25 @@ rules:
   - get
   - patch
   - update
+- apiGroups:
+  - ipam.cluster.x-k8s.io
+  resources:
+  - ipaddressclaims
+  verbs:
+  - create
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - ipam.cluster.x-k8s.io
+  resources:
+  - ipaddresses
+  verbs:
+  - get
+  - list
+  - watch
 - apiGroups:
   - netoperator.vmware.com
   resources:
@@ -6068,6 +6812,18 @@ rules:
 - apiGroups:
   - vmware.infrastructure.cluster.x-k8s.io
   resources:
+  - vsphereclustertemplates
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - vmware.infrastructure.cluster.x-k8s.io
+  resources:
   - vspheremachines
   verbs:
   - create
@@ -6131,7 +6887,7 @@ metadata:
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: capv-manager-role
+  name: capv-aggregated-manager-role
 subjects:
 - kind: ServiceAccount
   name: default
@@ -6186,9 +6942,10 @@ spec:
     spec:
       containers:
       - args:
-        - --enable-leader-election
-        - --logtostderr
+        - --leader-elect
         - --v=4
+        - --enable-keep-alive
+        - --feature-gates=NodeAntiAffinity=${EXP_NODE_ANTI_AFFINITY:=false}
         imagePullPolicy: Always
         livenessProbe:
           httpGet:
@@ -6206,6 +6963,13 @@ spec:
           httpGet:
             path: /readyz
             port: healthz
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          runAsGroup: 65532
+          runAsUser: 65532
         volumeMounts:
         - mountPath: /tmp/k8s-webhook-server/serving-certs
           name: cert
@@ -6213,10 +6977,16 @@ spec:
         - mountPath: /etc/capv
           name: manager-bootstrap-credentials
           readOnly: true
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
       terminationGracePeriodSeconds: 10
       tolerations:
       - effect: NoSchedule
         key: node-role.kubernetes.io/master
+      - effect: NoSchedule
+        key: node-role.kubernetes.io/control-plane
       volumes:
       - name: cert
         secret:
@@ -6323,6 +7093,27 @@ webhooks:
     - UPDATE
     resources:
     - vspheremachines
+  sideEffects: None
+- admissionReviewVersions:
+  - v1beta1
+  clientConfig:
+    service:
+      name: capv-webhook-service
+      namespace: capv-system
+      path: /mutate-infrastructure-cluster-x-k8s-io-v1beta1-vspherevm
+  failurePolicy: Fail
+  matchPolicy: Equivalent
+  name: default.vspherevm.infrastructure.x-k8s.io
+  rules:
+  - apiGroups:
+    - infrastructure.cluster.x-k8s.io
+    apiVersions:
+    - v1beta1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - vspherevms
   sideEffects: None
 ---
 apiVersion: admissionregistration.k8s.io/v1
