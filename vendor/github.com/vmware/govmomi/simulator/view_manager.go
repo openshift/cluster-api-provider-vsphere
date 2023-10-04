@@ -1,5 +1,5 @@
 /*
-Copyright (c) 2017 VMware, Inc. All Rights Reserved.
+Copyright (c) 2017-2023 VMware, Inc. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -69,7 +69,7 @@ func destroyView(ref types.ManagedObjectReference) soap.HasFault {
 func (m *ViewManager) CreateContainerView(ctx *Context, req *types.CreateContainerView) soap.HasFault {
 	body := &methods.CreateContainerViewBody{}
 
-	root := Map.Get(req.Container)
+	root := ctx.Map.Get(req.Container)
 	if root == nil {
 		body.Fault_ = Fault("", &types.ManagedObjectNotFound{Obj: req.Container})
 		return body
@@ -154,6 +154,8 @@ func walk(root mo.Reference, f func(child types.ManagedObjectReference)) {
 		children = []types.ManagedObjectReference{e.VmFolder, e.HostFolder, e.DatastoreFolder, e.NetworkFolder}
 	case *mo.Folder:
 		children = e.ChildEntity
+	case *mo.StoragePod:
+		children = e.ChildEntity
 	case *mo.ComputeResource:
 		children = e.Host
 		children = append(children, *e.ResourcePool)
@@ -216,7 +218,7 @@ func (v *ContainerView) PutObject(obj mo.Reference) {
 }
 
 func (v *ContainerView) RemoveObject(ctx *Context, obj types.ManagedObjectReference) {
-	Map.RemoveReference(ctx, v, &v.View, obj)
+	ctx.Map.RemoveReference(ctx, v, &v.View, obj)
 }
 
 func (*ContainerView) UpdateObject(mo.Reference, []types.PropertyChange) {}

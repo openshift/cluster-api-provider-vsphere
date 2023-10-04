@@ -17,6 +17,8 @@ limitations under the License.
 package collections
 
 import (
+	"time"
+
 	"github.com/blang/semver"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
@@ -173,7 +175,25 @@ func ShouldRolloutAfter(reconciliationTime, rolloutAfter *metav1.Time) Func {
 		if machine == nil {
 			return false
 		}
+		if reconciliationTime == nil || rolloutAfter == nil {
+			return false
+		}
 		return machine.CreationTimestamp.Before(rolloutAfter) && rolloutAfter.Before(reconciliationTime)
+	}
+}
+
+// ShouldRolloutBefore returns a filter to find all machine whose
+// certificates will expire within the specified days.
+func ShouldRolloutBefore(reconciliationTime *metav1.Time, rolloutBefore *controlplanev1.RolloutBefore) Func {
+	return func(machine *clusterv1.Machine) bool {
+		if rolloutBefore == nil || rolloutBefore.CertificatesExpiryDays == nil {
+			return false
+		}
+		if machine == nil || machine.Status.CertificatesExpiryDate == nil {
+			return false
+		}
+		certsExpiryTime := machine.Status.CertificatesExpiryDate.Time
+		return reconciliationTime.Add(time.Duration(*rolloutBefore.CertificatesExpiryDays) * 24 * time.Hour).After(certsExpiryTime)
 	}
 }
 
@@ -200,8 +220,8 @@ func ControlPlaneSelectorForCluster(clusterName string) labels.Selector {
 		return *r
 	}
 	return labels.NewSelector().Add(
-		must(labels.NewRequirement(clusterv1.ClusterLabelName, selection.Equals, []string{clusterName})),
-		must(labels.NewRequirement(clusterv1.MachineControlPlaneLabelName, selection.Exists, []string{})),
+		must(labels.NewRequirement(clusterv1.ClusterNameLabel, selection.Equals, []string{clusterName})),
+		must(labels.NewRequirement(clusterv1.MachineControlPlaneLabel, selection.Exists, []string{})),
 	)
 }
 
