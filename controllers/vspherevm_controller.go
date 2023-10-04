@@ -36,6 +36,7 @@ import (
 	"sigs.k8s.io/cluster-api/util/annotations"
 	"sigs.k8s.io/cluster-api/util/conditions"
 	"sigs.k8s.io/cluster-api/util/patch"
+	"sigs.k8s.io/cluster-api/util/predicates"
 	ctrl "sigs.k8s.io/controller-runtime"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
@@ -69,7 +70,7 @@ import (
 // AddVMControllerToManager adds the VM controller to the provided manager.
 //
 //nolint:forcetypeassert
-func AddVMControllerToManager(ctx *context.ControllerManagerContext, mgr manager.Manager) error {
+func AddVMControllerToManager(ctx *context.ControllerManagerContext, mgr manager.Manager, tracker *remote.ClusterCacheTracker, options controller.Options) error {
 	var (
 		controlledType     = &infrav1.VSphereVM{}
 		controlledTypeName = reflect.TypeOf(controlledType).Elem().Name()
@@ -87,41 +88,42 @@ func AddVMControllerToManager(ctx *context.ControllerManagerContext, mgr manager
 		Logger:                   ctx.Logger.WithName(controllerNameShort),
 	}
 	r := vmReconciler{
-		ControllerContext: controllerContext,
-		VMService:         &govmomi.VMService{},
+		ControllerContext:         controllerContext,
+		VMService:                 &govmomi.VMService{},
+		remoteClusterCacheTracker: tracker,
 	}
 	controller, err := ctrl.NewControllerManagedBy(mgr).
 		// Watch the controlled, infrastructure resource.
 		For(controlledType).
+		WithOptions(options).
 		// Watch a GenericEvent channel for the controlled resource.
 		//
 		// This is useful when there are events outside of Kubernetes that
 		// should cause a resource to be synchronized, such as a goroutine
 		// waiting on some asynchronous, external task to complete.
-		Watches(
+		WatchesRawSource(
 			&source.Channel{Source: ctx.GetGenericEventChannelFor(controlledTypeGVK)},
 			&handler.EnqueueRequestForObject{},
 		).
-		WithOptions(controller.Options{MaxConcurrentReconciles: ctx.MaxConcurrentReconciles}).
+		WithEventFilter(predicates.ResourceNotPausedAndHasFilterLabel(ctrl.LoggerFrom(ctx), ctx.WatchFilterValue)).
 		Build(r)
 	if err != nil {
 		return err
 	}
 
 	err = controller.Watch(
-		&source.Kind{Type: &clusterv1.Cluster{}},
+		source.Kind(mgr.GetCache(), &clusterv1.Cluster{}),
 		handler.EnqueueRequestsFromMapFunc(r.clusterToVSphereVMs),
 		predicate.Funcs{
 			UpdateFunc: func(e event.UpdateEvent) bool {
-				oldCluster := e.ObjectOld.(*clusterv1.Cluster)
 				newCluster := e.ObjectNew.(*clusterv1.Cluster)
-				return oldCluster.Spec.Paused && !newCluster.Spec.Paused
+				// check whether cluster has either spec.paused or pasued annotation
+				return !annotations.IsPaused(newCluster, newCluster)
 			},
 			CreateFunc: func(e event.CreateEvent) bool {
-				if _, ok := e.Object.GetAnnotations()[clusterv1.PausedAnnotation]; !ok {
-					return false
-				}
-				return true
+				cluster := e.Object.(*clusterv1.Cluster)
+				// check whether cluster has either spec.paused or pasued annotation
+				return annotations.IsPaused(cluster, cluster)
 			},
 		})
 	if err != nil {
@@ -129,7 +131,7 @@ func AddVMControllerToManager(ctx *context.ControllerManagerContext, mgr manager
 	}
 
 	err = controller.Watch(
-		&source.Kind{Type: &infrav1.VSphereCluster{}},
+		source.Kind(mgr.GetCache(), &infrav1.VSphereCluster{}),
 		handler.EnqueueRequestsFromMapFunc(r.vsphereClusterToVSphereVMs),
 		predicate.Funcs{
 			UpdateFunc: func(e event.UpdateEvent) bool {
@@ -146,7 +148,7 @@ func AddVMControllerToManager(ctx *context.ControllerManagerContext, mgr manager
 	}
 
 	err = controller.Watch(
-		&source.Kind{Type: &ipamv1.IPAddressClaim{}},
+		source.Kind(mgr.GetCache(), &ipamv1.IPAddressClaim{}),
 		handler.EnqueueRequestsFromMapFunc(r.ipAddressClaimToVSphereVM))
 	if err != nil {
 		return err
@@ -157,7 +159,8 @@ func AddVMControllerToManager(ctx *context.ControllerManagerContext, mgr manager
 type vmReconciler struct {
 	*context.ControllerContext
 
-	VMService services.VirtualMachineService
+	VMService                 services.VirtualMachineService
+	remoteClusterCacheTracker *remote.ClusterCacheTracker
 }
 
 // Reconcile ensures the back-end state reflects the Kubernetes resource state intent.
@@ -280,6 +283,15 @@ func (r vmReconciler) Reconcile(ctx goctx.Context, req ctrl.Request) (_ ctrl.Res
 		}
 	}
 
+	if vsphereVM.ObjectMeta.DeletionTimestamp.IsZero() {
+		// If the VSphereVM doesn't have our finalizer, add it.
+		// Requeue immediately to avoid the race condition between init and delete
+		if !ctrlutil.ContainsFinalizer(vsphereVM, infrav1.VMFinalizer) {
+			ctrlutil.AddFinalizer(vsphereVM, infrav1.VMFinalizer)
+			return reconcile.Result{}, nil
+		}
+	}
+
 	return r.reconcile(vmContext, fetchClusterModuleInput{
 		VSphereCluster: vsphereCluster,
 		Machine:        machine,
@@ -316,10 +328,15 @@ func (r vmReconciler) reconcileDelete(ctx *context.VMContext) (reconcile.Result,
 	ctx.Logger.Info("Handling deleted VSphereVM")
 
 	conditions.MarkFalse(ctx.VSphereVM, infrav1.VMProvisionedCondition, clusterv1.DeletingReason, clusterv1.ConditionSeverityInfo, "")
-	vm, err := r.VMService.DestroyVM(ctx)
+	result, vm, err := r.VMService.DestroyVM(ctx)
 	if err != nil {
 		conditions.MarkFalse(ctx.VSphereVM, infrav1.VMProvisionedCondition, "DeletionFailed", clusterv1.ConditionSeverityWarning, err.Error())
 		return reconcile.Result{}, errors.Wrapf(err, "failed to destroy VM")
+	}
+
+	if !result.IsZero() {
+		// a non-zero value means we need to requeue the request before proceed.
+		return result, nil
 	}
 
 	// Requeue the operation until the VM is "notfound".
@@ -329,8 +346,13 @@ func (r vmReconciler) reconcileDelete(ctx *context.VMContext) (reconcile.Result,
 	}
 
 	// Attempt to delete the node corresponding to the vsphere VM
-	if err := r.deleteNode(ctx, vm.Name); err != nil {
+	result, err = r.deleteNode(ctx, vm.Name)
+	if err != nil {
 		r.Logger.V(6).Info("unable to delete node", "err", err)
+	}
+	if !result.IsZero() {
+		// a non-zero value means we need to requeue the request before proceed.
+		return result, nil
 	}
 
 	if err := r.deleteIPAddressClaims(ctx); err != nil {
@@ -347,15 +369,19 @@ func (r vmReconciler) reconcileDelete(ctx *context.VMContext) (reconcile.Result,
 // This is necessary since CAPI does not the nodeRef field on the owner Machine object
 // until the node moves to Ready state. Hence, on Machine deletion it is unable to delete
 // the kubernetes node corresponding to the VM.
-func (r vmReconciler) deleteNode(ctx *context.VMContext, name string) error {
+func (r vmReconciler) deleteNode(ctx *context.VMContext, name string) (reconcile.Result, error) {
 	// Fetching the cluster object from the VSphereVM object to create a remote client to the cluster
 	cluster, err := clusterutilv1.GetClusterFromMetadata(r.ControllerContext, r.Client, ctx.VSphereVM.ObjectMeta)
 	if err != nil {
-		return err
+		return ctrl.Result{}, err
 	}
-	clusterClient, err := remote.NewClusterClient(ctx, r.ControllerContext.Name, r.Client, ctrlclient.ObjectKeyFromObject(cluster))
+	clusterClient, err := r.remoteClusterCacheTracker.GetClient(ctx, ctrlclient.ObjectKeyFromObject(cluster))
 	if err != nil {
-		return err
+		if errors.Is(err, remote.ErrClusterLocked) {
+			r.Logger.V(5).Info("Requeuing because another worker has the lock on the ClusterCacheTracker")
+			return ctrl.Result{Requeue: true}, nil
+		}
+		return ctrl.Result{}, err
 	}
 
 	// Attempt to delete the corresponding node
@@ -364,7 +390,7 @@ func (r vmReconciler) deleteNode(ctx *context.VMContext, name string) error {
 			Name: name,
 		},
 	}
-	return clusterClient.Delete(ctx, node)
+	return ctrl.Result{}, clusterClient.Delete(ctx, node)
 }
 
 func (r vmReconciler) reconcileNormal(ctx *context.VMContext) (reconcile.Result, error) {
@@ -372,8 +398,6 @@ func (r vmReconciler) reconcileNormal(ctx *context.VMContext) (reconcile.Result,
 		r.Logger.Info("VM is failed, won't reconcile", "namespace", ctx.VSphereVM.Namespace, "name", ctx.VSphereVM.Name)
 		return reconcile.Result{}, nil
 	}
-	// If the VSphereVM doesn't have our finalizer, add it.
-	ctrlutil.AddFinalizer(ctx.VSphereVM, infrav1.VMFinalizer)
 
 	if r.isWaitingForStaticIPAllocation(ctx) {
 		conditions.MarkFalse(ctx.VSphereVM, infrav1.VMProvisionedCondition, infrav1.WaitingForStaticIPAllocationReason, clusterv1.ConditionSeverityInfo, "")
@@ -457,10 +481,10 @@ func (r vmReconciler) reconcileNetwork(ctx *context.VMContext, vm infrav1.Virtua
 	ctx.VSphereVM.Status.Addresses = ipAddrs
 }
 
-func (r vmReconciler) clusterToVSphereVMs(a ctrlclient.Object) []reconcile.Request {
+func (r vmReconciler) clusterToVSphereVMs(ctx goctx.Context, a ctrlclient.Object) []reconcile.Request {
 	requests := []reconcile.Request{}
 	vms := &infrav1.VSphereVMList{}
-	err := r.Client.List(goctx.Background(), vms, ctrlclient.MatchingLabels(
+	err := r.Client.List(ctx, vms, ctrlclient.MatchingLabels(
 		map[string]string{
 			clusterv1.ClusterNameLabel: a.GetName(),
 		},
@@ -480,7 +504,7 @@ func (r vmReconciler) clusterToVSphereVMs(a ctrlclient.Object) []reconcile.Reque
 	return requests
 }
 
-func (r vmReconciler) vsphereClusterToVSphereVMs(a ctrlclient.Object) []reconcile.Request {
+func (r vmReconciler) vsphereClusterToVSphereVMs(ctx goctx.Context, a ctrlclient.Object) []reconcile.Request {
 	vsphereCluster, ok := a.(*infrav1.VSphereCluster)
 	if !ok {
 		return nil
@@ -492,7 +516,7 @@ func (r vmReconciler) vsphereClusterToVSphereVMs(a ctrlclient.Object) []reconcil
 
 	requests := []reconcile.Request{}
 	vms := &infrav1.VSphereVMList{}
-	err := r.Client.List(goctx.Background(), vms, ctrlclient.MatchingLabels(
+	err := r.Client.List(ctx, vms, ctrlclient.MatchingLabels(
 		map[string]string{
 			clusterv1.ClusterNameLabel: clusterName,
 		},
@@ -512,7 +536,7 @@ func (r vmReconciler) vsphereClusterToVSphereVMs(a ctrlclient.Object) []reconcil
 	return requests
 }
 
-func (r vmReconciler) ipAddressClaimToVSphereVM(a ctrlclient.Object) []reconcile.Request {
+func (r vmReconciler) ipAddressClaimToVSphereVM(_ goctx.Context, a ctrlclient.Object) []reconcile.Request {
 	ipAddressClaim, ok := a.(*ipamv1.IPAddressClaim)
 	if !ok {
 		return nil

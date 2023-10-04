@@ -78,7 +78,7 @@ const hostInfoErrStr = "host info cannot be used as a label value"
 // AddMachineControllerToManager adds the machine controller to the provided
 // manager.
 
-func AddMachineControllerToManager(ctx *context.ControllerManagerContext, mgr manager.Manager, controlledType client.Object) error {
+func AddMachineControllerToManager(ctx *context.ControllerManagerContext, mgr manager.Manager, controlledType client.Object, options controller.Options) error {
 	supervisorBased, err := util.IsSupervisorType(controlledType)
 	if err != nil {
 		return err
@@ -108,9 +108,10 @@ func AddMachineControllerToManager(ctx *context.ControllerManagerContext, mgr ma
 	builder := ctrl.NewControllerManagedBy(mgr).
 		// Watch the controlled, infrastructure resource.
 		For(controlledType).
+		WithOptions(options).
 		// Watch the CAPI resource that owns this infrastructure resource.
 		Watches(
-			&source.Kind{Type: &clusterv1.Machine{}},
+			&clusterv1.Machine{},
 			handler.EnqueueRequestsFromMapFunc(clusterutilv1.MachineToInfrastructureMapFunc(controlledTypeGVK)),
 		).
 		// Watch a GenericEvent channel for the controlled resource.
@@ -118,13 +119,13 @@ func AddMachineControllerToManager(ctx *context.ControllerManagerContext, mgr ma
 		// This is useful when there are events outside of Kubernetes that
 		// should cause a resource to be synchronized, such as a goroutine
 		// waiting on some asynchronous, external task to complete.
-		Watches(
+		WatchesRawSource(
 			&source.Channel{Source: ctx.GetGenericEventChannelFor(controlledTypeGVK)},
 			&handler.EnqueueRequestForObject{},
 		).
-		WithOptions(controller.Options{MaxConcurrentReconciles: ctx.MaxConcurrentReconciles})
+		WithEventFilter(predicates.ResourceNotPausedAndHasFilterLabel(ctrl.LoggerFrom(ctx), ctx.WatchFilterValue))
 
-	r := machineReconciler{
+	r := &machineReconciler{
 		ControllerContext: controllerContext,
 		VMService:         &services.VimMachineService{},
 		supervisorBased:   supervisorBased,
@@ -142,8 +143,8 @@ func AddMachineControllerToManager(ctx *context.ControllerManagerContext, mgr ma
 	} else {
 		// Watch any VSphereVM resources owned by the controlled type.
 		builder.Watches(
-			&source.Kind{Type: &infrav1.VSphereVM{}},
-			&handler.EnqueueRequestForOwner{OwnerType: controlledType, IsController: false},
+			&infrav1.VSphereVM{},
+			handler.EnqueueRequestForOwner(mgr.GetScheme(), mgr.GetRESTMapper(), controlledType),
 			ctrlbldr.WithPredicates(predicate.Funcs{
 				// ignore creation events since this controller is responsible for
 				// the creation of the type.
@@ -161,7 +162,7 @@ func AddMachineControllerToManager(ctx *context.ControllerManagerContext, mgr ma
 
 	if !supervisorBased {
 		err = c.Watch(
-			&source.Kind{Type: &clusterv1.Cluster{}},
+			source.Kind(mgr.GetCache(), &clusterv1.Cluster{}),
 			handler.EnqueueRequestsFromMapFunc(r.clusterToVSphereMachines),
 			predicates.ClusterUnpausedAndInfrastructureReady(r.Logger))
 		if err != nil {
@@ -179,7 +180,7 @@ type machineReconciler struct {
 }
 
 // Reconcile ensures the back-end state reflects the Kubernetes resource state intent.
-func (r machineReconciler) Reconcile(_ goctx.Context, req ctrl.Request) (_ ctrl.Result, reterr error) {
+func (r *machineReconciler) Reconcile(_ goctx.Context, req ctrl.Request) (_ ctrl.Result, reterr error) {
 	var machineContext context.MachineContext
 	logger := r.Logger.WithName(req.Namespace).WithName(req.Name)
 	logger.V(3).Info("Starting Reconcile VSphereMachine")
@@ -255,11 +256,17 @@ func (r machineReconciler) Reconcile(_ goctx.Context, req ctrl.Request) (_ ctrl.
 		return reconcile.Result{}, nil
 	}
 
+	// If the VSphereMachine doesn't have our finalizer, add it.
+	// Requeue immediately after adding finalizer to avoid the race condition between init and delete
+	if !ctrlutil.ContainsFinalizer(machineContext.GetVSphereMachine(), infrav1.MachineFinalizer) {
+		ctrlutil.AddFinalizer(machineContext.GetVSphereMachine(), infrav1.MachineFinalizer)
+		return reconcile.Result{}, nil
+	}
 	// Handle non-deleted machines
 	return r.reconcileNormal(machineContext)
 }
 
-func (r machineReconciler) reconcileDelete(ctx context.MachineContext) (reconcile.Result, error) {
+func (r *machineReconciler) reconcileDelete(ctx context.MachineContext) (reconcile.Result, error) {
 	ctx.GetLogger().Info("Handling deleted VSphereMachine")
 	conditions.MarkFalse(ctx.GetVSphereMachine(), infrav1.VMProvisionedCondition, clusterv1.DeletingReason, clusterv1.ConditionSeverityInfo, "")
 
@@ -277,7 +284,7 @@ func (r machineReconciler) reconcileDelete(ctx context.MachineContext) (reconcil
 	return reconcile.Result{RequeueAfter: 10 * time.Second}, nil
 }
 
-func (r machineReconciler) reconcileNormal(ctx context.MachineContext) (reconcile.Result, error) {
+func (r *machineReconciler) reconcileNormal(ctx context.MachineContext) (reconcile.Result, error) {
 	machineFailed, err := r.VMService.SyncFailureReason(ctx)
 	if err != nil && !apierrors.IsNotFound(err) {
 		return reconcile.Result{}, err
@@ -288,9 +295,6 @@ func (r machineReconciler) reconcileNormal(ctx context.MachineContext) (reconcil
 		ctx.GetLogger().Info("Error state detected, skipping reconciliation")
 		return reconcile.Result{}, nil
 	}
-
-	// If the VSphereMachine doesn't have our finalizer, add it.
-	ctrlutil.AddFinalizer(ctx.GetVSphereMachine(), infrav1.MachineFinalizer)
 
 	//nolint:gocritic
 	if r.supervisorBased {
@@ -369,9 +373,9 @@ func (r *machineReconciler) patchMachineLabelsWithHostInfo(ctx context.MachineCo
 	return patchHelper.Patch(r, machine)
 }
 
-func (r *machineReconciler) clusterToVSphereMachines(a client.Object) []reconcile.Request {
+func (r *machineReconciler) clusterToVSphereMachines(ctx goctx.Context, a client.Object) []reconcile.Request {
 	requests := []reconcile.Request{}
-	machines, err := util.GetVSphereMachinesInCluster(goctx.Background(), r.Client, a.GetNamespace(), a.GetName())
+	machines, err := util.GetVSphereMachinesInCluster(ctx, r.Client, a.GetNamespace(), a.GetName())
 	if err != nil {
 		return requests
 	}

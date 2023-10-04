@@ -17,6 +17,7 @@ limitations under the License.
 package controllers
 
 import (
+	goctx "context"
 	"fmt"
 	"strings"
 
@@ -30,6 +31,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
+	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	"sigs.k8s.io/controller-runtime/pkg/source"
@@ -72,6 +74,8 @@ func (r Reconciler) Reconcile(ctx *context.ClusterContext) (reconcile.Result, er
 		return reconcile.Result{}, err
 	}
 
+	modErrs := []clusterModError{}
+
 	clusterModuleSpecs := []infrav1.ClusterModule{}
 	for _, mod := range ctx.VSphereCluster.Spec.ClusterModules {
 		curr := mod.TargetObjectName
@@ -90,9 +94,20 @@ func (r Reconciler) Reconcile(ctx *context.ClusterContext) (reconcile.Result, er
 			// verify the cluster module
 			exists, err := r.ClusterModuleService.DoesExist(ctx, obj, mod.ModuleUUID)
 			if err != nil {
+				// Add the error to modErrs so it gets handled below.
+				modErrs = append(modErrs, clusterModError{obj.GetName(), errors.Wrapf(err, "failed to verify cluster module %q", mod.ModuleUUID)})
 				ctx.Logger.Error(err, "failed to verify cluster module for object",
 					"name", mod.TargetObjectName, "moduleUUID", mod.ModuleUUID)
+				// Append the module and remove it from objectMap to not create new ones instead.
+				clusterModuleSpecs = append(clusterModuleSpecs, infrav1.ClusterModule{
+					ControlPlane:     obj.IsControlPlane(),
+					TargetObjectName: obj.GetName(),
+					ModuleUUID:       mod.ModuleUUID,
+				})
+				delete(objectMap, curr)
+				continue
 			}
+
 			// append the module and object info to the VSphereCluster object
 			// and remove it from the object map since no new cluster module
 			// needs to be created.
@@ -111,7 +126,6 @@ func (r Reconciler) Reconcile(ctx *context.ClusterContext) (reconcile.Result, er
 		}
 	}
 
-	modErrs := []clusterModError{}
 	for _, obj := range objectMap {
 		moduleUUID, err := r.ClusterModuleService.Create(ctx, obj)
 		if err != nil {
@@ -151,8 +165,8 @@ func (r Reconciler) Reconcile(ctx *context.ClusterContext) (reconcile.Result, er
 	return reconcile.Result{}, err
 }
 
-func (r Reconciler) toAffinityInput(obj client.Object) []reconcile.Request {
-	cluster, err := util.GetClusterFromMetadata(r, r.Client, metav1.ObjectMeta{
+func (r Reconciler) toAffinityInput(ctx goctx.Context, obj client.Object) []reconcile.Request {
+	cluster, err := util.GetClusterFromMetadata(ctx, r.Client, metav1.ObjectMeta{
 		Namespace:       obj.GetNamespace(),
 		Labels:          obj.GetLabels(),
 		OwnerReferences: obj.GetOwnerReferences(),
@@ -168,7 +182,7 @@ func (r Reconciler) toAffinityInput(obj client.Object) []reconcile.Request {
 		return nil
 	}
 	vsphereCluster := &infrav1.VSphereCluster{}
-	if err := r.Client.Get(r, client.ObjectKey{
+	if err := r.Client.Get(ctx, client.ObjectKey{
 		Name:      cluster.Spec.InfrastructureRef.Name,
 		Namespace: cluster.Namespace,
 	}, vsphereCluster); err != nil {
@@ -182,9 +196,9 @@ func (r Reconciler) toAffinityInput(obj client.Object) []reconcile.Request {
 	}
 }
 
-func (r Reconciler) PopulateWatchesOnController(controller controller.Controller) error {
+func (r Reconciler) PopulateWatchesOnController(mgr manager.Manager, controller controller.Controller) error {
 	if err := controller.Watch(
-		&source.Kind{Type: &controlplanev1.KubeadmControlPlane{}},
+		source.Kind(mgr.GetCache(), &controlplanev1.KubeadmControlPlane{}),
 		handler.EnqueueRequestsFromMapFunc(r.toAffinityInput),
 		predicate.Funcs{
 			GenericFunc: func(genericEvent event.GenericEvent) bool {
@@ -199,7 +213,7 @@ func (r Reconciler) PopulateWatchesOnController(controller controller.Controller
 	}
 
 	return controller.Watch(
-		&source.Kind{Type: &clusterv1.MachineDeployment{}},
+		source.Kind(mgr.GetCache(), &clusterv1.MachineDeployment{}),
 		handler.EnqueueRequestsFromMapFunc(r.toAffinityInput),
 		predicate.Funcs{
 			GenericFunc: func(genericEvent event.GenericEvent) bool {

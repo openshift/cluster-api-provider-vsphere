@@ -30,13 +30,12 @@ const (
 	linuxVMName   = "linux-control-plane-qkkbv"
 )
 
-//nolint
 func TestVSphereVM_Default(t *testing.T) {
 	g := NewWithT(t)
 
-	WindowsVM := createVSphereVM(windowsVMName, "foo.com", "", "", "", []string{"192.168.0.1/32", "192.168.0.3/32"}, nil, Windows)
-	LinuxVM := createVSphereVM(linuxVMName, "foo.com", "", "", "", []string{"192.168.0.1/32", "192.168.0.3/32"}, nil, Linux)
-	NoOSVM := createVSphereVM(linuxVMName, "foo.com", "", "", "", []string{"192.168.0.1/32", "192.168.0.3/32"}, nil, "")
+	WindowsVM := createVSphereVM(windowsVMName, "foo.com", "", "", "", []string{"192.168.0.1/32", "192.168.0.3/32"}, nil, Windows, VirtualMachinePowerOpModeTrySoft, nil)
+	LinuxVM := createVSphereVM(linuxVMName, "foo.com", "", "", "", []string{"192.168.0.1/32", "192.168.0.3/32"}, nil, Linux, VirtualMachinePowerOpModeTrySoft, nil)
+	NoOSVM := createVSphereVM(linuxVMName, "foo.com", "", "", "", []string{"192.168.0.1/32", "192.168.0.3/32"}, nil, "", VirtualMachinePowerOpModeTrySoft, nil)
 
 	WindowsVM.Default()
 	LinuxVM.Default()
@@ -47,7 +46,6 @@ func TestVSphereVM_Default(t *testing.T) {
 	g.Expect(NoOSVM.Spec.OS).To(Equal(Linux))
 }
 
-//nolint
 func TestVSphereVM_ValidateCreate(t *testing.T) {
 	g := NewWithT(t)
 
@@ -58,33 +56,63 @@ func TestVSphereVM_ValidateCreate(t *testing.T) {
 	}{
 		{
 			name:      "preferredAPIServerCIDR set on creation ",
-			vSphereVM: createVSphereVM("vsphere-vm-1", "foo.com", "", "192.168.0.1/32", "", []string{}, nil, Linux),
+			vSphereVM: createVSphereVM("vsphere-vm-1", "foo.com", "", "192.168.0.1/32", "", []string{}, nil, Linux, VirtualMachinePowerOpModeTrySoft, nil),
 			wantErr:   true,
 		},
 		{
 			name:      "IPs are not in CIDR format",
-			vSphereVM: createVSphereVM("vsphere-vm-1", "foo.com", "", "", "", []string{"192.168.0.1/32", "192.168.0.3"}, nil, Linux),
+			vSphereVM: createVSphereVM("vsphere-vm-1", "foo.com", "", "", "", []string{"192.168.0.1/32", "192.168.0.3"}, nil, Linux, VirtualMachinePowerOpModeTrySoft, nil),
 			wantErr:   true,
 		},
 		{
 			name:      "successful VSphereVM creation",
-			vSphereVM: createVSphereVM("vsphere-vm-1", "foo.com", "", "", "", []string{"192.168.0.1/32", "192.168.0.3/32"}, nil, Linux),
+			vSphereVM: createVSphereVM("vsphere-vm-1", "foo.com", "", "", "", []string{"192.168.0.1/32", "192.168.0.3/32"}, nil, Linux, VirtualMachinePowerOpModeTrySoft, nil),
+			wantErr:   false,
+		},
+		{
+			name:      "successful VSphereVM creation with powerOffMode set to hard",
+			vSphereVM: createVSphereVM("vsphere-vm-1", "foo.com", "", "", "", []string{"192.168.0.1/32", "192.168.0.3/32"}, nil, Linux, VirtualMachinePowerOpModeHard, nil),
+			wantErr:   false,
+		},
+		{
+			name:      "successful VSphereVM creation with powerOffMode set to soft",
+			vSphereVM: createVSphereVM("vsphere-vm-1", "foo.com", "", "", "", []string{"192.168.0.1/32", "192.168.0.3/32"}, nil, Linux, VirtualMachinePowerOpModeSoft, nil),
+			wantErr:   false,
+		},
+		{
+			name:      "successful VSphereVM creation with powerOffMode set to trySoft and non-default timeout",
+			vSphereVM: createVSphereVM("vsphere-vm-1", "foo.com", "", "", "", []string{"192.168.0.1/32", "192.168.0.3/32"}, nil, Linux, VirtualMachinePowerOpModeTrySoft, &metav1.Duration{Duration: 1234}),
 			wantErr:   false,
 		},
 		{
 			name:      "name too long for Windows VM",
-			vSphereVM: createVSphereVM(windowsVMName, "foo.com", "", "", "", []string{"192.168.0.1/32", "192.168.0.3/32"}, nil, Windows),
+			vSphereVM: createVSphereVM(windowsVMName, "foo.com", "", "", "", []string{"192.168.0.1/32", "192.168.0.3/32"}, nil, Windows, VirtualMachinePowerOpModeTrySoft, nil),
 			wantErr:   true,
 		},
 		{
 			name:      "no error with name too long for Linux VM",
-			vSphereVM: createVSphereVM(linuxVMName, "foo.com", "", "", "", []string{"192.168.0.1/32", "192.168.0.3/32"}, nil, Linux),
+			vSphereVM: createVSphereVM(linuxVMName, "foo.com", "", "", "", []string{"192.168.0.1/32", "192.168.0.3/32"}, nil, Linux, VirtualMachinePowerOpModeTrySoft, nil),
 			wantErr:   false,
+		},
+		{
+			name:      "guestSoftPowerOffTimeout should not be set with powerOffMode set to hard",
+			vSphereVM: createVSphereVM(linuxVMName, "foo.com", "", "", "", []string{"192.168.0.1/32", "192.168.0.3/32"}, nil, Linux, VirtualMachinePowerOpModeHard, &metav1.Duration{Duration: GuestSoftPowerOffDefaultTimeout}),
+			wantErr:   true,
+		},
+		{
+			name:      "guestSoftPowerOffTimeout should not be set with powerOffMode set to soft",
+			vSphereVM: createVSphereVM(linuxVMName, "foo.com", "", "", "", []string{"192.168.0.1/32", "192.168.0.3/32"}, nil, Linux, VirtualMachinePowerOpModeSoft, &metav1.Duration{Duration: GuestSoftPowerOffDefaultTimeout}),
+			wantErr:   true,
+		},
+		{
+			name:      "guestSoftPowerOffTimeout should not be negative",
+			vSphereVM: createVSphereVM(linuxVMName, "foo.com", "", "", "", []string{"192.168.0.1/32", "192.168.0.3/32"}, nil, Linux, VirtualMachinePowerOpModeTrySoft, &metav1.Duration{Duration: -1234}),
+			wantErr:   true,
 		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			err := tc.vSphereVM.ValidateCreate()
+			_, err := tc.vSphereVM.ValidateCreate()
 			if tc.wantErr {
 				g.Expect(err).To(HaveOccurred())
 			} else {
@@ -94,7 +122,6 @@ func TestVSphereVM_ValidateCreate(t *testing.T) {
 	}
 }
 
-//nolint
 func TestVSphereVM_ValidateUpdate(t *testing.T) {
 	g := NewWithT(t)
 
@@ -106,50 +133,80 @@ func TestVSphereVM_ValidateUpdate(t *testing.T) {
 	}{
 		{
 			name:         "ProviderID can be updated",
-			oldVSphereVM: createVSphereVM("vsphere-vm-1", "foo.com", "", "", "", []string{"192.168.0.1/32"}, nil, Linux),
-			vSphereVM:    createVSphereVM("vsphere-vm-1", "foo.com", biosUUID, "", "", []string{"192.168.0.1/32"}, nil, Linux),
+			oldVSphereVM: createVSphereVM("vsphere-vm-1", "foo.com", "", "", "", []string{"192.168.0.1/32"}, nil, Linux, VirtualMachinePowerOpModeTrySoft, nil),
+			vSphereVM:    createVSphereVM("vsphere-vm-1", "foo.com", biosUUID, "", "", []string{"192.168.0.1/32"}, nil, Linux, VirtualMachinePowerOpModeTrySoft, nil),
 			wantErr:      false,
 		},
 		{
 			name:         "updating ips can be done",
-			oldVSphereVM: createVSphereVM("vsphere-vm-1", "foo.com", "", "", "", []string{"192.168.0.1/32"}, nil, Linux),
-			vSphereVM:    createVSphereVM("vsphere-vm-1", "foo.com", biosUUID, "", "", []string{"192.168.0.1/32", "192.168.0.10/32"}, nil, Linux),
+			oldVSphereVM: createVSphereVM("vsphere-vm-1", "foo.com", "", "", "", []string{"192.168.0.1/32"}, nil, Linux, VirtualMachinePowerOpModeTrySoft, nil),
+			vSphereVM:    createVSphereVM("vsphere-vm-1", "foo.com", biosUUID, "", "", []string{"192.168.0.1/32", "192.168.0.10/32"}, nil, Linux, VirtualMachinePowerOpModeTrySoft, nil),
 			wantErr:      false,
 		},
 		{
 			name:         "updating bootstrapRef can be done",
-			oldVSphereVM: createVSphereVM("vsphere-vm-1", "foo.com", "", "", "", []string{"192.168.0.1/32"}, nil, Linux),
-			vSphereVM:    createVSphereVM("vsphere-vm-1", "foo.com", biosUUID, "", "", []string{"192.168.0.1/32", "192.168.0.10/32"}, &corev1.ObjectReference{}, Linux),
+			oldVSphereVM: createVSphereVM("vsphere-vm-1", "foo.com", "", "", "", []string{"192.168.0.1/32"}, nil, Linux, VirtualMachinePowerOpModeTrySoft, nil),
+			vSphereVM:    createVSphereVM("vsphere-vm-1", "foo.com", biosUUID, "", "", []string{"192.168.0.1/32", "192.168.0.10/32"}, &corev1.ObjectReference{}, Linux, VirtualMachinePowerOpModeTrySoft, nil),
 			wantErr:      false,
 		},
 		{
 			name:         "updating server cannot be done",
-			oldVSphereVM: createVSphereVM("vsphere-vm-1", "foo.com", "", "", "", []string{"192.168.0.1/32"}, nil, Linux),
-			vSphereVM:    createVSphereVM("vsphere-vm-1", "bar.com", biosUUID, "", "", []string{"192.168.0.1/32", "192.168.0.10/32"}, nil, Linux),
+			oldVSphereVM: createVSphereVM("vsphere-vm-1", "foo.com", "", "", "", []string{"192.168.0.1/32"}, nil, Linux, VirtualMachinePowerOpModeTrySoft, nil),
+			vSphereVM:    createVSphereVM("vsphere-vm-1", "bar.com", biosUUID, "", "", []string{"192.168.0.1/32", "192.168.0.10/32"}, nil, Linux, VirtualMachinePowerOpModeTrySoft, nil),
 			wantErr:      true,
 		},
 		{
 			name:         "updating OS can be done only when empty",
-			oldVSphereVM: createVSphereVM("vsphere-vm-1-os", "foo.com", "", "", "", []string{"192.168.0.1/32"}, nil, ""),
-			vSphereVM:    createVSphereVM("vsphere-vm-1-os", "foo.com", "", "", "", []string{"192.168.0.1/32"}, nil, Linux),
+			oldVSphereVM: createVSphereVM("vsphere-vm-1-os", "foo.com", "", "", "", []string{"192.168.0.1/32"}, nil, "", VirtualMachinePowerOpModeTrySoft, nil),
+			vSphereVM:    createVSphereVM("vsphere-vm-1-os", "foo.com", "", "", "", []string{"192.168.0.1/32"}, nil, Linux, VirtualMachinePowerOpModeTrySoft, nil),
 			wantErr:      false,
 		},
 		{
 			name:         "updating OS cannot be done when alreadySet",
-			oldVSphereVM: createVSphereVM("vsphere-vm-1-os", "foo.com", "", "", "", []string{"192.168.0.1/32"}, nil, Windows),
-			vSphereVM:    createVSphereVM("vsphere-vm-1-os", "foo.com", "", "", "", []string{"192.168.0.1/32"}, nil, Linux),
+			oldVSphereVM: createVSphereVM("vsphere-vm-1-os", "foo.com", "", "", "", []string{"192.168.0.1/32"}, nil, Windows, VirtualMachinePowerOpModeTrySoft, nil),
+			vSphereVM:    createVSphereVM("vsphere-vm-1-os", "foo.com", "", "", "", []string{"192.168.0.1/32"}, nil, Linux, VirtualMachinePowerOpModeTrySoft, nil),
 			wantErr:      true,
 		},
 		{
 			name:         "updating thumbprint can be updated",
-			oldVSphereVM: createVSphereVM("vsphere-vm-1", "foo.com", "", "", "AA:BB:CC:DD:EE", []string{"192.168.0.1/32"}, nil, Linux),
-			vSphereVM:    createVSphereVM("vsphere-vm-1", "foo.com", biosUUID, "", "BB:CC:DD:EE:FF", []string{"192.168.0.1/32"}, nil, Linux),
+			oldVSphereVM: createVSphereVM("vsphere-vm-1", "foo.com", "", "", "AA:BB:CC:DD:EE", []string{"192.168.0.1/32"}, nil, Linux, VirtualMachinePowerOpModeTrySoft, nil),
+			vSphereVM:    createVSphereVM("vsphere-vm-1", "foo.com", biosUUID, "", "BB:CC:DD:EE:FF", []string{"192.168.0.1/32"}, nil, Linux, VirtualMachinePowerOpModeTrySoft, nil),
 			wantErr:      false,
+		},
+		{
+			name:         "powerOffMode cannot be updated when new powerOffMode is not valid",
+			oldVSphereVM: createVSphereVM("vsphere-vm-1", "foo.com", "", "", "AA:BB:CC:DD:EE", []string{"192.168.0.1/32"}, nil, Linux, VirtualMachinePowerOpModeTrySoft, nil),
+			vSphereVM:    createVSphereVM("vsphere-vm-1", "foo.com", biosUUID, "", "BB:CC:DD:EE:FF", []string{"192.168.0.1/32"}, nil, Linux, VirtualMachinePowerOpModeSoft, &metav1.Duration{Duration: GuestSoftPowerOffDefaultTimeout}),
+			wantErr:      true,
+		},
+		{
+			name:         "powerOffMode can be updated to hard",
+			oldVSphereVM: createVSphereVM("vsphere-vm-1", "foo.com", "", "", "AA:BB:CC:DD:EE", []string{"192.168.0.1/32"}, nil, Linux, VirtualMachinePowerOpModeTrySoft, &metav1.Duration{Duration: GuestSoftPowerOffDefaultTimeout}),
+			vSphereVM:    createVSphereVM("vsphere-vm-1", "foo.com", biosUUID, "", "BB:CC:DD:EE:FF", []string{"192.168.0.1/32"}, nil, Linux, VirtualMachinePowerOpModeHard, nil),
+			wantErr:      false,
+		},
+		{
+			name:         "powerOffMode can be updated to soft",
+			oldVSphereVM: createVSphereVM("vsphere-vm-1", "foo.com", "", "", "AA:BB:CC:DD:EE", []string{"192.168.0.1/32"}, nil, Linux, VirtualMachinePowerOpModeTrySoft, &metav1.Duration{Duration: GuestSoftPowerOffDefaultTimeout}),
+			vSphereVM:    createVSphereVM("vsphere-vm-1", "foo.com", biosUUID, "", "BB:CC:DD:EE:FF", []string{"192.168.0.1/32"}, nil, Linux, VirtualMachinePowerOpModeSoft, nil),
+			wantErr:      false,
+		},
+		{
+			name:         "biosUUID can be set to a value",
+			oldVSphereVM: createVSphereVM("vsphere-vm-1", "foo.com", "", "", "AA:BB:CC:DD:EE", []string{"192.168.0.1/32"}, nil, Linux, VirtualMachinePowerOpModeTrySoft, nil),
+			vSphereVM:    createVSphereVM("vsphere-vm-1", "foo.com", biosUUID, "", "AA:BB:CC:DD:EE", []string{"192.168.0.1/32"}, nil, Linux, VirtualMachinePowerOpModeTrySoft, nil),
+			wantErr:      false,
+		},
+		{
+			name:         "biosUUID cannot be updated to a different value",
+			oldVSphereVM: createVSphereVM("vsphere-vm-1", "foo.com", "old-uuid", "", "AA:BB:CC:DD:EE", []string{"192.168.0.1/32"}, nil, Linux, VirtualMachinePowerOpModeTrySoft, nil),
+			vSphereVM:    createVSphereVM("vsphere-vm-1", "foo.com", biosUUID, "", "AA:BB:CC:DD:EE", []string{"192.168.0.1/32"}, nil, Linux, VirtualMachinePowerOpModeTrySoft, nil),
+			wantErr:      true,
 		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			err := tc.vSphereVM.ValidateUpdate(tc.oldVSphereVM)
+			_, err := tc.vSphereVM.ValidateUpdate(tc.oldVSphereVM)
 			if tc.wantErr {
 				g.Expect(err).To(HaveOccurred())
 			} else {
@@ -159,14 +216,12 @@ func TestVSphereVM_ValidateUpdate(t *testing.T) {
 	}
 }
 
-func createVSphereVM(name, server, biosUUID, preferredAPIServerCIDR, thumbprint string, ips []string, bootstrapRef *corev1.ObjectReference, os OS) *VSphereVM {
+func createVSphereVM(name, server, biosUUID, preferredAPIServerCIDR, thumbprint string, ips []string, bootstrapRef *corev1.ObjectReference, os OS, powerOffMode VirtualMachinePowerOpMode, guestSoftPowerOffTimeout *metav1.Duration) *VSphereVM {
 	VSphereVM := &VSphereVM{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: name,
 		},
 		Spec: VSphereVMSpec{
-			BiosUUID:     biosUUID,
-			BootstrapRef: bootstrapRef,
 			VirtualMachineCloneSpec: VirtualMachineCloneSpec{
 				Server: server,
 				Network: NetworkSpec{
@@ -175,6 +230,10 @@ func createVSphereVM(name, server, biosUUID, preferredAPIServerCIDR, thumbprint 
 				},
 				Thumbprint: thumbprint,
 			},
+			BootstrapRef:             bootstrapRef,
+			BiosUUID:                 biosUUID,
+			PowerOffMode:             powerOffMode,
+			GuestSoftPowerOffTimeout: guestSoftPowerOffTimeout,
 		},
 	}
 

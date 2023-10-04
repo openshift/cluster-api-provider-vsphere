@@ -3,7 +3,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.11.4
+    controller-gen.kubebuilder.io/version: v0.12.1
   name: vspheremachinetemplates.vmware.infrastructure.cluster.x-k8s.io
 spec:
   group: vmware.infrastructure.cluster.x-k8s.io
@@ -57,6 +57,23 @@ spec:
                       imageName:
                         description: ImageName is the name of the base image used
                           when specifying the underlying virtual machine
+                        type: string
+                      powerOffMode:
+                        default: hard
+                        description: "PowerOffMode describes the desired behavior
+                          when powering off a VM. \n There are three, supported power
+                          off modes: hard, soft, and trySoft. The first mode, hard,
+                          is the equivalent of a physical system's power cord being
+                          ripped from the wall. The soft mode requires the VM's guest
+                          to have VM Tools installed and attempts to gracefully shut
+                          down the VM. Its variant, trySoft, first attempts a graceful
+                          shutdown, and if that fails or the VM is not in a powered
+                          off state after reaching 5 minutes timeout, the VM is halted.
+                          \n If omitted, the mode defaults to hard."
+                        enum:
+                        - hard
+                        - soft
+                        - trySoft
                         type: string
                       providerID:
                         description: ProviderID is the virtual machine's BIOS UUID

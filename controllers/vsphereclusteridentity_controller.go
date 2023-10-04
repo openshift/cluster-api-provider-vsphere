@@ -30,6 +30,7 @@ import (
 	clusterutilv1 "sigs.k8s.io/cluster-api/util"
 	"sigs.k8s.io/cluster-api/util/conditions"
 	"sigs.k8s.io/cluster-api/util/patch"
+	"sigs.k8s.io/cluster-api/util/predicates"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
@@ -52,7 +53,7 @@ var (
 // +kubebuilder:rbac:groups=infrastructure.cluster.x-k8s.io,resources=vsphereclusteridentities/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=core,resources=secrets,verbs=get;list;watch;create;patch;update;delete
 
-func AddVsphereClusterIdentityControllerToManager(ctx *context.ControllerManagerContext, mgr manager.Manager) error {
+func AddVsphereClusterIdentityControllerToManager(ctx *context.ControllerManagerContext, mgr manager.Manager, options controller.Options) error {
 	var (
 		controllerNameShort = fmt.Sprintf("%s-controller", strings.ToLower(identityControlledTypeName))
 		controllerNameLong  = fmt.Sprintf("%s/%s/%s", ctx.Namespace, ctx.Name, controllerNameShort)
@@ -70,7 +71,8 @@ func AddVsphereClusterIdentityControllerToManager(ctx *context.ControllerManager
 
 	return ctrl.NewControllerManagedBy(mgr).
 		For(identityControlledType).
-		WithOptions(controller.Options{MaxConcurrentReconciles: ctx.MaxConcurrentReconciles}).
+		WithOptions(options).
+		WithEventFilter(predicates.ResourceNotPausedAndHasFilterLabel(ctrl.LoggerFrom(ctx), ctx.WatchFilterValue)).
 		Complete(reconciler)
 }
 
@@ -114,7 +116,7 @@ func (r clusterIdentityReconciler) Reconcile(ctx _context.Context, req reconcile
 	}()
 
 	if !identity.DeletionTimestamp.IsZero() {
-		return r.reconcileDelete(ctx, identity)
+		return ctrl.Result{}, r.reconcileDelete(ctx, identity)
 	}
 
 	// fetch secret
@@ -159,7 +161,7 @@ func (r clusterIdentityReconciler) Reconcile(ctx _context.Context, req reconcile
 	return reconcile.Result{}, nil
 }
 
-func (r clusterIdentityReconciler) reconcileDelete(ctx _context.Context, identity *infrav1.VSphereClusterIdentity) (reconcile.Result, error) {
+func (r clusterIdentityReconciler) reconcileDelete(ctx _context.Context, identity *infrav1.VSphereClusterIdentity) error {
 	r.Logger.Info("Reconciling VSphereClusterIdentity delete")
 	secret := &corev1.Secret{}
 	secretKey := client.ObjectKey{
@@ -169,9 +171,9 @@ func (r clusterIdentityReconciler) reconcileDelete(ctx _context.Context, identit
 	err := r.Client.Get(ctx, secretKey, secret)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
-			return reconcile.Result{}, nil
+			return nil
 		}
-		return reconcile.Result{}, err
+		return err
 	}
 	r.Logger.Info(fmt.Sprintf("Removing finalizer from Secret %s/%s", secret.Namespace, secret.Name))
 	// Check if the old finalizer(from v0.7) is present, if yes, delete it
@@ -181,11 +183,7 @@ func (r clusterIdentityReconciler) reconcileDelete(ctx _context.Context, identit
 	}
 	ctrlutil.RemoveFinalizer(secret, infrav1.SecretIdentitySetFinalizer)
 	if err := r.Client.Update(ctx, secret); err != nil {
-		return reconcile.Result{}, err
+		return err
 	}
-	if err := r.Client.Delete(ctx, secret); err != nil {
-		return reconcile.Result{}, err
-	}
-
-	return reconcile.Result{}, nil
+	return r.Client.Delete(ctx, secret)
 }

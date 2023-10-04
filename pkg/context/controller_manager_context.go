@@ -50,9 +50,9 @@ type ControllerManagerContext struct {
 	// object is located.
 	LeaderElectionNamespace string
 
-	// WatchNamespace is the namespace the controllers watch for changes. If
+	// WatchNamespaces are the namespaces the controllers watches for changes. If
 	// no value is specified then all namespaces are watched.
-	WatchNamespace string
+	WatchNamespaces []string
 
 	// Client is the controller manager's client.
 	Client client.Client
@@ -65,10 +65,6 @@ type ControllerManagerContext struct {
 
 	// Scheme is the controller manager's API scheme.
 	Scheme *runtime.Scheme
-
-	// MaxConcurrentReconciles is the maximum number of recocnile requests this
-	// controller will receive concurrently.
-	MaxConcurrentReconciles int
 
 	// Username is the username for the account used to access remote vSphere
 	// endpoints.
@@ -88,6 +84,9 @@ type ControllerManagerContext struct {
 
 	// NetworkProvider is the network provider used by Supervisor based clusters
 	NetworkProvider string
+
+	// WatchFilterValue is used to filter incoming objects by label.
+	WatchFilterValue string
 
 	genericEventCache sync.Map
 }

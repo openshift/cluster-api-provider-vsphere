@@ -578,7 +578,7 @@ func TestVsphereDeploymentZone_Failed_ReconcilePlacementConstraint(t *testing.T)
 			}
 
 			reconciler := vsphereDeploymentZoneReconciler{controllerCtx}
-			_, err = reconciler.reconcileNormal(deploymentZoneCtx)
+			err = reconciler.reconcileNormal(deploymentZoneCtx)
 			g.Expect(err).To(HaveOccurred())
 		})
 	}
@@ -624,7 +624,7 @@ func TestVSphereDeploymentZoneReconciler_ReconcileDelete(t *testing.T) {
 
 			g := NewWithT(t)
 			reconciler := vsphereDeploymentZoneReconciler{controllerCtx}
-			_, err := reconciler.reconcileDelete(deploymentZoneCtx)
+			err := reconciler.reconcileDelete(deploymentZoneCtx)
 			g.Expect(err).To(HaveOccurred())
 			g.Expect(err.Error()).To(MatchRegexp(".*[is currently in use]{1}.*"))
 			g.Expect(vsphereDeploymentZone.Finalizers).To(HaveLen(1))
@@ -633,6 +633,7 @@ func TestVSphereDeploymentZoneReconciler_ReconcileDelete(t *testing.T) {
 		t.Run("for machines being deleted, should not block deletion", func(t *testing.T) {
 			deletionTime := metav1.Now()
 			machineUsingDeplZone.DeletionTimestamp = &deletionTime
+			machineUsingDeplZone.Finalizers = append(machineUsingDeplZone.Finalizers, "keep-this-for-the-test")
 
 			mgmtContext := fake.NewControllerManagerContext(machineUsingDeplZone, vsphereFailureDomain)
 			controllerCtx := fake.NewControllerContext(mgmtContext)
@@ -645,7 +646,7 @@ func TestVSphereDeploymentZoneReconciler_ReconcileDelete(t *testing.T) {
 
 			g := NewWithT(t)
 			reconciler := vsphereDeploymentZoneReconciler{controllerCtx}
-			_, err := reconciler.reconcileDelete(deploymentZoneCtx)
+			err := reconciler.reconcileDelete(deploymentZoneCtx)
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(vsphereDeploymentZone.Finalizers).To(HaveLen(0))
 		})
@@ -664,7 +665,7 @@ func TestVSphereDeploymentZoneReconciler_ReconcileDelete(t *testing.T) {
 
 		g := NewWithT(t)
 		reconciler := vsphereDeploymentZoneReconciler{controllerCtx}
-		_, err := reconciler.reconcileDelete(deploymentZoneCtx)
+		err := reconciler.reconcileDelete(deploymentZoneCtx)
 		g.Expect(err).NotTo(HaveOccurred())
 		g.Expect(vsphereDeploymentZone.Finalizers).To(HaveLen(0))
 	})
@@ -681,7 +682,7 @@ func TestVSphereDeploymentZoneReconciler_ReconcileDelete(t *testing.T) {
 
 		g := NewWithT(t)
 		reconciler := vsphereDeploymentZoneReconciler{controllerCtx}
-		_, err := reconciler.reconcileDelete(deploymentZoneCtx)
+		err := reconciler.reconcileDelete(deploymentZoneCtx)
 		g.Expect(err).NotTo(HaveOccurred())
 		g.Expect(vsphereDeploymentZone.Finalizers).To(HaveLen(0))
 	})
@@ -705,7 +706,7 @@ func TestVSphereDeploymentZoneReconciler_ReconcileDelete(t *testing.T) {
 
 			g := NewWithT(t)
 			reconciler := vsphereDeploymentZoneReconciler{controllerCtx}
-			_, err := reconciler.reconcileDelete(deploymentZoneCtx)
+			err := reconciler.reconcileDelete(deploymentZoneCtx)
 			g.Expect(err).NotTo(HaveOccurred())
 		})
 
@@ -727,7 +728,7 @@ func TestVSphereDeploymentZoneReconciler_ReconcileDelete(t *testing.T) {
 
 			g := NewWithT(t)
 			reconciler := vsphereDeploymentZoneReconciler{controllerCtx}
-			_, err := reconciler.reconcileDelete(deploymentZoneCtx)
+			err := reconciler.reconcileDelete(deploymentZoneCtx)
 			g.Expect(err).NotTo(HaveOccurred())
 
 			fetchedFailureDomain := &infrav1.VSphereFailureDomain{}

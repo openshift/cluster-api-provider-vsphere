@@ -4,12 +4,10 @@
 .dockerignore
 .gitignore
 .golangci.yml
-.markdownlintrc
 *.out
 bin/
 hack/.bin/
 hack/tools/bin/
-hack/tools/haproxy/
 out/
 docs/
 scripts/
