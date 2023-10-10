@@ -33,6 +33,7 @@ import (
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller"
 	ctrlmgr "sigs.k8s.io/controller-runtime/pkg/manager"
 
 	infrav1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/v1beta1"
@@ -222,21 +223,24 @@ func getManager(cfg *rest.Config, networkProvider string) manager.Manager {
 			Scheme: scheme.Scheme,
 			NewCache: func(config *rest.Config, opts cache.Options) (cache.Cache, error) {
 				syncPeriod := 1 * time.Second
-				opts.Resync = &syncPeriod
+				opts.SyncPeriod = &syncPeriod
 				return cache.New(config, opts)
 			},
+			MetricsBindAddress: "0",
 		},
 		KubeConfig:      cfg,
 		NetworkProvider: networkProvider,
 		CredentialsFile: tmpFile.Name(),
 	}
 
+	controllerOpts := controller.Options{MaxConcurrentReconciles: 10}
+
 	opts.AddToManager = func(ctx *context.ControllerManagerContext, mgr ctrlmgr.Manager) error {
-		if err := controllers.AddClusterControllerToManager(ctx, mgr, &vmwarev1.VSphereCluster{}); err != nil {
+		if err := controllers.AddClusterControllerToManager(ctx, mgr, &vmwarev1.VSphereCluster{}, controllerOpts); err != nil {
 			return err
 		}
 
-		return controllers.AddMachineControllerToManager(ctx, mgr, &vmwarev1.VSphereMachine{})
+		return controllers.AddMachineControllerToManager(ctx, mgr, &vmwarev1.VSphereMachine{}, controllerOpts)
 	}
 
 	mgr, err := manager.New(opts)
@@ -416,7 +420,9 @@ var _ = Describe("Reconciliation tests", func() {
 			By("Expect a ResourcePolicy to exist")
 			rpKey := client.ObjectKey{Namespace: infraCluster.GetNamespace(), Name: infraCluster.GetName()}
 			resourcePolicy := &vmoprv1.VirtualMachineSetResourcePolicy{}
-			Expect(k8sClient.Get(ctx, rpKey, resourcePolicy)).To(Succeed())
+			Eventually(func() error {
+				return k8sClient.Get(ctx, rpKey, resourcePolicy)
+			}, time.Second*30).Should(Succeed())
 			Expect(len(resourcePolicy.Spec.ClusterModules)).To(BeEquivalentTo(2))
 
 			By("Create the CAPI Machine and wait for it to exist")

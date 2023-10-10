@@ -1,4 +1,4 @@
-// Copyright (c) 2020 VMware, Inc. All Rights Reserved.
+// Copyright (c) 2020-2023 VMware, Inc. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 package v1alpha1
@@ -10,16 +10,51 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 )
 
-// See govmomi.vim25.types.VirtualMachinePowerState.
+// VirtualMachinePowerState represents the power state of a VirtualMachine.
+// +kubebuilder:validation:Enum=poweredOn;poweredOff;suspended
+type VirtualMachinePowerState string
+
 const (
+	// VirtualMachinePoweredOff indicates to shut down a VM and/or it is
+	// shut down.
 	VirtualMachinePoweredOff VirtualMachinePowerState = "poweredOff"
-	VirtualMachinePoweredOn  VirtualMachinePowerState = "poweredOn"
+
+	// VirtualMachinePoweredOn indicates to power on a VM and/or it is
+	// powered on.
+	VirtualMachinePoweredOn VirtualMachinePowerState = "poweredOn"
+
+	// VirtualMachineSuspended indicates to suspend a VM and/or it is
+	// suspended.
+	VirtualMachineSuspended VirtualMachinePowerState = "suspended"
 )
 
-// VirtualMachinePowerState represents the power state of a VirtualMachine.
-// The value values are "poweredOn", and "poweredOff".
-// +kubebuilder:validation:Enum=poweredOff;poweredOn
-type VirtualMachinePowerState string
+// VirtualMachinePowerOpMode represents the various power operation modes when
+// when powering off or suspending a VM.
+// +kubebuilder:validation:Enum=hard;soft;trySoft
+type VirtualMachinePowerOpMode string
+
+const (
+	// VirtualMachinePowerOpModeHard indicates to halt a VM when powering it
+	// off or when suspending a VM to not involve the guest.
+	VirtualMachinePowerOpModeHard VirtualMachinePowerOpMode = "hard"
+
+	// VirtualMachinePowerOpModeSoft indicates to ask VM Tools running
+	// inside of a VM's guest to shutdown the guest gracefully when powering
+	// off a VM or when suspending a VM to allow the guest to participate.
+	//
+	// If this mode is set on a VM whose guest does not have VM Tools or if
+	// VM Tools is present but the operation fails, the VM may never realize
+	// the desired power state. This can prevent a VM from being deleted as well
+	// as many other unexpected issues. It is recommended to use trySoft
+	// instead.
+	VirtualMachinePowerOpModeSoft VirtualMachinePowerOpMode = "soft"
+
+	// VirtualMachinePowerOpModeTrySoft indicates to first attempt a Soft
+	// operation and fall back to hard if VM Tools is not present in the guest,
+	// if the soft operation fails, or if the VM is not in the desired power
+	// state within five minutes.
+	VirtualMachinePowerOpModeTrySoft VirtualMachinePowerOpMode = "trySoft"
+)
 
 // VMStatusPhase is used to indicate the phase of a VirtualMachine's lifecycle.
 type VMStatusPhase string
@@ -113,8 +148,8 @@ type VirtualMachineNetworkInterface struct {
 }
 
 // VirtualMachineMetadataTransport is used to indicate the transport used by VirtualMachineMetadata
-// Valid values are "ExtraConfig", "OvfEnv", "vAppConfig" and "CloudInit".
-// +kubebuilder:validation:Enum=ExtraConfig;OvfEnv;vAppConfig;CloudInit
+// Valid values are "ExtraConfig", "OvfEnv", "vAppConfig", "CloudInit", and "Sysprep".
+// +kubebuilder:validation:Enum=ExtraConfig;OvfEnv;vAppConfig;CloudInit;Sysprep
 type VirtualMachineMetadataTransport string
 
 const (
@@ -156,6 +191,14 @@ const (
 	//
 	// For more information, please refer to cloud-init's official documentation.
 	VirtualMachineMetadataCloudInitTransport VirtualMachineMetadataTransport = "CloudInit"
+
+	// VirtualMachineMetadataSysprepTransport indicates the data set in
+	// the VirtualMachineMetadata Transport Resource, i.e., a ConfigMap or Secret,
+	// in the "unattend" key is an XML, Sysprep answers file.
+	//
+	// For more information, please refer to Microsoft's documentation on
+	// "Answer files (unattend.xml)" and "Unattended Windows Setup Reference".
+	VirtualMachineMetadataSysprepTransport VirtualMachineMetadataTransport = "Sysprep"
 )
 
 // VirtualMachineMetadata defines any metadata that should be passed to the VirtualMachine instance.  A typical use
@@ -312,8 +355,83 @@ type VirtualMachineSpec struct {
 	// instance.  See VirtualMachineClass for more description.
 	ClassName string `json:"className"`
 
-	// PowerState describes the desired power state of a VirtualMachine.  Valid power states are "poweredOff" and "poweredOn".
-	PowerState VirtualMachinePowerState `json:"powerState"`
+	// PowerState describes the desired power state of a VirtualMachine.
+	//
+	// Please note this field may be omitted when creating a new VM and will
+	// default to "poweredOn." However, once the field is set to a non-empty
+	// value, it may no longer be set to an empty value.
+	//
+	// Additionally, setting this value to "suspended" is not supported when
+	// creating a new VM. The valid values when creating a new VM are
+	// "poweredOn" and "poweredOff." An empty value is also allowed on create
+	// since this value defaults to "poweredOn" for new VMs.
+	//
+	// +optional
+	PowerState VirtualMachinePowerState `json:"powerState,omitempty"`
+
+	// PowerOffMode describes the desired behavior when powering off a VM.
+	//
+	// There are three, supported power off modes: hard, soft, and
+	// trySoft. The first mode, hard, is the equivalent of a physical
+	// system's power cord being ripped from the wall. The soft mode
+	// requires the VM's guest to have VM Tools installed and attempts to
+	// gracefully shutdown the VM. Its variant, trySoft, first attempts
+	// a graceful shutdown, and if that fails or the VM is not in a powered off
+	// state after five minutes, the VM is halted.
+	//
+	// If omitted, the mode defaults to hard.
+	//
+	// +optional
+	// +kubebuilder:default=hard
+	PowerOffMode VirtualMachinePowerOpMode `json:"powerOffMode,omitempty"`
+
+	// SuspendMode describes the desired behavior when suspending a VM.
+	//
+	// There are three, supported suspend modes: hard, soft, and
+	// trySoft. The first mode, hard, is where vSphere suspends the VM to
+	// disk without any interaction inside of the guest. The soft mode
+	// requires the VM's guest to have VM Tools installed and attempts to
+	// gracefully suspend the VM. Its variant, trySoft, first attempts
+	// a graceful suspend, and if that fails or the VM is not in a put into
+	// standby by the guest after five minutes, the VM is suspended.
+	//
+	// If omitted, the mode defaults to hard.
+	//
+	// +optional
+	// +kubebuilder:default=hard
+	SuspendMode VirtualMachinePowerOpMode `json:"suspendMode,omitempty"`
+
+	// NextRestartTime may be used to restart the VM, in accordance with
+	// RestartMode, by setting the value of this field to "now"
+	// (case-insensitive).
+	//
+	// A mutating webhook changes this value to the current time (UTC), which
+	// the VM controller then uses to determine the VM should be restarted by
+	// comparing the value to the timestamp of the last time the VM was
+	// restarted.
+	//
+	// Please note it is not possible to schedule future restarts using this
+	// field. The only value that users may set is the string "now"
+	// (case-insensitive).
+	//
+	// +optional
+	NextRestartTime string `json:"nextRestartTime,omitempty"`
+
+	// RestartMode describes the desired behavior for restarting a VM when
+	// spec.nextRestartTime is set to "now" (case-insensitive).
+	//
+	// There are three, supported suspend modes: hard, soft, and
+	// trySoft. The first mode, hard, is where vSphere resets the VM without any
+	// interaction inside of the guest. The soft mode requires the VM's guest to
+	// have VM Tools installed and asks the guest to restart the VM. Its
+	// variant, trySoft, first attempts a soft restart, and if that fails or
+	// does not complete within five minutes, the VM is hard reset.
+	//
+	// If omitted, the mode defaults to hard.
+	//
+	// +optional
+	// +kubebuilder:default=hard
+	RestartMode VirtualMachinePowerOpMode `json:"restartMode,omitempty"`
 
 	// Ports is currently unused and can be considered deprecated.
 	// +optional
@@ -466,6 +584,10 @@ type VirtualMachineStatus struct {
 	// Please note this field may be empty when the cluster is not zone-aware.
 	// +optional
 	Zone string `json:"zone,omitempty"`
+
+	// LastRestartTime describes the last time the VM was restarted.
+	// +optional
+	LastRestartTime *metav1.Time `json:"lastRestartTime,omitempty"`
 }
 
 func (vm *VirtualMachine) GetConditions() Conditions {
@@ -512,5 +634,5 @@ type VirtualMachineList struct {
 }
 
 func init() {
-	RegisterTypeWithScheme(&VirtualMachine{}, &VirtualMachineList{})
+	SchemeBuilder.Register(&VirtualMachine{}, &VirtualMachineList{})
 }

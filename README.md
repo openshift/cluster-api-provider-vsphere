@@ -31,20 +31,25 @@ Check out the [getting started guide](./docs/getting_started.md) for launching a
 
 This provider's versions are compatible with the following versions of Cluster API:
 
-|                                  | Cluster API v1alpha3 (v0.7) | Cluster API v1alpha4 (v0.8) | Cluster API v1beta1 (v1.0) | Cluster API v1beta1 (v1.3) |
-|----------------------------------|:---------------------------:|:---------------------------:|:--------------------------:|:--------------------------:|
-| CAPV v1alpha3 (v0.7)(deprecated) |              ✓              |              ✓              |             ✓              |             ✓              |
-| CAPV v1alpha4 (v0.8)(deprecated)             |              ☓              |              ✓              |             ✓              |             ✓              |
-| CAPV v1beta1 (v1.0)              |              ☓              |              ☓              |             ✓              |             ✓              |
-| CAPV v1beta1 (v1.1)              |              ☓              |              ☓              |             ☓              |             ✓              |
-| CAPV v1beta1 (v1.2)              |              ☓              |              ☓              |             ☓              |             ✓              |
-| CAPV v1beta1 (v1.3, master)      |              ☓              |              ☓              |             ☓              |             ✓              |
+|                     | Cluster API v1alpha3 (v0.7) | Cluster API v1alpha4 (v0.8) | Cluster API v1beta1 (v1.0) | Cluster API v1beta1 (v1.3) | Cluster API v1beta1 (v1.4) |
+|---------------------|:---------------------------:|:---------------------------:|:--------------------------:|:--------------------------:|:-------------------------:|
+| CAPV v1alpha3 (v0.7)(deprecated) |              ✓              |              ✓              |             ✓              |             ✓              |             ☓             |
+| CAPV v1alpha4 (v0.8)(deprecated) |              ☓              |              ✓              |             ✓              |             ✓              |             ☓             |
+| CAPV v1beta1 (v1.0) |              ☓              |              ☓              |             ✓              |             ✓              |             ☓             |
+| CAPV v1beta1 (v1.1) |              ☓              |              ☓              |             ☓              |             ✓              |             ☓             |
+| CAPV v1beta1 (v1.2) |              ☓              |              ☓              |             ☓              |             ✓              |             ☓             |
+| CAPV v1beta1 (v1.3, master) |              ☓              |              ☓              |             ☓              |             ✓              |             ☓             |
+| CAPV v1beta1 (v1.4) |              ☓              |              ☓              |             ☓              |             ✓              |             ☓             |
+| CAPV v1beta1 (v1.5) |              ☓              |              ☓              |             ☓              |             ✓              |             ✓             |
+| CAPV v1beta1 (v1.6) |              ☓              |              ☓              |             ☓              |             ✓              |             ✓             |
+| CAPV v1beta1 (v1.7) |              ☓              |              ☓              |             ☓              |             ✓              |             ✓             |
 
-|                              | Kubernetes 1.20 | Kubernetes 1.21 | Kubernetes 1.22 |
-|------------------------------|:---------------:|:--------------:|:---------------:|
-| CAPV v1alpha4 (v0.8)         |        ✓        |       ✓        |        ✓        |
-| CAPV v1beta1 (v1.0)          |        ✓        |       ✓        |        ✓        |
-| CAPV v1alpha2 (v1.3, master) |        ✓        |       ✓        |        ✓        |
+As CAPV doesn't dictate supported K8s versions, and it supports whatever CAPI supported, about the provider's compatibility with K8s versions, please refer to [CAPI Supported Kubernetes Versions](https://cluster-api.sigs.k8s.io/reference/versions.html).
+
+Basically:
+
+- 4 Kubernetes minor releases for the management cluster (N - N-3)
+- 6 Kubernetes minor releases for the workload cluster (N - N-5)
 
 **NOTE:** As the versioning for this project is tied to the versioning of Cluster API, future modifications to this policy may be made to more closely align with other providers in the Cluster API ecosystem.
 
@@ -52,11 +57,13 @@ This provider's versions are compatible with the following versions of Cluster A
 
 Note: These OVAs are not updated for security fixes and it is recommended to always use the latest patch version for the Kubernetes version you wish to run. For production-like environments, it is highly recommended to build and use your own custom images.
 
-| Kubernetes | Ubuntu 18.04 | Ubuntu 20.04 | Photon 3 | Flatcar Stable |
-| :--------: | :----------: | :----------: | :------: | :------------: |
-|  v1.24.11  |   [ova](https://storage.googleapis.com/capv-templates/v1.24.11/ubuntu-1804-kube-v1.24.11.ova), [sha256](https://storage.googleapis.com/capv-templates/v1.24.11/ubuntu-1804-kube-v1.24.11.ova.sha256)   |   [ova](https://storage.googleapis.com/capv-templates/v1.24.11/ubuntu-2004-kube-v1.24.11.ova), [sha256](https://storage.googleapis.com/capv-templates/v1.24.11/ubuntu-2004-kube-v1.24.11.ova.sha256)|   [ova](https://storage.googleapis.com/capv-templates/v1.24.11/photon-3-kube-v1.24.11.ova), [sha256](https://storage.googleapis.com/capv-templates/v1.24.11/photon-3-kube-v1.24.11.ova.sha256)   |   [ova](https://storage.googleapis.com/capv-templates/v1.24.11/flatcar-stable-3374.2.5-kube-v1.24.11.ova), [sha256](https://storage.googleapis.com/capv-templates/v1.24.11/flatcar-stable-3374.2.5-kube-v1.24.11.ova.sha256)   |
-|  v1.25.7   |   [ova](https://storage.googleapis.com/capv-templates/v1.25.7/ubuntu-1804-kube-v1.25.7.ova), [sha256](https://storage.googleapis.com/capv-templates/v1.25.7/ubuntu-1804-kube-v1.25.7.ova.sha256)   |   [ova](https://storage.googleapis.com/capv-templates/v1.25.7/ubuntu-2004-kube-v1.25.7.ova), [sha256](https://storage.googleapis.com/capv-templates/v1.25.7/ubuntu-2004-kube-v1.25.7.ova.sha256)|   [ova](https://storage.googleapis.com/capv-templates/v1.25.7/photon-3-kube-v1.25.7.ova), [sha256](https://storage.googleapis.com/capv-templates/v1.25.7/photon-3-kube-v1.25.7.ova.sha256)   |   [ova](https://storage.googleapis.com/capv-templates/v1.25.7/flatcar-stable-3374.2.5-kube-v1.25.7.ova), [sha256](https://storage.googleapis.com/capv-templates/v1.25.7/flatcar-stable-3374.2.5-kube-v1.25.7.ova.sha256)   |
-|  v1.26.2  |   [ova](https://storage.googleapis.com/capv-templates/v1.26.2/ubuntu-1804-kube-v1.26.2.ova), [sha256](https://storage.googleapis.com/capv-templates/v1.26.2/ubuntu-1804-kube-v1.26.2.ova.sha256)   |   [ova](https://storage.googleapis.com/capv-templates/v1.26.2/ubuntu-2004-kube-v1.26.2.ova), [sha256](https://storage.googleapis.com/capv-templates/v1.26.2/ubuntu-2004-kube-v1.26.2.ova.sha256)|   [ova](https://storage.googleapis.com/capv-templates/v1.26.2/photon-3-kube-v1.26.2.ova), [sha256](https://storage.googleapis.com/capv-templates/v1.26.2/photon-3-kube-v1.26.2.ova.sha256)   |   [ova](https://storage.googleapis.com/capv-templates/v1.26.2/flatcar-stable-3374.2.5-kube-v1.26.2.ova), [sha256](https://storage.googleapis.com/capv-templates/v1.26.2/flatcar-stable-3374.2.5-kube-v1.26.2.ova.sha256)   |
+| Kubernetes |                                                                                            Ubuntu 18.04                                                                                            |                                                                                            Ubuntu 20.04                                                                                            |                                                                                          Ubuntu 22.04                                                                                          |                                                                                           Photon 3                                                                                           |                                                                                                       Flatcar Stable                                                                                                       |
+|:----------:|:--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------:|:--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------:|:----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------:|:--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------:|:--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------:|
+|  v1.24.11  | [ova](https://storage.googleapis.com/capv-templates/v1.24.11/ubuntu-1804-kube-v1.24.11.ova), [sha256](https://storage.googleapis.com/capv-templates/v1.24.11/ubuntu-1804-kube-v1.24.11.ova.sha256) | [ova](https://storage.googleapis.com/capv-templates/v1.24.11/ubuntu-2004-kube-v1.24.11.ova), [sha256](https://storage.googleapis.com/capv-templates/v1.24.11/ubuntu-2004-kube-v1.24.11.ova.sha256) |                                                                                              N/A                                                                                               | [ova](https://storage.googleapis.com/capv-templates/v1.24.11/photon-3-kube-v1.24.11.ova), [sha256](https://storage.googleapis.com/capv-templates/v1.24.11/photon-3-kube-v1.24.11.ova.sha256) | [ova](https://storage.googleapis.com/capv-templates/v1.24.11/flatcar-stable-3374.2.5-kube-v1.24.11.ova), [sha256](https://storage.googleapis.com/capv-templates/v1.24.11/flatcar-stable-3374.2.5-kube-v1.24.11.ova.sha256) |
+|  v1.25.7   |   [ova](https://storage.googleapis.com/capv-templates/v1.25.7/ubuntu-1804-kube-v1.25.7.ova), [sha256](https://storage.googleapis.com/capv-templates/v1.25.7/ubuntu-1804-kube-v1.25.7.ova.sha256)   |   [ova](https://storage.googleapis.com/capv-templates/v1.25.7/ubuntu-2004-kube-v1.25.7.ova), [sha256](https://storage.googleapis.com/capv-templates/v1.25.7/ubuntu-2004-kube-v1.25.7.ova.sha256)   |                                                                                              N/A                                                                                               |   [ova](https://storage.googleapis.com/capv-templates/v1.25.7/photon-3-kube-v1.25.7.ova), [sha256](https://storage.googleapis.com/capv-templates/v1.25.7/photon-3-kube-v1.25.7.ova.sha256)   |   [ova](https://storage.googleapis.com/capv-templates/v1.25.7/flatcar-stable-3374.2.5-kube-v1.25.7.ova), [sha256](https://storage.googleapis.com/capv-templates/v1.25.7/flatcar-stable-3374.2.5-kube-v1.25.7.ova.sha256)   |
+|  v1.26.2   |   [ova](https://storage.googleapis.com/capv-templates/v1.26.2/ubuntu-1804-kube-v1.26.2.ova), [sha256](https://storage.googleapis.com/capv-templates/v1.26.2/ubuntu-1804-kube-v1.26.2.ova.sha256)   |   [ova](https://storage.googleapis.com/capv-templates/v1.26.2/ubuntu-2004-kube-v1.26.2.ova), [sha256](https://storage.googleapis.com/capv-templates/v1.26.2/ubuntu-2004-kube-v1.26.2.ova.sha256)   |                                                                                              N/A                                                                                               |   [ova](https://storage.googleapis.com/capv-templates/v1.26.2/photon-3-kube-v1.26.2.ova), [sha256](https://storage.googleapis.com/capv-templates/v1.26.2/photon-3-kube-v1.26.2.ova.sha256)   |   [ova](https://storage.googleapis.com/capv-templates/v1.26.2/flatcar-stable-3374.2.5-kube-v1.26.2.ova), [sha256](https://storage.googleapis.com/capv-templates/v1.26.2/flatcar-stable-3374.2.5-kube-v1.26.2.ova.sha256)   |
+|  v1.27.3   |   [ova](https://storage.googleapis.com/capv-templates/v1.27.3/ubuntu-1804-kube-v1.27.3.ova), [sha256](https://storage.googleapis.com/capv-templates/v1.27.3/ubuntu-1804-kube-v1.27.3.ova.sha256)   |   [ova](https://storage.googleapis.com/capv-templates/v1.27.3/ubuntu-2004-kube-v1.27.3.ova), [sha256](https://storage.googleapis.com/capv-templates/v1.27.3/ubuntu-2004-kube-v1.27.3.ova.sha256)   | [ova](https://storage.googleapis.com/capv-templates/v1.27.3/ubuntu-2204-kube-v1.27.3.ova), [sha256](https://storage.googleapis.com/capv-templates/v1.27.3/ubuntu-2204-kube-v1.27.3.ova.sha256) |   [ova](https://storage.googleapis.com/capv-templates/v1.27.3/photon-3-kube-v1.27.3.ova), [sha256](https://storage.googleapis.com/capv-templates/v1.27.3/photon-3-kube-v1.27.3.ova.sha256)   |   [ova](https://storage.googleapis.com/capv-templates/v1.27.3/flatcar-stable-3510.2.4-kube-v1.27.3.ova), [sha256](https://storage.googleapis.com/capv-templates/v1.27.3/flatcar-stable-3510.2.4-kube-v1.27.3.ova.sha256)   |
+|  v1.28.0   |   [ova](https://storage.googleapis.com/capv-templates/v1.28.0/ubuntu-1804-kube-v1.28.0.ova), [sha256](https://storage.googleapis.com/capv-templates/v1.28.0/ubuntu-1804-kube-v1.28.0.ova.sha256)   |   [ova](https://storage.googleapis.com/capv-templates/v1.28.0/ubuntu-2004-kube-v1.28.0.ova), [sha256](https://storage.googleapis.com/capv-templates/v1.28.0/ubuntu-2004-kube-v1.28.0.ova.sha256)   | [ova](https://storage.googleapis.com/capv-templates/v1.28.0/ubuntu-2204-kube-v1.28.0.ova), [sha256](https://storage.googleapis.com/capv-templates/v1.28.0/ubuntu-2204-kube-v1.28.0.ova.sha256) |   [ova](https://storage.googleapis.com/capv-templates/v1.28.0/photon-3-kube-v1.28.0.ova), [sha256](https://storage.googleapis.com/capv-templates/v1.28.0/photon-3-kube-v1.28.0.ova.sha256)   |   [ova](https://storage.googleapis.com/capv-templates/v1.28.0/flatcar-stable-3510.2.6-kube-v1.28.0.ova), [sha256](https://storage.googleapis.com/capv-templates/v1.28.0/flatcar-stable-3510.2.6-kube-v1.28.0.ova.sha256)   |
 
 A full list of the published machine images for CAPV may be obtained with the following command:
 
@@ -68,26 +75,6 @@ Or, to produce a list of URLs for the same image files (and their checksums), th
 
 ```shell
 gsutil ls gs://capv-templates/*/*.{ova,sha256} | sed 's~^gs://~https://storage.googleapis.com/~'
-```
-
-## HAProxy published OVAs
-
-Note: These OVAs are not updated for security fixes and it is recommended to always use the latest patch version for the version you wish to run. For production-like environments, it is highly recommended to build and use your own custom images.
-
-| HAProxy Dataplane API | Photon 3 |
-|:--------------------: | :------: |
-|  v1.2.4  |  [ova](https://storage.googleapis.com/capv-images/extra/haproxy/release/v1.2.4/photon-3-haproxy-v1.2.4.ova), [sha256](https://storage.googleapis.com/capv-images/extra/haproxy/release/v1.2.4/photon-3-haproxy-v1.2.4.ova.sha256)  |
-
-A full list of the published HAProxy images for CAPV may be obtained with the following command:
-
-```shell
-gsutil ls gs://capv-images/extra/haproxy/release/*
-```
-
-Or, to produce a list of URLs for the same image files (and their checksums), the following command may be used:
-
-```shell
-gsutil ls gs://capv-images/extra/haproxy/release/*/*.{ova,sha256} | sed 's~^gs://~https://storage.googleapis.com/~'
 ```
 
 ## Documentation

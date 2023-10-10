@@ -28,7 +28,10 @@ import (
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/client-go/kubernetes/scheme"
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
+	"sigs.k8s.io/cluster-api/controllers/remote"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller"
 
 	infrav1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/v1beta1"
 	vmwarev1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/vmware/v1beta1"
@@ -62,25 +65,55 @@ func setup() {
 
 	testEnv = helpers.NewTestEnvironment()
 
-	if err := AddClusterControllerToManager(testEnv.GetContext(), testEnv.Manager, &infrav1.VSphereCluster{}); err != nil {
+	secretCachingClient, err := client.New(testEnv.Manager.GetConfig(), client.Options{
+		HTTPClient: testEnv.Manager.GetHTTPClient(),
+		Cache: &client.CacheOptions{
+			Reader: testEnv.Manager.GetCache(),
+		},
+	})
+	if err != nil {
+		panic("unable to create secret caching client")
+	}
+
+	tracker, err := remote.NewClusterCacheTracker(
+		testEnv.Manager,
+		remote.ClusterCacheTrackerOptions{
+			SecretCachingClient: secretCachingClient,
+			ControllerName:      "testenv-manager",
+		},
+	)
+	if err != nil {
+		panic(fmt.Sprintf("unable to setup ClusterCacheTracker: %v", err))
+	}
+
+	controllerOpts := controller.Options{MaxConcurrentReconciles: 10}
+
+	if err := (&remote.ClusterCacheReconciler{
+		Client:  testEnv.Manager.GetClient(),
+		Tracker: tracker,
+	}).SetupWithManager(ctx, testEnv.Manager, controllerOpts); err != nil {
+		panic(fmt.Sprintf("unable to create ClusterCacheReconciler controller: %v", err))
+	}
+
+	if err := AddClusterControllerToManager(testEnv.GetContext(), testEnv.Manager, &infrav1.VSphereCluster{}, controllerOpts); err != nil {
 		panic(fmt.Sprintf("unable to setup VsphereCluster controller: %v", err))
 	}
-	if err := AddMachineControllerToManager(testEnv.GetContext(), testEnv.Manager, &infrav1.VSphereMachine{}); err != nil {
+	if err := AddMachineControllerToManager(testEnv.GetContext(), testEnv.Manager, &infrav1.VSphereMachine{}, controllerOpts); err != nil {
 		panic(fmt.Sprintf("unable to setup VsphereMachine controller: %v", err))
 	}
-	if err := AddVMControllerToManager(testEnv.GetContext(), testEnv.Manager); err != nil {
+	if err := AddVMControllerToManager(testEnv.GetContext(), testEnv.Manager, tracker, controllerOpts); err != nil {
 		panic(fmt.Sprintf("unable to setup VsphereVM controller: %v", err))
 	}
-	if err := AddVsphereClusterIdentityControllerToManager(testEnv.GetContext(), testEnv.Manager); err != nil {
+	if err := AddVsphereClusterIdentityControllerToManager(testEnv.GetContext(), testEnv.Manager, controllerOpts); err != nil {
 		panic(fmt.Sprintf("unable to setup VSphereClusterIdentity controller: %v", err))
 	}
-	if err := AddVSphereDeploymentZoneControllerToManager(testEnv.GetContext(), testEnv.Manager); err != nil {
+	if err := AddVSphereDeploymentZoneControllerToManager(testEnv.GetContext(), testEnv.Manager, controllerOpts); err != nil {
 		panic(fmt.Sprintf("unable to setup VSphereDeploymentZone controller: %v", err))
 	}
-	if err := AddServiceAccountProviderControllerToManager(testEnv.GetContext(), testEnv.Manager); err != nil {
+	if err := AddServiceAccountProviderControllerToManager(testEnv.GetContext(), testEnv.Manager, tracker, controllerOpts); err != nil {
 		panic(fmt.Sprintf("unable to setup ServiceAccount controller: %v", err))
 	}
-	if err := AddServiceDiscoveryControllerToManager(testEnv.GetContext(), testEnv.Manager); err != nil {
+	if err := AddServiceDiscoveryControllerToManager(testEnv.GetContext(), testEnv.Manager, tracker, controllerOpts); err != nil {
 		panic(fmt.Sprintf("unable to setup SvcDiscovery controller: %v", err))
 	}
 

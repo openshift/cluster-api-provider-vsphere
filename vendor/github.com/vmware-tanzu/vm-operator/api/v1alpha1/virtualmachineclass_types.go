@@ -1,22 +1,14 @@
-// Copyright (c) 2019 VMware, Inc. All Rights Reserved.
+// Copyright (c) 2019-2023 VMware, Inc. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 package v1alpha1
 
 import (
+	"encoding/json"
+
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
-
-// VirtualMachineConfigSpec contains additional virtual machine
-// configuration settings including hardware specifications for the VirtualMachine.
-// We only support XML for now, but that may change in the future.
-type VirtualMachineConfigSpec struct {
-	// XML contains a vim.vm.ConfigSpec object that has been serialized to XML
-	// and base64-encoded.
-	// +optional
-	XML string `json:"xml,omitempty"`
-}
 
 // VGPUDevice contains the configuration corresponding to a vGPU device.
 type VGPUDevice struct {
@@ -91,6 +83,21 @@ type VirtualMachineClassPolicies struct {
 
 // VirtualMachineClassSpec defines the desired state of VirtualMachineClass.
 type VirtualMachineClassSpec struct {
+	// ControllerName describes the name of the controller responsible for
+	// reconciling VirtualMachine resources that are realized from this
+	// VirtualMachineClass.
+	//
+	// When omitted, controllers reconciling VirtualMachine resources determine
+	// the default controller name from the environment variable
+	// DEFAULT_VM_CLASS_CONTROLLER_NAME. If this environment variable is not
+	// defined or empty, it defaults to vmoperator.vmware.com/vsphere.
+	//
+	// Once a non-empty value is assigned to this field, attempts to set this
+	// field to an empty value will be silently ignored.
+	//
+	// +optional
+	ControllerName string `json:"controllerName,omitempty"`
+
 	// Hardware describes the configuration of the VirtualMachineClass attributes related to virtual hardware.  The
 	// configuration specified in this field is used to customize the virtual hardware characteristics of any VirtualMachine
 	// associated with this VirtualMachineClass.
@@ -106,10 +113,17 @@ type VirtualMachineClassSpec struct {
 	// +optional
 	Description string `json:"description,omitempty"`
 
-	// ConfigSpec may specify additional virtual machine configuration settings including hardware specifications
-	// for a VirtualMachine
+	// ConfigSpec describes additional configuration information for a
+	// VirtualMachine.
+	// The contents of this field are the VirtualMachineConfigSpec data object
+	// (https://bit.ly/3HDtiRu) marshaled to JSON using the discriminator
+	// field "_typeName" to preserve type information.
+	//
 	// +optional
-	ConfigSpec *VirtualMachineConfigSpec `json:"configSpec,omitempty"`
+	// +kubebuilder:validation:Schemaless
+	// +kubebuilder:validation:Type=object
+	// +kubebuilder:pruning:PreserveUnknownFields
+	ConfigSpec json.RawMessage `json:"configSpec,omitempty"`
 }
 
 // VirtualMachineClassStatus defines the observed state of VirtualMachineClass.  VirtualMachineClasses are immutable,
@@ -150,5 +164,5 @@ type VirtualMachineClassList struct {
 }
 
 func init() {
-	RegisterTypeWithScheme(&VirtualMachineClass{}, &VirtualMachineClassList{})
+	SchemeBuilder.Register(&VirtualMachineClass{}, &VirtualMachineClassList{})
 }

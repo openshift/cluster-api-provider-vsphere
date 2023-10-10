@@ -44,14 +44,8 @@ type Options struct {
 	// for better load management on vSphere api server
 	EnableKeepAlive bool
 
-	// MaxConcurrentReconciles the maximum number of allowed, concurrent
-	// reconciles.
-	//
-	// Defaults to the eponymous constant in this package.
-	MaxConcurrentReconciles int
-
-	// LeaderElectionNamespace is the namespace in which the pod running the
-	// controller maintains a leader election lock
+	// PodNamespace is the namespace in which the pod running the controller
+	// maintains a leader election lock.
 	//
 	// Defaults to the eponymous constant in this package.
 	PodNamespace string
@@ -87,6 +81,11 @@ type Options struct {
 	// If not set, it will default to a DummyNetworkProvider which is intended for testing purposes.
 	// VIM based clusters and managers will not need to set this flag.
 	NetworkProvider string
+
+	// WatchFilterValue is used to filter incoming objects by label.
+	//
+	// Defaults to the empty string and by that not filter anything.
+	WatchFilterValue string
 }
 
 func (o *Options) defaults() {

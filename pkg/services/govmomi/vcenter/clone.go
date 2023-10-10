@@ -167,6 +167,10 @@ func Clone(ctx *context.VMContext, bootstrapData []byte, format bootstrapv1.Form
 		memMiB = 2048
 	}
 
+	// Disable the vAppConfig during VM creation to ensure Cloud-Init inside of the guest does not
+	// activate and prefer the OVF datasource over the VMware datasource.
+	vappConfigRemoved := true
+
 	spec := types.VirtualMachineCloneSpec{
 		Config: &types.VirtualMachineConfigSpec{
 			// Assign the clone's InstanceUUID the value of the Kubernetes Machine
@@ -179,6 +183,7 @@ func Clone(ctx *context.VMContext, bootstrapData []byte, format bootstrapv1.Form
 			NumCPUs:           numCPUs,
 			NumCoresPerSocket: numCoresPerSocket,
 			MemoryMB:          memMiB,
+			VAppConfigRemoved: &vappConfigRemoved,
 		},
 		Location: types.VirtualMachineRelocateSpec{
 			DiskMoveType: string(diskMoveType),
@@ -223,9 +228,36 @@ func Clone(ctx *context.VMContext, bootstrapData []byte, format bootstrapv1.Form
 			return errors.Wrapf(err, "unable to get storageProfileID from name %s for %q", ctx.VSphereVM.Spec.StoragePolicyName, ctx)
 		}
 
+		var hubs []pbmTypes.PbmPlacementHub
+
+		// If there's a Datastore configured, it should be the only one for which we check if it matches the requirements of the Storage Policy
+		if datastoreRef != nil {
+			hubs = append(hubs, pbmTypes.PbmPlacementHub{
+				HubType: datastoreRef.Type,
+				HubId:   datastoreRef.Value,
+			})
+		} else {
+			// Otherwise we should get just the Datastores connected to our pool
+			cluster, err := pool.Owner(ctx)
+			if err != nil {
+				return errors.Wrapf(err, "failed to get owning cluster of resourcepool %q to calculate datastore based on storage policy", pool)
+			}
+			dsGetter := object.NewComputeResource(ctx.Session.Client.Client, cluster.Reference())
+			datastores, err := dsGetter.Datastores(ctx)
+			if err != nil {
+				return errors.Wrapf(err, "unable to list datastores from owning cluster of requested resourcepool")
+			}
+			for _, ds := range datastores {
+				hubs = append(hubs, pbmTypes.PbmPlacementHub{
+					HubType: ds.Reference().Type,
+					HubId:   ds.Reference().Value,
+				})
+			}
+		}
+
 		var constraints []pbmTypes.BasePbmPlacementRequirement
 		constraints = append(constraints, &pbmTypes.PbmPlacementCapabilityProfileRequirement{ProfileId: pbmTypes.PbmProfileId{UniqueId: storageProfileID}})
-		result, err := pbmClient.CheckRequirements(ctx, nil, nil, constraints)
+		result, err := pbmClient.CheckRequirements(ctx, hubs, nil, constraints)
 		if err != nil {
 			return errors.Wrapf(err, "unable to check requirements for storage policy")
 		}
@@ -234,25 +266,18 @@ func Clone(ctx *context.VMContext, bootstrapData []byte, format bootstrapv1.Form
 			return fmt.Errorf("no compatible datastores found for storage policy: %s", ctx.VSphereVM.Spec.StoragePolicyName)
 		}
 
-		if datastoreRef != nil {
-			ctx.Logger.Info("datastore and storagepolicy defined; searching for datastore in storage policy compatible datastores")
-			found := false
-			for _, ds := range result.CompatibleDatastores() {
-				compatibleRef := types.ManagedObjectReference{Type: ds.HubType, Value: ds.HubId}
-				if compatibleRef.String() == datastoreRef.String() {
-					found = true
-				}
-			}
-			if !found {
-				return fmt.Errorf("couldn't find specified datastore: %s in compatible list of datastores for storage policy", ctx.VSphereVM.Spec.Datastore)
-			}
-		} else {
-			rand.Seed(time.Now().UnixNano())
-			ds := result.CompatibleDatastores()[rand.Intn(len(result.CompatibleDatastores()))] //nolint:gosec
+		// If datastoreRef is nil here it means that the user didn't specify a Datastore. So we should
+		// select one of the datastores of the owning cluster of the resource pool that matched the
+		// requirements of the storage policy.
+		if datastoreRef == nil {
+			r := rand.New(rand.NewSource(time.Now().UnixNano())) //nolint:gosec
+			ds := result.CompatibleDatastores()[r.Intn(len(result.CompatibleDatastores()))]
 			datastoreRef = &types.ManagedObjectReference{Type: ds.HubType, Value: ds.HubId}
 		}
 	}
 
+	// if datastoreRef is nil here, means that user didn't specified a datastore NOR a
+	// storagepolicy, so we should select the default
 	if datastoreRef == nil {
 		// if no datastore defined through VM spec or storage policy, use default
 		datastore, err := ctx.Session.Finder.DefaultDatastore(ctx)
@@ -265,6 +290,7 @@ func Clone(ctx *context.VMContext, bootstrapData []byte, format bootstrapv1.Form
 	disks := devices.SelectByType((*types.VirtualDisk)(nil))
 	isLinkedClone := snapshotRef != nil
 	spec.Location.Disk = getDiskLocators(disks, *datastoreRef, isLinkedClone)
+	spec.Location.Datastore = datastoreRef
 
 	ctx.Logger.Info("cloning machine", "namespace", ctx.VSphereVM.Namespace, "name", ctx.VSphereVM.Name, "cloneType", ctx.VSphereVM.Status.CloneMode)
 	task, err := tpl.Clone(ctx, folder, ctx.VSphereVM.Name, spec)

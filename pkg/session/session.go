@@ -18,6 +18,9 @@ package session
 
 import (
 	"context"
+	"crypto/sha256"
+	"fmt"
+	"net/netip"
 	"net/url"
 	"sync"
 	"time"
@@ -111,14 +114,22 @@ func (p *Params) WithFeatures(feature Feature) *Params {
 // GetOrCreate gets a cached session or creates a new one if one does not
 // already exist.
 func GetOrCreate(ctx context.Context, params *Params) (*Session, error) {
-	logger := ctrl.LoggerFrom(ctx).WithName("session")
+	logger := ctrl.LoggerFrom(ctx).WithName("session").WithValues(
+		"server", params.server,
+		"datacenter", params.datacenter,
+		"username", params.userinfo.Username())
+
 	sessionMU.Lock()
 	defer sessionMU.Unlock()
 
-	sessionKey := params.server + params.userinfo.Username() + params.datacenter
+	userPassword, _ := params.userinfo.Password()
+	h := sha256.New()
+	h.Write([]byte(userPassword))
+	hashedUserPassword := h.Sum(nil)
+	sessionKey := fmt.Sprintf("%s#%s#%s#%x", params.server, params.datacenter, params.userinfo.Username(),
+		hashedUserPassword)
 	if cachedSession, ok := sessionCache.Load(sessionKey); ok {
 		s := cachedSession.(*Session)
-		logger = logger.WithValues("server", params.server, "datacenter", params.datacenter)
 
 		vimSessionActive, err := s.SessionManager.SessionIsActive(ctx)
 		if err != nil {
@@ -134,10 +145,25 @@ func GetOrCreate(ctx context.Context, params *Params) (*Session, error) {
 			logger.V(2).Info("found active cached vSphere client session")
 			return s, nil
 		}
+
+		logger.V(2).Info("logout the session because it is inactive")
+		if err := s.Client.Logout(ctx); err != nil {
+			logger.Error(err, "unable to logout session")
+		} else {
+			logger.Info("logout session succeed")
+		}
 	}
 
-	clearCache(logger, sessionKey)
-	soapURL, err := soap.ParseURL(params.server)
+	// soap.ParseURL expects a valid URL. In the case of a bare, unbracketed
+	// IPv6 address (e.g fd00::1) ParseURL will fail. Surround unbracketed IPv6
+	// addresses with brackets.
+	urlSafeServer := params.server
+	ip, err := netip.ParseAddr(urlSafeServer)
+	if err == nil && ip.Is6() {
+		urlSafeServer = fmt.Sprintf("[%s]", urlSafeServer)
+	}
+
+	soapURL, err := soap.ParseURL(urlSafeServer)
 	if err != nil {
 		return nil, errors.Wrapf(err, "error parsing vSphere URL %q", params.server)
 	}
@@ -200,10 +226,11 @@ func newClient(ctx context.Context, logger logr.Logger, sessionKey string, url *
 
 	if feature.EnableKeepAlive {
 		vimClient.RoundTripper = session.KeepAliveHandler(vimClient.RoundTripper, feature.KeepAliveDuration, func(tripper soap.RoundTripper) error {
-			_, err := methods.GetCurrentTime(ctx, vimClient)
+			_, err := methods.GetCurrentTime(ctx, tripper)
 			if err != nil {
 				logger.Error(err, "failed to keep alive govmomi client")
-				clearCache(logger, sessionKey)
+				logger.Info("clearing the session")
+				sessionCache.Delete(sessionKey)
 			}
 			return err
 		})
@@ -214,18 +241,6 @@ func newClient(ctx context.Context, logger logr.Logger, sessionKey string, url *
 	}
 
 	return c, nil
-}
-
-func clearCache(logger logr.Logger, sessionKey string) {
-	if cachedSession, ok := sessionCache.Load(sessionKey); ok {
-		s := cachedSession.(*Session)
-
-		logger.Info("performing session log out and clearing session", "key", sessionKey)
-		if err := s.Logout(context.Background()); err != nil {
-			logger.Error(err, "unable to logout session")
-		}
-	}
-	sessionCache.Delete(sessionKey)
 }
 
 // newManager creates a Manager that encompasses the REST Client for the VSphere tagging API.
@@ -241,8 +256,8 @@ func newManager(ctx context.Context, logger logr.Logger, sessionKey string, clie
 				return nil
 			}
 
-			logger.Info("rest client session expired, clearing cache")
-			clearCache(logger, sessionKey)
+			logger.Info("rest client session expired, clearing session")
+			sessionCache.Delete(sessionKey)
 			return errors.New("rest client session expired")
 		})
 	}

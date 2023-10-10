@@ -109,7 +109,7 @@ type VirtualMachineImageStatus struct {
 	Uuid string `json:"uuid,omitempty"` //nolint:revive,stylecheck
 
 	// Deprecated
-	InternalId string `json:"internalId"` //nolint:revive,stylecheck
+	InternalId string `json:"internalId,omitempty"` //nolint:revive,stylecheck
 
 	// Deprecated
 	PowerState string `json:"powerState,omitempty"`
@@ -136,7 +136,12 @@ type VirtualMachineImageStatus struct {
 	// ContentVersion describes the observed content version of this VirtualMachineImage that was last successfully
 	// synced with the vSphere content library item.
 	// +optional
-	ContentVersion string `json:"contentVersion"`
+	ContentVersion string `json:"contentVersion,omitempty"`
+
+	// Firmware describe the firmware type used by this VirtualMachineImage.
+	// eg: bios, efi.
+	// +optional
+	Firmware string `json:"firmware,omitempty"`
 }
 
 func (vmImage *VirtualMachineImage) GetConditions() Conditions {
@@ -190,7 +195,7 @@ func (clusterVirtualMachineImage *ClusterVirtualMachineImage) SetConditions(cond
 }
 
 // +kubebuilder:object:root=true
-// +kubebuilder:resource:scope=Cluster,shortName=cvmi;cvmimage;clustervmimage
+// +kubebuilder:resource:scope=Cluster,shortName=cvmi;cvmimage;clustervmi;clustervmimage
 // +kubebuilder:storageversion
 // +kubebuilder:subresource:status
 // +kubebuilder:printcolumn:name="Provider-Name",type="string",JSONPath=".spec.providerRef.name"
@@ -223,7 +228,7 @@ type ClusterVirtualMachineImageList struct {
 }
 
 func init() {
-	RegisterTypeWithScheme(
+	SchemeBuilder.Register(
 		&VirtualMachineImage{},
 		&VirtualMachineImageList{},
 		&ClusterVirtualMachineImage{},

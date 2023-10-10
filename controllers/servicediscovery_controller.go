@@ -37,9 +37,11 @@ import (
 	clusterutilv1 "sigs.k8s.io/cluster-api/util"
 	"sigs.k8s.io/cluster-api/util/conditions"
 	"sigs.k8s.io/cluster-api/util/patch"
+	"sigs.k8s.io/cluster-api/util/predicates"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
@@ -70,7 +72,7 @@ const (
 // +kubebuilder:rbac:groups="",resources=configmaps/status,verbs=get
 
 // AddServiceDiscoveryControllerToManager adds the ServiceDiscovery controller to the provided manager.
-func AddServiceDiscoveryControllerToManager(ctx *context.ControllerManagerContext, mgr manager.Manager) error {
+func AddServiceDiscoveryControllerToManager(ctx *context.ControllerManagerContext, mgr manager.Manager, tracker *remote.ClusterCacheTracker, options controller.Options) error {
 	var (
 		controllerNameShort = ServiceDiscoveryControllerName
 		controllerNameLong  = fmt.Sprintf("%s/%s/%s", ctx.Namespace, ctx.Name, ServiceDiscoveryControllerName)
@@ -81,10 +83,9 @@ func AddServiceDiscoveryControllerToManager(ctx *context.ControllerManagerContex
 		Recorder:                 record.New(mgr.GetEventRecorderFor(controllerNameLong)),
 		Logger:                   ctx.Logger.WithName(controllerNameShort),
 	}
-	vsphereCluster := &vmwarev1.VSphereCluster{}
 	r := serviceDiscoveryReconciler{
-		ControllerContext:  controllerContext,
-		remoteClientGetter: remote.NewClusterClient,
+		ControllerContext:         controllerContext,
+		remoteClusterCacheTracker: tracker,
 	}
 
 	configMapCache, err := cache.New(mgr.GetConfig(), cache.Options{
@@ -92,7 +93,7 @@ func AddServiceDiscoveryControllerToManager(ctx *context.ControllerManagerContex
 		Mapper: mgr.GetRESTMapper(),
 		// TODO: Reintroduce the cache sync period
 		// Resync:    ctx.SyncPeriod,
-		Namespace: metav1.NamespacePublic,
+		Namespaces: []string{metav1.NamespacePublic},
 	})
 	if err != nil {
 		return errors.Wrapf(err, "failed to create configmap cache")
@@ -100,30 +101,34 @@ func AddServiceDiscoveryControllerToManager(ctx *context.ControllerManagerContex
 	if err := mgr.Add(configMapCache); err != nil {
 		return errors.Wrapf(err, "failed to start configmap cache")
 	}
-	src := source.NewKindWithCache(&corev1.ConfigMap{}, configMapCache)
+	src := source.Kind(configMapCache, &corev1.ConfigMap{})
 
 	return ctrl.NewControllerManagedBy(mgr).For(&vmwarev1.VSphereCluster{}).
+		WithOptions(options).
 		Watches(
-			&source.Kind{Type: &corev1.Service{}},
+			&corev1.Service{},
 			handler.EnqueueRequestsFromMapFunc(r.serviceToClusters),
 		).
-		Watches(
+		WatchesRawSource(
 			src,
 			handler.EnqueueRequestsFromMapFunc(r.configMapToClusters),
 		).
 		// watch the CAPI cluster
 		Watches(
-			&source.Kind{Type: &clusterv1.Cluster{}}, &handler.EnqueueRequestForOwner{
-				OwnerType:    vsphereCluster,
-				IsController: true,
-			}).
+			&clusterv1.Cluster{},
+			handler.EnqueueRequestForOwner(
+				mgr.GetScheme(), mgr.GetRESTMapper(),
+				&vmwarev1.VSphereCluster{},
+				handler.OnlyControllerOwner(),
+			)).
+		WithEventFilter(predicates.ResourceNotPausedAndHasFilterLabel(ctrl.LoggerFrom(ctx), ctx.WatchFilterValue)).
 		Complete(r)
 }
 
 type serviceDiscoveryReconciler struct {
 	*context.ControllerContext
 
-	remoteClientGetter remote.ClusterClientGetter
+	remoteClusterCacheTracker *remote.ClusterCacheTracker
 }
 
 func (r serviceDiscoveryReconciler) Reconcile(_ goctx.Context, req reconcile.Request) (_ reconcile.Result, reterr error) {
@@ -184,8 +189,12 @@ func (r serviceDiscoveryReconciler) Reconcile(_ goctx.Context, req reconcile.Req
 
 	// We cannot proceed until we are able to access the target cluster. Until
 	// then just return a no-op and wait for the next sync.
-	guestClient, err := r.remoteClientGetter(clusterContext, ServiceDiscoveryControllerName, clusterContext.Client, client.ObjectKeyFromObject(cluster))
+	guestClient, err := r.remoteClusterCacheTracker.GetClient(clusterContext, client.ObjectKeyFromObject(cluster))
 	if err != nil {
+		if errors.Is(err, remote.ErrClusterLocked) {
+			r.Logger.V(5).Info("Requeuing because another worker has the lock on the ClusterCacheTracker")
+			return ctrl.Result{Requeue: true}, nil
+		}
 		logger.Info("The control plane is not ready yet", "err", err)
 		return reconcile.Result{RequeueAfter: clusterNotReadyRequeueTime}, nil
 	}
@@ -444,20 +453,20 @@ func getClusterFromKubeConfig(config *clientcmdapi.Config) *clientcmdapi.Cluster
 
 // serviceToClusters is a mapper function used to enqueue reconcile.Requests
 // It watches for Service objects of type LoadBalancer for the supervisor api-server.
-func (r serviceDiscoveryReconciler) serviceToClusters(o client.Object) []reconcile.Request {
+func (r serviceDiscoveryReconciler) serviceToClusters(ctx goctx.Context, o client.Object) []reconcile.Request {
 	if o.GetNamespace() != vmwarev1.SupervisorLoadBalancerSvcNamespace || o.GetName() != vmwarev1.SupervisorLoadBalancerSvcName {
 		return nil
 	}
-	return allClustersRequests(r.Context, r.Client)
+	return allClustersRequests(ctx, r.Client)
 }
 
 // configMapToClusters is a mapper function used to enqueue reconcile.Requests
 // It watches for cluster-info configmaps for the supervisor api-server.
-func (r serviceDiscoveryReconciler) configMapToClusters(o client.Object) []reconcile.Request {
+func (r serviceDiscoveryReconciler) configMapToClusters(ctx goctx.Context, o client.Object) []reconcile.Request {
 	if o.GetNamespace() != metav1.NamespacePublic || o.GetName() != bootstrapapi.ConfigMapClusterInfo {
 		return nil
 	}
-	return allClustersRequests(r.Context, r.Client)
+	return allClustersRequests(ctx, r.Client)
 }
 
 func allClustersRequests(ctx goctx.Context, c client.Client) []reconcile.Request {

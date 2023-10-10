@@ -36,13 +36,14 @@ import (
 	"sigs.k8s.io/cluster-api/util/annotations"
 	"sigs.k8s.io/cluster-api/util/conditions"
 	"sigs.k8s.io/cluster-api/util/patch"
+	"sigs.k8s.io/cluster-api/util/predicates"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
-	"sigs.k8s.io/controller-runtime/pkg/source"
 
 	vmwarev1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/vmware/v1beta1"
 	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/context"
@@ -65,7 +66,7 @@ const (
 )
 
 // AddServiceAccountProviderControllerToManager adds this controller to the provided manager.
-func AddServiceAccountProviderControllerToManager(ctx *context.ControllerManagerContext, mgr manager.Manager) error {
+func AddServiceAccountProviderControllerToManager(ctx *context.ControllerManagerContext, mgr manager.Manager, tracker *remote.ClusterCacheTracker, options controller.Options) error {
 	var (
 		controlledType     = &vmwarev1.ProviderServiceAccount{}
 		controlledTypeName = reflect.TypeOf(controlledType).Elem().Name()
@@ -81,28 +82,29 @@ func AddServiceAccountProviderControllerToManager(ctx *context.ControllerManager
 		Logger:                   ctx.Logger.WithName(controllerNameShort),
 	}
 	r := ServiceAccountReconciler{
-		ControllerContext:  controllerContext,
-		remoteClientGetter: remote.NewClusterClient,
+		ControllerContext:         controllerContext,
+		remoteClusterCacheTracker: tracker,
 	}
 
 	clusterToInfraFn := clusterToSupervisorInfrastructureMapFunc(ctx)
 
 	return ctrl.NewControllerManagedBy(mgr).For(controlledType).
+		WithOptions(options).
 		// Watch a ProviderServiceAccount
 		Watches(
-			&source.Kind{Type: &vmwarev1.ProviderServiceAccount{}},
+			&vmwarev1.ProviderServiceAccount{},
 			handler.EnqueueRequestsFromMapFunc(r.providerServiceAccountToVSphereCluster),
 		).
 		// Watches the secrets to re-enqueue once the service account token is set
 		Watches(
-			&source.Kind{Type: &corev1.Secret{}},
+			&corev1.Secret{},
 			handler.EnqueueRequestsFromMapFunc(r.secretToVSphereCluster),
 		).
 		// Watches clusters and reconciles the vSphereCluster
 		Watches(
-			&source.Kind{Type: &clusterv1.Cluster{}},
-			handler.EnqueueRequestsFromMapFunc(func(o client.Object) []reconcile.Request {
-				requests := clusterToInfraFn(o)
+			&clusterv1.Cluster{},
+			handler.EnqueueRequestsFromMapFunc(func(ctx goctx.Context, o client.Object) []reconcile.Request {
+				requests := clusterToInfraFn(ctx, o)
 				if requests == nil {
 					return nil
 				}
@@ -120,6 +122,7 @@ func AddServiceAccountProviderControllerToManager(ctx *context.ControllerManager
 				return requests
 			}),
 		).
+		WithEventFilter(predicates.ResourceNotPausedAndHasFilterLabel(ctrl.LoggerFrom(ctx), ctx.WatchFilterValue)).
 		Complete(r)
 }
 
@@ -131,7 +134,7 @@ func clusterToSupervisorInfrastructureMapFunc(managerContext *context.Controller
 type ServiceAccountReconciler struct {
 	*context.ControllerContext
 
-	remoteClientGetter remote.ClusterClientGetter
+	remoteClusterCacheTracker *remote.ClusterCacheTracker
 }
 
 func (r ServiceAccountReconciler) Reconcile(_ goctx.Context, req reconcile.Request) (_ reconcile.Result, reterr error) {
@@ -199,8 +202,12 @@ func (r ServiceAccountReconciler) Reconcile(_ goctx.Context, req reconcile.Reque
 	// then just return a no-op and wait for the next sync. This will occur when
 	// the Cluster's status is updated with a reference to the secret that has
 	// the Kubeconfig data used to access the target cluster.
-	guestClient, err := r.remoteClientGetter(clusterContext, ProviderServiceAccountControllerName, clusterContext.Client, client.ObjectKeyFromObject(cluster))
+	guestClient, err := r.remoteClusterCacheTracker.GetClient(clusterContext, client.ObjectKeyFromObject(cluster))
 	if err != nil {
+		if errors.Is(err, remote.ErrClusterLocked) {
+			r.Logger.V(5).Info("Requeuing because another worker has the lock on the ClusterCacheTracker")
+			return ctrl.Result{Requeue: true}, nil
+		}
 		clusterContext.Logger.Info("The control plane is not ready yet", "err", err)
 		return reconcile.Result{RequeueAfter: clusterNotReadyRequeueTime}, nil
 	}
@@ -577,7 +584,7 @@ func GetCMNamespaceName() types.NamespacedName {
 // secretToVSphereCluster is a mapper function used to enqueue reconcile.Request objects.
 // It accepts a Secret object owned by the controller and fetches the service account
 // that contains the token and creates a reconcile.Request for the vmwarev1.VSphereCluster object.
-func (r ServiceAccountReconciler) secretToVSphereCluster(o client.Object) []reconcile.Request {
+func (r ServiceAccountReconciler) secretToVSphereCluster(ctx goctx.Context, o client.Object) []reconcile.Request {
 	secret, ok := o.(*corev1.Secret)
 	if !ok {
 		return nil
@@ -590,7 +597,7 @@ func (r ServiceAccountReconciler) secretToVSphereCluster(o client.Object) []reco
 		}
 		svcAccountName := secret.GetAnnotations()[corev1.ServiceAccountNameKey]
 		svcAccount := &corev1.ServiceAccount{}
-		if err := r.Client.Get(r.Context, client.ObjectKey{
+		if err := r.Client.Get(ctx, client.ObjectKey{
 			Namespace: secret.Namespace,
 			Name:      svcAccountName,
 		}, svcAccount); err != nil {
@@ -620,7 +627,7 @@ func (r ServiceAccountReconciler) serviceAccountToVSphereCluster(o client.Object
 }
 
 // providerServiceAccountToVSphereCluster is a mapper function used to enqueue reconcile.Request objects.
-func (r ServiceAccountReconciler) providerServiceAccountToVSphereCluster(o client.Object) []reconcile.Request {
+func (r ServiceAccountReconciler) providerServiceAccountToVSphereCluster(_ goctx.Context, o client.Object) []reconcile.Request {
 	providerServiceAccount, ok := o.(*vmwarev1.ProviderServiceAccount)
 	if !ok {
 		return nil
