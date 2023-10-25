@@ -21,11 +21,12 @@ import (
 	"fmt"
 	"time"
 
-	. "github.com/onsi/ginkgo"
+	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/klog/v2"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
@@ -101,7 +102,9 @@ type GetMachineHealthChecksForClusterInput struct {
 // it is necessary to ensure this is already happened before calling it.
 func GetMachineHealthChecksForCluster(ctx context.Context, input GetMachineHealthChecksForClusterInput) []*clusterv1.MachineHealthCheck {
 	machineHealthCheckList := &clusterv1.MachineHealthCheckList{}
-	Expect(input.Lister.List(ctx, machineHealthCheckList, byClusterOptions(input.ClusterName, input.Namespace)...)).To(Succeed(), "Failed to list MachineDeployments object for Cluster %s/%s", input.Namespace, input.ClusterName)
+	Eventually(func() error {
+		return input.Lister.List(ctx, machineHealthCheckList, byClusterOptions(input.ClusterName, input.Namespace)...)
+	}, retryableOperationTimeout, retryableOperationInterval).Should(Succeed(), "Failed to list MachineDeployments object for Cluster %s", klog.KRef(input.Namespace, input.ClusterName))
 
 	machineHealthChecks := make([]*clusterv1.MachineHealthCheck, len(machineHealthCheckList.Items))
 	for i := range machineHealthCheckList.Items {
@@ -140,7 +143,7 @@ func WaitForMachineHealthCheckToRemediateUnhealthyNodeCondition(ctx context.Cont
 			ClusterName:        input.Cluster.Name,
 			MachineHealthCheck: input.MachineHealthCheck,
 		})
-		// Wait for all the machines to exists.
+		// Wait for all the machines to exist.
 		// NOTE: this is required given that this helper is called after a remediation
 		// and we want to make sure all the machine are back in place before testing for unhealthyCondition being fixed.
 		if len(machines) < input.MachinesCount {
