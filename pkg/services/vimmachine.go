@@ -318,6 +318,14 @@ func (v *VimMachineService) reconcileNetwork(ctx *context.VIMMachineContext, vm 
 				Address: addr,
 			})
 		}
+		// This is contained in a carry commit. We need to have it so that a newly created machine can get
+		// correctly approved by the machine-approver.
+		// Without this, a corresponding node does not get created.
+		// See: https://github.com/openshift/cluster-machine-approver/blob/master/pkg/machinehandler/machinehandler.go
+		machineAddresses = append(machineAddresses, clusterv1.MachineAddress{
+			Type:    clusterv1.MachineInternalDNS,
+			Address: vm.GetName(),
+		})
 		ctx.VSphereMachine.Status.Addresses = machineAddresses
 	}
 
