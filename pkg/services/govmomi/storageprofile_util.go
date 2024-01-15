@@ -1,5 +1,5 @@
 /*
-Copyright 2022 The Kubernetes Authors.
+Copyright 2023 The Kubernetes Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -14,13 +14,19 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package util
+package govmomi
 
 import (
-	"net/http"
-	"strings"
+	pbmTypes "github.com/vmware/govmomi/pbm/types"
 )
 
-func IsNotFoundError(err error) bool {
-	return strings.HasSuffix(err.Error(), http.StatusText(http.StatusNotFound))
+// isStoragePolicyIDPresent checks, given a ProfileResult if the requested storageprofileid
+// is associated at least with one entity.
+func isStoragePolicyIDPresent(storageProfileID string, result pbmTypes.PbmQueryProfileResult) bool {
+	for _, id := range result.ProfileId {
+		if id.UniqueId == storageProfileID {
+			return true
+		}
+	}
+	return false
 }

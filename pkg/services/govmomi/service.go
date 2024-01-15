@@ -19,6 +19,7 @@ package govmomi
 import (
 	"encoding/base64"
 	"fmt"
+	"net/http"
 	"time"
 
 	"github.com/pkg/errors"
@@ -26,6 +27,7 @@ import (
 	"github.com/vmware/govmomi/pbm"
 	pbmTypes "github.com/vmware/govmomi/pbm/types"
 	"github.com/vmware/govmomi/property"
+	"github.com/vmware/govmomi/vapi/rest"
 	"github.com/vmware/govmomi/vim25/mo"
 	"github.com/vmware/govmomi/vim25/types"
 	corev1 "k8s.io/api/core/v1"
@@ -263,7 +265,7 @@ func (vms *VMService) DestroyVM(ctx *context.VMContext) (reconcile.Result, infra
 	if ctx.ClusterModuleInfo != nil {
 		provider := clustermodules.NewProvider(ctx.Session.TagManager.Client)
 		err := provider.RemoveMoRefFromModule(ctx, *ctx.ClusterModuleInfo, vmCtx.Ref)
-		if err != nil && !util.IsNotFoundError(err) {
+		if err != nil && !rest.IsStatusError(err, http.StatusNotFound) {
 			return reconcile.Result{}, vm, err
 		}
 		ctx.VSphereVM.Status.ModuleUUID = nil
@@ -394,10 +396,6 @@ func (vms *VMService) reconcileStoragePolicy(ctx *virtualMachineContext) error {
 	if err != nil {
 		return errors.Wrap(err, "unable to retrieve storage profile ID")
 	}
-	entities, err := pbmClient.QueryAssociatedEntity(ctx, pbmTypes.PbmProfileId{UniqueId: storageProfileID}, "virtualDiskId")
-	if err != nil {
-		return err
-	}
 
 	var changes []types.BaseVirtualDeviceConfigSpec
 	devices, err := ctx.Obj.Device(ctx)
@@ -405,24 +403,41 @@ func (vms *VMService) reconcileStoragePolicy(ctx *virtualMachineContext) error {
 		return err
 	}
 
+	disksRefs := make([]pbmTypes.PbmServerObjectRef, 0)
+	// diskMap is just an auxiliar map so we don't need to iterate over and over disks to get their configs
+	// if we realize they are not on the right storage policy
+	diskMap := make(map[string]*types.VirtualDisk)
+
 	disks := devices.SelectByType((*types.VirtualDisk)(nil))
+
+	// We iterate over disks and create an array of disks refs, so we just need to make a single call
+	// against vCenter, instead of one call per disk
+	// the diskMap is an auxiliar way of, besides the disksRefs, we have a "searchable" disk configuration
+	// in case we need to reconfigure a disk, to get its config
 	for _, d := range disks {
 		disk := d.(*types.VirtualDisk) //nolint:forcetypeassert
-		found := false
 		// entities associated with storage policy has key in the form <vm-ID>:<disk>
 		diskID := fmt.Sprintf("%s:%d", ctx.Obj.Reference().Value, disk.Key)
-		for _, e := range entities {
-			if e.Key == diskID {
-				found = true
-				break
-			}
-		}
+		diskMap[diskID] = disk
 
-		if !found {
-			// disk wasn't associated with storage policy, create a device change to make the association
+		disksRefs = append(disksRefs, pbmTypes.PbmServerObjectRef{
+			ObjectType: string(pbmTypes.PbmObjectTypeVirtualDiskId),
+			Key:        diskID,
+		})
+	}
+
+	diskObjects, err := pbmClient.QueryAssociatedProfiles(ctx, disksRefs)
+	if err != nil {
+		return errors.Wrap(err, "unable to query disks associated profiles")
+	}
+
+	// Ensure storage policy is set correctly for all disks of the VM
+	for k := range diskObjects {
+		if !isStoragePolicyIDPresent(storageProfileID, diskObjects[k]) {
+			ctx.Logger.V(5).Info("storage policy not found on disk, adding for reconciliation", "disk", diskObjects[k].Object.Key)
 			config := &types.VirtualDeviceConfigSpec{
 				Operation: types.VirtualDeviceConfigSpecOperationEdit,
-				Device:    disk,
+				Device:    diskMap[diskObjects[k].Object.Key],
 				Profile: []types.BaseVirtualMachineProfileSpec{
 					&types.VirtualMachineDefinedProfileSpec{ProfileId: storageProfileID},
 				},
@@ -431,6 +446,7 @@ func (vms *VMService) reconcileStoragePolicy(ctx *virtualMachineContext) error {
 		}
 	}
 
+	// If there are pending changes for Storage Policies, do it before moving next
 	if len(changes) > 0 {
 		task, err := ctx.Obj.Reconfigure(ctx, types.VirtualMachineConfigSpec{
 			VmProfile: []types.BaseVirtualMachineProfileSpec{
