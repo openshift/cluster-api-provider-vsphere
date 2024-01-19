@@ -25,8 +25,8 @@ import (
 	"github.com/vmware/govmomi/find"
 	"github.com/vmware/govmomi/vim25/types"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/utils/pointer"
-	"sigs.k8s.io/cluster-api/api/v1beta1"
+	"k8s.io/utils/ptr"
+	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	"sigs.k8s.io/cluster-api/test/framework/clusterctl"
 	capiutil "sigs.k8s.io/cluster-api/util"
 )
@@ -55,8 +55,8 @@ var _ = Describe("Cluster creation with GPU devices as PCI passthrough [speciali
 				Namespace:                namespace.Name,
 				ClusterName:              clusterName,
 				KubernetesVersion:        e2eConfig.GetVariable(KubernetesVersion),
-				ControlPlaneMachineCount: pointer.Int64(1),
-				WorkerMachineCount:       pointer.Int64(1),
+				ControlPlaneMachineCount: ptr.To(int64(1)),
+				WorkerMachineCount:       ptr.To(int64(1)),
 			},
 			WaitForClusterIntervals:      e2eConfig.GetIntervals("", "wait-cluster"),
 			WaitForControlPlaneIntervals: e2eConfig.GetIntervals("", "wait-control-plane"),
@@ -75,18 +75,19 @@ var _ = Describe("Cluster creation with GPU devices as PCI passthrough [speciali
 func verifyPCIDeviceOnWorkerNodes(clusterName, namespace string) {
 	list := getVSphereVMsForCluster(clusterName, namespace)
 	for _, vm := range list.Items {
-		if _, ok := vm.GetLabels()[v1beta1.MachineControlPlaneLabel]; !ok {
-			finder := find.NewFinder(vsphereClient.Client, false)
-			dc, err := finder.Datacenter(ctx, vm.Spec.Datacenter)
-			Expect(err).NotTo(HaveOccurred())
-			finder.SetDatacenter(dc)
-
-			vmObj, err := finder.VirtualMachine(ctx, fmt.Sprintf("/%s/vm/%s/%s", vm.Spec.Datacenter, vm.Spec.Folder, vm.Name))
-			Expect(err).NotTo(HaveOccurred())
-			devices, err := vmObj.Device(ctx)
-			Expect(err).NotTo(HaveOccurred())
-			defaultPciDevices := devices.SelectByType((*types.VirtualPCIPassthrough)(nil))
-			Expect(defaultPciDevices).To(HaveLen(1))
+		if _, ok := vm.GetLabels()[clusterv1.MachineControlPlaneLabel]; ok {
+			continue
 		}
+		finder := find.NewFinder(vsphereClient.Client, false)
+		dc, err := finder.Datacenter(ctx, vm.Spec.Datacenter)
+		Expect(err).NotTo(HaveOccurred())
+		finder.SetDatacenter(dc)
+
+		vmObj, err := finder.VirtualMachine(ctx, fmt.Sprintf("/%s/vm/%s/%s", vm.Spec.Datacenter, vm.Spec.Folder, vm.Name))
+		Expect(err).NotTo(HaveOccurred())
+		devices, err := vmObj.Device(ctx)
+		Expect(err).NotTo(HaveOccurred())
+		defaultPciDevices := devices.SelectByType((*types.VirtualPCIPassthrough)(nil))
+		Expect(defaultPciDevices).To(HaveLen(1))
 	}
 }

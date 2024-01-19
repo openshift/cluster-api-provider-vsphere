@@ -17,18 +17,23 @@ limitations under the License.
 package vmware
 
 import (
-	"context"
+	"os"
+	"path/filepath"
 	"testing"
 
 	. "github.com/onsi/ginkgo/v2"
+	"github.com/onsi/ginkgo/v2/types"
 	. "github.com/onsi/gomega"
 	topologyv1 "github.com/vmware-tanzu/vm-operator/external/tanzu-topology/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	apirecord "k8s.io/client-go/tools/record"
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	"sigs.k8s.io/cluster-api/util/conditions"
+	ctrl "sigs.k8s.io/controller-runtime"
 
-	infrav1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/vmware/v1beta1"
+	vmwarev1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/vmware/v1beta1"
+	capvcontext "sigs.k8s.io/cluster-api-provider-vsphere/pkg/context"
 	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/context/vmware"
 	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/services/network"
 	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/services/vmoperator"
@@ -37,7 +42,12 @@ import (
 
 func TestVSphereClusterReconciler(t *testing.T) {
 	RegisterFailHandler(Fail)
-	RunSpecs(t, "VSphereCluster reconciler test suite")
+
+	reporterConfig := types.NewDefaultReporterConfig()
+	if artifactFolder, exists := os.LookupEnv("ARTIFACTS"); exists {
+		reporterConfig.JUnitReport = filepath.Join(artifactFolder, "junit.ginkgo.controllers_vmware.xml")
+	}
+	RunSpecs(t, "VSphereCluster Controller Suite", reporterConfig)
 }
 
 var _ = Describe("Cluster Controller Tests", func() {
@@ -51,40 +61,45 @@ var _ = Describe("Cluster Controller Tests", func() {
 		testIP                = "127.0.0.1"
 	)
 	var (
-		cluster        *clusterv1.Cluster
-		vsphereCluster *infrav1.VSphereCluster
-		vsphereMachine *infrav1.VSphereMachine
-		ctx            *vmware.ClusterContext
-		reconciler     *ClusterReconciler
+		cluster                  *clusterv1.Cluster
+		vsphereCluster           *vmwarev1.VSphereCluster
+		vsphereMachine           *vmwarev1.VSphereMachine
+		ctx                      = ctrl.SetupSignalHandler()
+		clusterCtx               *vmware.ClusterContext
+		controllerManagerContext *capvcontext.ControllerManagerContext
+		reconciler               *ClusterReconciler
 	)
 
 	BeforeEach(func() {
 		// Create all necessary dependencies
 		cluster = util.CreateCluster(clusterName)
 		vsphereCluster = util.CreateVSphereCluster(clusterName)
-		ctx = util.CreateClusterContext(cluster, vsphereCluster)
+		clusterCtx, controllerManagerContext = util.CreateClusterContext(cluster, vsphereCluster)
 		vsphereMachine = util.CreateVSphereMachine(machineName, clusterName, className, imageName, storageClass, controlPlaneLabelTrue)
 
 		reconciler = &ClusterReconciler{
-			ControllerContext:   ctx.ControllerContext,
-			NetworkProvider:     network.DummyNetworkProvider(),
-			ControlPlaneService: vmoperator.CPService{},
+			Client:          controllerManagerContext.Client,
+			Recorder:        apirecord.NewFakeRecorder(100),
+			NetworkProvider: network.DummyNetworkProvider(),
+			ControlPlaneService: &vmoperator.CPService{
+				Client: controllerManagerContext.Client,
+			},
 		}
 
-		Expect(ctx.Client.Create(ctx, cluster)).To(Succeed())
-		Expect(ctx.Client.Create(ctx, vsphereCluster)).To(Succeed())
+		Expect(controllerManagerContext.Client.Create(ctx, cluster)).To(Succeed())
+		Expect(controllerManagerContext.Client.Create(ctx, vsphereCluster)).To(Succeed())
 	})
 
 	// Ensure that the mechanism for reconciling clusters when a control plane machine gets an IP works
 	Context("Test controlPlaneMachineToCluster", func() {
 		It("Returns nil if there is no IP address", func() {
-			request := reconciler.VSphereMachineToCluster(context.Background(), vsphereMachine)
+			request := reconciler.VSphereMachineToCluster(ctx, vsphereMachine)
 			Expect(request).Should(BeNil())
 		})
 
 		It("Returns valid request with IP address", func() {
 			vsphereMachine.Status.IPAddr = testIP
-			request := reconciler.VSphereMachineToCluster(context.Background(), vsphereMachine)
+			request := reconciler.VSphereMachineToCluster(ctx, vsphereMachine)
 			Expect(request).ShouldNot(BeNil())
 			Expect(request[0].Namespace).Should(Equal(cluster.Namespace))
 			Expect(request[0].Name).Should(Equal(cluster.Name))
@@ -93,10 +108,10 @@ var _ = Describe("Cluster Controller Tests", func() {
 
 	Context("Test reconcileDelete", func() {
 		It("should mark specific resources to be in deleting conditions", func() {
-			ctx.VSphereCluster.Status.Conditions = append(ctx.VSphereCluster.Status.Conditions,
-				clusterv1.Condition{Type: infrav1.ResourcePolicyReadyCondition, Status: corev1.ConditionTrue})
-			reconciler.reconcileDelete(ctx)
-			c := conditions.Get(ctx.VSphereCluster, infrav1.ResourcePolicyReadyCondition)
+			clusterCtx.VSphereCluster.Status.Conditions = append(clusterCtx.VSphereCluster.Status.Conditions,
+				clusterv1.Condition{Type: vmwarev1.ResourcePolicyReadyCondition, Status: corev1.ConditionTrue})
+			reconciler.reconcileDelete(clusterCtx)
+			c := conditions.Get(clusterCtx.VSphereCluster, vmwarev1.ResourcePolicyReadyCondition)
 			Expect(c).NotTo(BeNil())
 			Expect(c.Status).To(Equal(corev1.ConditionFalse))
 			Expect(c.Reason).To(Equal(clusterv1.DeletingReason))
@@ -104,10 +119,10 @@ var _ = Describe("Cluster Controller Tests", func() {
 
 		It("should not mark other resources to be in deleting conditions", func() {
 			otherReady := clusterv1.ConditionType("OtherReady")
-			ctx.VSphereCluster.Status.Conditions = append(ctx.VSphereCluster.Status.Conditions,
+			clusterCtx.VSphereCluster.Status.Conditions = append(clusterCtx.VSphereCluster.Status.Conditions,
 				clusterv1.Condition{Type: otherReady, Status: corev1.ConditionTrue})
-			reconciler.reconcileDelete(ctx)
-			c := conditions.Get(ctx.VSphereCluster, otherReady)
+			reconciler.reconcileDelete(clusterCtx)
+			c := conditions.Get(clusterCtx.VSphereCluster, otherReady)
 			Expect(c).NotTo(BeNil())
 			Expect(c.Status).NotTo(Equal(corev1.ConditionFalse))
 			Expect(c.Reason).NotTo(Equal(clusterv1.DeletingReason))
@@ -127,8 +142,8 @@ var _ = Describe("Cluster Controller Tests", func() {
 
 		It("should not find FailureDomains", func() {
 			fds, err := reconciler.getFailureDomains(ctx)
-			Expect(err).To(BeNil())
-			Expect(fds).Should(HaveLen(0))
+			Expect(err).ToNot(HaveOccurred())
+			Expect(fds).Should(BeEmpty())
 		})
 
 		It("should find FailureDomains", func() {
@@ -144,11 +159,11 @@ var _ = Describe("Cluster Controller Tests", func() {
 					},
 				}
 
-				Expect(ctx.Client.Create(ctx, zone)).To(Succeed())
+				Expect(controllerManagerContext.Client.Create(ctx, zone)).To(Succeed())
 			}
 
 			fds, err := reconciler.getFailureDomains(ctx)
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 			Expect(fds).NotTo(BeNil())
 			Expect(fds).Should(HaveLen(3))
 		})

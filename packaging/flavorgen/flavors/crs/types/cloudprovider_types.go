@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-// cloudprovider_types contains API types for the vSphere cloud provider.
+// Package types contains API types for the vSphere cloud provider.
 // The configuration may be unmarshalled from an INI-style configuration using
 // the "gopkg.in/gcfg.v1" package.
 //
@@ -75,7 +75,9 @@ type CPIStorageConfig struct {
 	ControllerImage     string `json:"controllerImage,omitempty"`
 	NodeDriverImage     string `json:"nodeDriverImage,omitempty"`
 	AttacherImage       string `json:"attacherImage,omitempty"`
+	ResizerImage        string `json:"resizerImage,omitempty"`
 	ProvisionerImage    string `json:"provisionerImage,omitempty"`
+	SnapshotterImage    string `json:"snapshotterImage,omitempty"`
 	MetadataSyncerImage string `json:"metadataSyncerImage,omitempty"`
 	LivenessProbeImage  string `json:"livenessProbeImage,omitempty"`
 	RegistrarImage      string `json:"registrarImage,omitempty"`

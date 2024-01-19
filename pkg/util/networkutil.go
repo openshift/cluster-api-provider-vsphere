@@ -19,30 +19,43 @@ package util
 import (
 	"context"
 
-	"github.com/hashicorp/go-version"
+	"github.com/blang/semver/v4"
 	"github.com/pkg/errors"
-	v1 "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	apitypes "k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 const (
-	NCPSNATKey          = "ncp/snat_ip"
-	NCPVersionKey       = "version"
-	NCPNamespace        = "vmware-system-nsx"
+	// NCPSNATKey is the key used for the NCPSNAT annotation.
+	NCPSNATKey = "ncp/snat_ip"
+	// NCPVersionKey is the key used for version information in the NCP configmap.
+	NCPVersionKey = "version"
+	// NCPNamespace is the namespace of the NCP configmap.
+	NCPNamespace = "vmware-system-nsx"
+	// NCPVersionConfigMap is a name of the NCP config map.
 	NCPVersionConfigMap = "nsx-ncp-version-config"
-	// 3.0.1 is where NCP starts to support "whitelist_source_ranges" specification in VNET and enforce FW rules on GC T1.
+	// NCPVersionSupportFW 3.0.1 is where NCP starts to support "whitelist_source_ranges" specification in VNET and enforce FW rules on GC T1.
 	NCPVersionSupportFW = "3.0.1"
-	// 3.1.0 is where NCP stopped to support "whitelist_source_ranges" specification in VNET.
+	// NCPVersionSupportFWEnded 3.1.0 is where NCP stopped to support "whitelist_source_ranges" specification in VNET.
 	NCPVersionSupportFWEnded = "3.1.0"
 
+	// EmptyAnnotationErrorMsg is an error message returned when no annotations are found.
 	EmptyAnnotationErrorMsg = "annotation not found"
-	EmptyNCPSNATKeyMsg      = NCPSNATKey + " key not found"
+	// EmptyNCPSNATKeyMsg is an error message returned when the annotation can not be found.
+	EmptyNCPSNATKeyMsg = NCPSNATKey + " key not found"
+)
+
+var (
+	// NCPVersionSupportFWSemver is the SemVer representation of the minimum NCPVersion for enforcing FW rules.
+	NCPVersionSupportFWSemver = semver.MustParse(NCPVersionSupportFW)
+	// NCPVersionSupportFWEndedSemver is the SemVer representation of the maximum NCPVersion for enforcing FW rules.
+	NCPVersionSupportFWEndedSemver = semver.MustParse(NCPVersionSupportFWEnded)
 )
 
 // GetNamespaceNetSnatIP finds out the namespace's corresponding network's SNAT IP.
 func GetNamespaceNetSnatIP(ctx context.Context, controllerClient client.Client, namespace string) (string, error) {
-	namespaceObj := &v1.Namespace{}
+	namespaceObj := &corev1.Namespace{}
 	namespacedName := apitypes.NamespacedName{
 		Name: namespace,
 	}
@@ -66,7 +79,7 @@ func GetNamespaceNetSnatIP(ctx context.Context, controllerClient client.Client, 
 
 // GetNCPVersion finds out the running ncp's version from its configmap.
 func GetNCPVersion(ctx context.Context, controllerClient client.Client) (string, error) {
-	configmapObj := &v1.ConfigMap{}
+	configmapObj := &corev1.ConfigMap{}
 	namespacedName := apitypes.NamespacedName{
 		Name:      NCPVersionConfigMap,
 		Namespace: NCPNamespace,
@@ -86,18 +99,10 @@ func NCPSupportFW(ctx context.Context, controllerClient client.Client) (bool, er
 	if err != nil {
 		return false, err
 	}
-	currVersion, err := version.NewVersion(ncpVersion)
+	currVersion, err := semver.Parse(ncpVersion)
 	if err != nil {
 		return false, err
 	}
-	supportStartedVersion, err := version.NewVersion(NCPVersionSupportFW)
-	if err != nil {
-		return false, err
-	}
-	supportEndedVersion, err := version.NewVersion(NCPVersionSupportFWEnded)
-	if err != nil {
-		return false, err
-	}
-	supported := currVersion.GreaterThanOrEqual(supportStartedVersion) && currVersion.LessThan(supportEndedVersion)
+	supported := currVersion.GTE(NCPVersionSupportFWSemver) && currVersion.LT(NCPVersionSupportFWEndedSemver)
 	return supported, nil
 }

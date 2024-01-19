@@ -28,7 +28,6 @@ import (
 	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/manager"
 )
 
-//nolint:goconst
 var _ = Describe("GetCredentials", func() {
 	var (
 		ns      *corev1.Namespace

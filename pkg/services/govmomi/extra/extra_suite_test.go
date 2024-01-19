@@ -19,16 +19,24 @@ package extra
 import (
 	"encoding/base64"
 	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
 
 	. "github.com/onsi/ginkgo/v2"
+	ginkgotypes "github.com/onsi/ginkgo/v2/types"
 	. "github.com/onsi/gomega"
 	"github.com/vmware/govmomi/vim25/types"
 )
 
 func TestExtra(t *testing.T) {
 	RegisterFailHandler(Fail)
-	RunSpecs(t, "Extra Suite")
+
+	reporterConfig := ginkgotypes.NewDefaultReporterConfig()
+	if artifactFolder, exists := os.LookupEnv("ARTIFACTS"); exists {
+		reporterConfig.JUnitReport = filepath.Join(artifactFolder, "junit.ginkgo.pkg_services_govmomi_extra.xml")
+	}
+	RunSpecs(t, "Extra Suite", reporterConfig)
 }
 
 type ConfigInitFn func(*Config, string)
@@ -91,7 +99,7 @@ func ConfigInitFnTester(method ConfigInitFn, methodName string, dataKey string, 
 		method(&config, sampleData)
 
 		It("must set 2 keys in the config", func() {
-			Expect(len(config)).To(Equal(2))
+			Expect(config).To(HaveLen(2))
 		})
 
 		It(fmt.Sprintf("must set data as a base64 encoded string with the key %q", dataKey), func() {

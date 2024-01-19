@@ -20,18 +20,19 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/pkg/errors"
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/utils/pointer"
+	"k8s.io/utils/ptr"
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	bootstrapv1 "sigs.k8s.io/cluster-api/bootstrap/kubeadm/api/v1beta1"
 	controlplanev1 "sigs.k8s.io/cluster-api/controlplane/kubeadm/api/v1beta1"
 	addonsv1 "sigs.k8s.io/cluster-api/exp/addons/api/v1beta1"
-	"sigs.k8s.io/yaml"
 
 	infrav1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/v1beta1"
 	"sigs.k8s.io/cluster-api-provider-vsphere/packaging/flavorgen/flavors/env"
+	"sigs.k8s.io/cluster-api-provider-vsphere/packaging/flavorgen/flavors/kubevip"
 	"sigs.k8s.io/cluster-api-provider-vsphere/packaging/flavorgen/flavors/util"
 	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/identity"
 )
@@ -89,12 +90,18 @@ systemd:
         # kubeadm must run after coreos-metadata populated /run/metadata directory.
         Requires=coreos-metadata.service
         After=coreos-metadata.service
+        # kubeadm must run after containerd - see https://github.com/kubernetes-sigs/image-builder/issues/939.
+        After=containerd.service
         [Service]
         # Make metadata environment variables available for pre-kubeadm commands.
         EnvironmentFile=/run/metadata/*`
 )
 
-func newClusterClassCluster() clusterv1.Cluster {
+func newClusterTopologyCluster() (clusterv1.Cluster, error) {
+	variables, err := clusterTopologyVariables()
+	if err != nil {
+		return clusterv1.Cluster{}, errors.Wrap(err, "failed to create ClusterTopologyCluster template")
+	}
 	return clusterv1.Cluster{
 		TypeMeta: metav1.TypeMeta{
 			APIVersion: clusterv1.GroupVersion.String(),
@@ -110,28 +117,45 @@ func newClusterClassCluster() clusterv1.Cluster {
 				Class:   env.ClusterClassNameVar,
 				Version: env.KubernetesVersionVar,
 				ControlPlane: clusterv1.ControlPlaneTopology{
-					Replicas: pointer.Int32(1),
+					Replicas: ptr.To[int32](1),
 				},
 				Workers: &clusterv1.WorkersTopology{
 					MachineDeployments: []clusterv1.MachineDeploymentTopology{
 						{
 							Class:    fmt.Sprintf("%s-worker", env.ClusterClassNameVar),
 							Name:     "md-0",
-							Replicas: pointer.Int32(3),
+							Replicas: ptr.To[int32](3),
 						},
 					},
 				},
-				Variables: clusterTopologyVariables(),
+				Variables: variables,
 			},
 		},
-	}
+	}, nil
 }
 
-func clusterTopologyVariables() []clusterv1.ClusterVariable {
-	sshKey, _ := json.Marshal(env.VSphereSSHAuthorizedKeysVar)
-	controlPlaneIP, _ := json.Marshal(env.ControlPlaneEndpointVar)
-	secretName, _ := json.Marshal(env.ClusterNameVar)
-	kubeVipPod, _ := json.Marshal(kubeVIPPodYaml())
+func clusterTopologyVariables() ([]clusterv1.ClusterVariable, error) {
+	sshKey, err := json.Marshal(env.VSphereSSHAuthorizedKeysVar)
+	if err != nil {
+		return nil, errors.Wrapf(err, "failed to json-encode variable VSphereSSHAuthorizedKeysVar: %q", env.VSphereSSHAuthorizedKeysVar)
+	}
+	controlPlaneIP, err := json.Marshal(env.ControlPlaneEndpointVar)
+	if err != nil {
+		return nil, errors.Wrapf(err, "failed to json-encode variable ControlPlaneEndpointVar: %q", env.ControlPlaneEndpointVar)
+	}
+	secretName, err := json.Marshal(env.ClusterNameVar)
+	if err != nil {
+		return nil, errors.Wrapf(err, "failed to json-encode variable ClusterNameVar: %q", env.ClusterNameVar)
+	}
+
+	kubeVipVariable, err := kubevip.TopologyVariable()
+	if err != nil {
+		return nil, err
+	}
+	infraServerValue, err := getInfraServerValue()
+	if err != nil {
+		return nil, err
+	}
 	return []clusterv1.ClusterVariable{
 		{
 			Name: "sshKey",
@@ -142,16 +166,10 @@ func clusterTopologyVariables() []clusterv1.ClusterVariable {
 		{
 			Name: "infraServer",
 			Value: apiextensionsv1.JSON{
-				Raw: getInfraServerValue(),
+				Raw: infraServerValue,
 			},
 		},
-		{
-			Name: "kubeVipPodManifest",
-			Value: apiextensionsv1.JSON{
-
-				Raw: kubeVipPod,
-			},
-		},
+		*kubeVipVariable,
 		{
 			Name: "controlPlaneIpAddr",
 			Value: apiextensionsv1.JSON{
@@ -164,15 +182,19 @@ func clusterTopologyVariables() []clusterv1.ClusterVariable {
 				Raw: secretName,
 			},
 		},
-	}
+	}, nil
 }
 
-func getInfraServerValue() []byte {
-	byteArr, _ := json.Marshal(map[string]string{
+func getInfraServerValue() ([]byte, error) {
+	byteArr, err := json.Marshal(map[string]string{
 		"url":        env.VSphereServerVar,
 		"thumbprint": env.VSphereThumbprint,
 	})
-	return byteArr
+	if err != nil {
+		return nil, errors.Wrapf(err, "failed to json-encode, VSphereServerVar: %s, VSphereThumbprint: %s",
+			env.VSphereServerVar, env.VSphereThumbprint)
+	}
+	return byteArr, nil
 }
 
 func newVSphereCluster() infrav1.VSphereCluster {
@@ -259,7 +281,7 @@ func newVSphereMachineTemplate(templateName string) infrav1.VSphereMachineTempla
 func defaultVirtualMachineSpec() infrav1.VSphereMachineSpec {
 	return infrav1.VSphereMachineSpec{
 		VirtualMachineCloneSpec: defaultVirtualMachineCloneSpec(),
-		PowerOffMode:            infrav1.VirtualMachinePowerOpModeHard,
+		PowerOffMode:            infrav1.VirtualMachinePowerOpModeTrySoft,
 	}
 }
 
@@ -312,7 +334,7 @@ func newNodeIPAMVSphereMachineTemplate(templateName string) infrav1.VSphereMachi
 func nodeIPAMVirtualMachineSpec() infrav1.VSphereMachineSpec {
 	return infrav1.VSphereMachineSpec{
 		VirtualMachineCloneSpec: nodeIPAMVirtualMachineCloneSpec(),
-		PowerOffMode:            infrav1.VirtualMachinePowerOpModeHard,
+		PowerOffMode:            infrav1.VirtualMachinePowerOpModeTrySoft,
 	}
 }
 
@@ -327,7 +349,7 @@ func nodeIPAMVirtualMachineCloneSpec() infrav1.VirtualMachineCloneSpec {
 					DHCP6:       false,
 					AddressesFromPools: []corev1.TypedLocalObjectReference{
 						{
-							APIGroup: pointer.String(env.NodeIPAMPoolAPIGroup),
+							APIGroup: ptr.To(env.NodeIPAMPoolAPIGroup),
 							Kind:     env.NodeIPAMPoolKind,
 							Name:     env.NodeIPAMPoolName,
 						},
@@ -477,7 +499,7 @@ func defaultUsers() []bootstrapv1.User {
 	return []bootstrapv1.User{
 		{
 			Name: "capv",
-			Sudo: pointer.String("ALL=(ALL) NOPASSWD:ALL"),
+			Sudo: ptr.To("ALL=(ALL) NOPASSWD:ALL"),
 			SSHAuthorizedKeys: []string{
 				env.VSphereSSHAuthorizedKeysVar,
 			},
@@ -489,7 +511,7 @@ func flatcarUsers() []bootstrapv1.User {
 	return []bootstrapv1.User{
 		{
 			Name: "core",
-			Sudo: pointer.String("ALL=(ALL) NOPASSWD:ALL"),
+			Sudo: ptr.To("ALL=(ALL) NOPASSWD:ALL"),
 			SSHAuthorizedKeys: []string{
 				env.VSphereSSHAuthorizedKeysVar,
 			},
@@ -526,132 +548,6 @@ func flatcarPreKubeadmCommands() []string {
 		"envsubst < /etc/kubeadm.yml > /etc/kubeadm.yml.tmp",
 		"mv /etc/kubeadm.yml.tmp /etc/kubeadm.yml",
 	}
-}
-
-func kubeVIPPodSpec() *corev1.Pod {
-	hostPathType := corev1.HostPathFileOrCreate
-	pod := &corev1.Pod{
-		TypeMeta: metav1.TypeMeta{
-			APIVersion: "v1",
-			Kind:       util.TypeToKind(&corev1.Pod{}),
-		},
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "kube-vip",
-			Namespace: "kube-system",
-		},
-		Spec: corev1.PodSpec{
-			Containers: []corev1.Container{
-				{
-					Name:            "kube-vip",
-					Image:           "ghcr.io/kube-vip/kube-vip:v0.5.11",
-					ImagePullPolicy: corev1.PullIfNotPresent,
-					Args: []string{
-						"manager",
-					},
-					Env: []corev1.EnvVar{
-						{
-							// Enables kube-vip control-plane functionality
-							Name:  "cp_enable",
-							Value: "true",
-						},
-						{
-							// Interface that the vip should bind to
-							Name:  "vip_interface",
-							Value: env.VipNetworkInterfaceVar,
-						},
-						{
-							// VIP IP address
-							// 'vip_address' was replaced by 'address'
-							Name:  "address",
-							Value: env.ControlPlaneEndpointVar,
-						},
-						{
-							// VIP TCP port
-							Name:  "port",
-							Value: "6443",
-						},
-						{
-							// Enables ARP brodcasts from Leader (requires L2 connectivity)
-							Name:  "vip_arp",
-							Value: "true",
-						},
-						{
-							// Kubernetes algorithm to be used.
-							Name:  "vip_leaderelection",
-							Value: "true",
-						},
-						{
-							// Seconds a lease is held for
-							Name:  "vip_leaseduration",
-							Value: "15",
-						},
-						{
-							// Seconds a leader can attempt to renew the lease
-							Name:  "vip_renewdeadline",
-							Value: "10",
-						},
-						{
-							// Number of times the leader will hold the lease for
-							Name:  "vip_retryperiod",
-							Value: "2",
-						},
-					},
-					SecurityContext: &corev1.SecurityContext{
-						Capabilities: &corev1.Capabilities{
-							Add: []corev1.Capability{
-								"NET_ADMIN",
-								"NET_RAW",
-							},
-						},
-					},
-					VolumeMounts: []corev1.VolumeMount{
-						{
-							MountPath: "/etc/kubernetes/admin.conf",
-							Name:      "kubeconfig",
-						},
-					},
-				},
-			},
-			HostNetwork: true,
-			HostAliases: []corev1.HostAlias{
-				{
-					IP: "127.0.0.1",
-					Hostnames: []string{
-						"kubernetes",
-					},
-				},
-			},
-			Volumes: []corev1.Volume{
-				{
-					Name: "kubeconfig",
-					VolumeSource: corev1.VolumeSource{
-						HostPath: &corev1.HostPathVolumeSource{
-							Path: "/etc/kubernetes/admin.conf",
-							Type: &hostPathType,
-						},
-					},
-				},
-			},
-		},
-	}
-	return pod
-}
-
-// kubeVIPPodYaml converts the KubeVip pod spec to a `printable` yaml
-// this is needed for the file contents of KubeadmConfig.
-func kubeVIPPodYaml() string {
-	pod := kubeVIPPodSpec()
-	podYaml := util.GenerateObjectYAML(pod, []util.Replacement{})
-	return podYaml
-}
-
-func kubeVIPPod() string {
-	pod := kubeVIPPodSpec()
-	podBytes, err := yaml.Marshal(pod)
-	if err != nil {
-		panic(err)
-	}
-	return string(podBytes)
 }
 
 func newClusterResourceSet(cluster clusterv1.Cluster) addonsv1.ClusterResourceSet {
@@ -704,13 +600,13 @@ func newMachineDeployment(cluster clusterv1.Cluster, machineTemplate infrav1.VSp
 		},
 		Spec: clusterv1.MachineDeploymentSpec{
 			ClusterName: env.ClusterNameVar,
-			Replicas:    pointer.Int32(int32(555)),
+			Replicas:    ptr.To[int32](555),
 			Template: clusterv1.MachineTemplateSpec{
 				ObjectMeta: clusterv1.ObjectMeta{
 					Labels: clusterLabels(),
 				},
 				Spec: clusterv1.MachineSpec{
-					Version:     pointer.String(env.KubernetesVersionVar),
+					Version:     ptr.To(env.KubernetesVersionVar),
 					ClusterName: cluster.Name,
 					Bootstrap: clusterv1.Bootstrap{
 						ConfigRef: &corev1.ObjectReference{
@@ -726,16 +622,6 @@ func newMachineDeployment(cluster clusterv1.Cluster, machineTemplate infrav1.VSp
 					},
 				},
 			},
-		},
-	}
-}
-
-func newKubeVIPFiles() []bootstrapv1.File {
-	return []bootstrapv1.File{
-		{
-			Owner:   "root:root",
-			Path:    "/etc/kubernetes/manifests/kube-vip.yaml",
-			Content: kubeVIPPod(),
 		},
 	}
 }

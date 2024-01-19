@@ -17,11 +17,10 @@ limitations under the License.
 package govmomi
 
 import (
-	goctx "context"
+	"context"
 	"fmt"
 	"testing"
 
-	"github.com/go-logr/logr"
 	. "github.com/onsi/gomega"
 	"github.com/vmware/govmomi/find"
 	"github.com/vmware/govmomi/object"
@@ -30,11 +29,11 @@ import (
 	"github.com/vmware/govmomi/vim25"
 	"github.com/vmware/govmomi/vim25/types"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/utils/pointer"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	infrav1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/v1beta1"
-	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/context"
+	capvcontext "sigs.k8s.io/cluster-api-provider-vsphere/pkg/context"
 	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/session"
 )
 
@@ -44,13 +43,8 @@ const (
 
 func emptyVirtualMachineContext() *virtualMachineContext {
 	return &virtualMachineContext{
-		VMContext: context.VMContext{
-			Logger: logr.Discard(),
-			ControllerContext: &context.ControllerContext{
-				ControllerManagerContext: &context.ControllerManagerContext{
-					Context: goctx.TODO(),
-				},
-			},
+		VMContext: capvcontext.VMContext{
+			ControllerManagerContext: &capvcontext.ControllerManagerContext{},
 		},
 	}
 }
@@ -71,7 +65,7 @@ func Test_reconcilePCIDevices(t *testing.T) {
 		g = NewWithT(t)
 		before()
 
-		simulator.Run(func(ctx goctx.Context, c *vim25.Client) error {
+		simulator.Run(func(ctx context.Context, c *vim25.Client) error {
 			finder := find.NewFinder(c)
 			vm, err := finder.VirtualMachine(ctx, "DC0_H0_VM0")
 			g.Expect(err).ToNot(HaveOccurred())
@@ -87,14 +81,14 @@ func Test_reconcilePCIDevices(t *testing.T) {
 				Spec: infrav1.VSphereVMSpec{
 					VirtualMachineCloneSpec: infrav1.VirtualMachineCloneSpec{
 						PciDevices: []infrav1.PCIDeviceSpec{
-							{DeviceID: pointer.Int32(1234), VendorID: pointer.Int32(5678)},
-							{DeviceID: pointer.Int32(1234), VendorID: pointer.Int32(5678)},
+							{DeviceID: ptr.To[int32](1234), VendorID: ptr.To[int32](5678)},
+							{DeviceID: ptr.To[int32](1234), VendorID: ptr.To[int32](5678)},
 						},
 					},
 				},
 			}
 
-			g.Expect(vms.reconcilePCIDevices(vmCtx)).ToNot(HaveOccurred())
+			g.Expect(vms.reconcilePCIDevices(ctx, vmCtx)).ToNot(HaveOccurred())
 
 			// get the VM's virtual device list
 			devices, err := vm.Device(ctx)
@@ -134,7 +128,7 @@ func Test_ReconcileStoragePolicy(t *testing.T) {
 				VirtualMachineCloneSpec: infrav1.VirtualMachineCloneSpec{},
 			},
 		}
-		g.Expect(vms.reconcileStoragePolicy(vmCtx)).ToNot(HaveOccurred())
+		g.Expect(vms.reconcileStoragePolicy(context.Background(), vmCtx)).ToNot(HaveOccurred())
 		g.Expect(vmCtx.VSphereVM.Status.TaskRef).To(BeEmpty())
 	})
 
@@ -144,7 +138,7 @@ func Test_ReconcileStoragePolicy(t *testing.T) {
 		model, err := storagePolicyModel()
 		g.Expect(err).ToNot(HaveOccurred())
 
-		simulator.Run(func(ctx goctx.Context, c *vim25.Client) error {
+		simulator.Run(func(ctx context.Context, c *vim25.Client) error {
 			authSession, err := getAuthSession(ctx, model.Service.Listen.Host)
 			g.Expect(err).ToNot(HaveOccurred())
 			vmCtx.Session = authSession
@@ -163,7 +157,7 @@ func Test_ReconcileStoragePolicy(t *testing.T) {
 					},
 				},
 			}
-			err = vms.reconcileStoragePolicy(vmCtx)
+			err = vms.reconcileStoragePolicy(context.Background(), vmCtx)
 			g.Expect(err.Error()).To(ContainSubstring("no pbm profile found with name"))
 			return nil
 		}, model)
@@ -177,7 +171,7 @@ func Test_ReconcileStoragePolicy(t *testing.T) {
 		model, err := storagePolicyModel()
 		g.Expect(err).ToNot(HaveOccurred())
 
-		simulator.Run(func(ctx goctx.Context, c *vim25.Client) error {
+		simulator.Run(func(ctx context.Context, c *vim25.Client) error {
 			authSession, err := getAuthSession(ctx, model.Service.Listen.Host)
 			g.Expect(err).ToNot(HaveOccurred())
 			vmCtx.Session = authSession
@@ -196,14 +190,14 @@ func Test_ReconcileStoragePolicy(t *testing.T) {
 					},
 				},
 			}
-			err = vms.reconcileStoragePolicy(vmCtx)
+			err = vms.reconcileStoragePolicy(context.Background(), vmCtx)
 			g.Expect(err).ToNot(HaveOccurred())
 			return nil
 		}, model)
 	})
 }
 
-func getAuthSession(ctx goctx.Context, server string) (*session.Session, error) {
+func getAuthSession(ctx context.Context, server string) (*session.Session, error) {
 	password, _ := simulator.DefaultLogin.Password()
 	return session.GetOrCreate(
 		ctx,
@@ -213,7 +207,7 @@ func getAuthSession(ctx goctx.Context, server string) (*session.Session, error) 
 			WithDatacenter("*"))
 }
 
-func getPoweredoffVM(ctx goctx.Context, c *vim25.Client) (*object.VirtualMachine, error) {
+func getPoweredoffVM(ctx context.Context, c *vim25.Client) (*object.VirtualMachine, error) {
 	finder := find.NewFinder(c)
 	vm, err := finder.VirtualMachine(ctx, "DC0_H0_VM0")
 	if err != nil {

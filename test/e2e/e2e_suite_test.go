@@ -29,14 +29,16 @@ import (
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/klog/v2"
 	"sigs.k8s.io/cluster-api/test/framework"
 	"sigs.k8s.io/cluster-api/test/framework/bootstrap"
 	"sigs.k8s.io/cluster-api/test/framework/clusterctl"
 	"sigs.k8s.io/cluster-api/test/framework/ginkgoextensions"
 	capiutil "sigs.k8s.io/cluster-api/util"
+	ctrl "sigs.k8s.io/controller-runtime"
 
-	"sigs.k8s.io/cluster-api-provider-vsphere/apis/v1beta1"
-	"sigs.k8s.io/cluster-api-provider-vsphere/test/helpers"
+	infrav1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/v1beta1"
+	vsphereframework "sigs.k8s.io/cluster-api-provider-vsphere/test/framework"
 )
 
 const (
@@ -55,12 +57,18 @@ var (
 	// artifactFolder is the folder to store e2e test artifacts.
 	artifactFolder string
 
+	// alsoLogToFile enables additional logging to the 'ginkgo-log.txt' file in the artifact folder.
+	// These logs also contain timestamps.
+	alsoLogToFile bool
+
 	// skipCleanup prevents cleanup of test resources e.g. for debug purposes.
 	skipCleanup bool
 )
 
 // Test suite global vars.
 var (
+	ctx = ctrl.SetupSignalHandler()
+
 	// e2eConfig to be used for this test, read from configPath.
 	e2eConfig *clusterctl.E2EConfig
 
@@ -68,7 +76,7 @@ var (
 	// with the providers specified in the configPath.
 	clusterctlConfigPath string
 
-	// bootstrapClusterProvider manages provisioning of the the bootstrap cluster to be used for the e2e tests.
+	// bootstrapClusterProvider manages provisioning of the bootstrap cluster to be used for the e2e tests.
 	// Please note that provisioning will be skipped if e2e.use-existing-cluster is provided.
 	bootstrapClusterProvider bootstrap.ClusterProvider
 
@@ -81,21 +89,31 @@ var (
 func init() {
 	flag.StringVar(&configPath, "e2e.config", "", "path to the e2e config file")
 	flag.StringVar(&artifactFolder, "e2e.artifacts-folder", "", "folder where e2e test artifact should be stored")
+	flag.BoolVar(&alsoLogToFile, "e2e.also-log-to-file", true, "if true, ginkgo logs are additionally written to the `ginkgo-log.txt` file in the artifacts folder (including timestamps)")
 	flag.BoolVar(&skipCleanup, "e2e.skip-resource-cleanup", false, "if true, the resource cleanup after tests will be skipped")
 	flag.BoolVar(&useExistingCluster, "e2e.use-existing-cluster", false, "if true, the test uses the current cluster instead of creating a new one (default discovery rules apply)")
 }
 
 func TestE2E(t *testing.T) {
+	g := NewWithT(t)
+
+	ctrl.SetLogger(klog.Background())
+
 	// If running in prow, make sure to use the artifacts folder that will be reported in test grid (ignoring the value provided by flag).
 	if prowArtifactFolder, exists := os.LookupEnv("ARTIFACTS"); exists {
 		artifactFolder = prowArtifactFolder
 	}
 
+	// ensure the artifacts folder exists
+	g.Expect(os.MkdirAll(artifactFolder, 0755)).To(Succeed(), "Invalid test suite argument. Can't create e2e.artifacts-folder %q", artifactFolder) //nolint:gosec
+
 	RegisterFailHandler(Fail)
 
-	w, err := ginkgoextensions.EnableFileLogging(filepath.Join(artifactFolder, "ginkgo-log.txt"))
-	NewWithT(t).Expect(err).ToNot(HaveOccurred())
-	defer w.Close()
+	if alsoLogToFile {
+		w, err := ginkgoextensions.EnableFileLogging(filepath.Join(artifactFolder, "ginkgo-log.txt"))
+		NewWithT(t).Expect(err).ToNot(HaveOccurred())
+		defer w.Close()
+	}
 
 	RunSpecs(t, "capv-e2e")
 }
@@ -106,28 +124,28 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 	// Before all ParallelNodes.
 
 	Expect(configPath).To(BeAnExistingFile(), "Invalid test suite argument. e2e.config should be an existing file.")
-	Expect(os.MkdirAll(artifactFolder, 0755)).To(Succeed(), "Invalid test suite argument. Can't create e2e.artifacts-folder %q", artifactFolder) //nolint:gofumpt
+	Expect(os.MkdirAll(artifactFolder, 0755)).To(Succeed(), "Invalid test suite argument. Can't create e2e.artifacts-folder %q", artifactFolder) //nolint:gosec // Non-production code
 
 	By("Initializing a runtime.Scheme with all the GVK relevant for this test")
 	scheme := initScheme()
 
 	Byf("Loading the e2e test configuration from %q", configPath)
 	var err error
-	e2eConfig, err = helpers.LoadE2EConfig(configPath)
+	e2eConfig, err = vsphereframework.LoadE2EConfig(ctx, configPath)
 	Expect(err).NotTo(HaveOccurred())
 
 	By("Initializing the vSphere session to ensure credentials are working", initVSphereSession)
 
 	Byf("Creating a clusterctl local repository into %q", artifactFolder)
-	clusterctlConfigPath, err = helpers.CreateClusterctlLocalRepository(e2eConfig, filepath.Join(artifactFolder, "repository"), true)
+	clusterctlConfigPath, err = vsphereframework.CreateClusterctlLocalRepository(ctx, e2eConfig, filepath.Join(artifactFolder, "repository"), true)
 	Expect(err).NotTo(HaveOccurred())
 
 	By("Setting up the bootstrap cluster")
-	bootstrapClusterProvider, bootstrapClusterProxy, err = helpers.SetupBootstrapCluster(e2eConfig, scheme, useExistingCluster)
+	bootstrapClusterProvider, bootstrapClusterProxy, err = vsphereframework.SetupBootstrapCluster(ctx, e2eConfig, scheme, useExistingCluster)
 	Expect(err).NotTo(HaveOccurred())
 
 	By("Initializing the bootstrap cluster")
-	helpers.InitBootstrapCluster(bootstrapClusterProxy, e2eConfig, clusterctlConfigPath, artifactFolder)
+	vsphereframework.InitBootstrapCluster(ctx, bootstrapClusterProxy, e2eConfig, clusterctlConfigPath, artifactFolder)
 	namespaces = map[*corev1.Namespace]context.CancelFunc{}
 	return []byte(
 		strings.Join([]string{
@@ -148,7 +166,7 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 	kubeconfigPath := parts[3]
 
 	var err error
-	e2eConfig, err = helpers.LoadE2EConfig(configPath)
+	e2eConfig, err = vsphereframework.LoadE2EConfig(ctx, configPath)
 	Expect(err).NotTo(HaveOccurred())
 	bootstrapClusterProxy = framework.NewClusterProxy("bootstrap", kubeconfigPath, initScheme(), framework.WithMachineLogCollector(LogCollector{}))
 })
@@ -164,14 +182,14 @@ var _ = SynchronizedAfterSuite(func() {
 	By("Cleaning up the vSphere session", terminateVSphereSession)
 	By("Tearing down the management cluster")
 	if !skipCleanup {
-		helpers.TearDown(bootstrapClusterProvider, bootstrapClusterProxy)
+		vsphereframework.TearDown(ctx, bootstrapClusterProvider, bootstrapClusterProxy)
 	}
 })
 
 func initScheme() *runtime.Scheme {
 	sc := runtime.NewScheme()
 	framework.TryAddDefaultSchemes(sc)
-	_ = v1beta1.AddToScheme(sc)
+	_ = infrav1.AddToScheme(sc)
 	return sc
 }
 

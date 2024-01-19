@@ -17,6 +17,7 @@ limitations under the License.
 package govmomi
 
 import (
+	"context"
 	"testing"
 
 	"github.com/vmware/govmomi/object"
@@ -24,12 +25,11 @@ import (
 	"github.com/vmware/govmomi/vim25"
 	"github.com/vmware/govmomi/vim25/types"
 
+	"sigs.k8s.io/cluster-api-provider-vsphere/internal/test/helpers/vcsim"
 	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/context/fake"
 	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/session"
-	"sigs.k8s.io/cluster-api-provider-vsphere/test/helpers/vcsim"
 )
 
-//nolint:forcetypeassert
 func TestCreate(t *testing.T) {
 	model := simulator.VPX()
 	model.Host = 0 // ClusterHost only
@@ -40,11 +40,12 @@ func TestCreate(t *testing.T) {
 	}
 	defer simr.Destroy()
 
-	vmContext := fake.NewVMContext(fake.NewControllerContext(fake.NewControllerManagerContext()))
+	ctx := context.Background()
+	vmContext := fake.NewVMContext(ctx, fake.NewControllerManagerContext())
 	vmContext.VSphereVM.Spec.Server = simr.ServerURL().Host
 
 	authSession, err := session.GetOrCreate(
-		vmContext.Context,
+		ctx,
 		session.NewParams().
 			WithServer(vmContext.VSphereVM.Spec.Server).
 			WithUserInfo(simr.Username(), simr.Password()).
@@ -64,7 +65,7 @@ func TestCreate(t *testing.T) {
 	disk := object.VirtualDeviceList(vm.Config.Hardware.Device).SelectByType((*types.VirtualDisk)(nil))[0].(*types.VirtualDisk)
 	disk.CapacityInKB = int64(vmContext.VSphereVM.Spec.DiskGiB) * 1024 * 1024
 
-	if err := createVM(vmContext, []byte(""), ""); err != nil {
+	if err := createVM(ctx, vmContext, []byte(""), ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -72,12 +73,12 @@ func TestCreate(t *testing.T) {
 		Type:  morefTypeTask,
 		Value: vmContext.VSphereVM.Status.TaskRef,
 	}
-	vimClient, err := vim25.NewClient(vmContext, vmContext.Session.RoundTripper)
+	vimClient, err := vim25.NewClient(ctx, vmContext.Session.RoundTripper)
 	if err != nil {
 		t.Fatal("could not make vim25 client.")
 	}
 	task := object.NewTask(vimClient, taskRef)
-	err = task.Wait(vmContext)
+	err = task.Wait(ctx)
 	if err != nil {
 		t.Fatal("error waiting for task:", err)
 	}

@@ -26,8 +26,8 @@ import (
 	"github.com/vmware/govmomi/pbm"
 	"github.com/vmware/govmomi/pbm/types"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/utils/pointer"
-	"sigs.k8s.io/cluster-api/api/v1beta1"
+	"k8s.io/utils/ptr"
+	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	"sigs.k8s.io/cluster-api/test/framework/clusterctl"
 	"sigs.k8s.io/cluster-api/util"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -114,17 +114,17 @@ func VerifyStoragePolicy(ctx context.Context, input StoragePolicySpecInput) {
 		res, err = pbmClient.QueryAssociatedEntity(ctx, types.PbmProfileId{UniqueId: spID}, "virtualMachine")
 		Expect(err).NotTo(HaveOccurred())
 	}
-	Expect(len(res)).To(BeNumerically(">", 0))
+	Expect(res).ToNot(BeEmpty())
 
 	vms := getVSphereVMsForCluster(clusterName, namespace.Name)
-	Expect(len(vms.Items)).To(BeNumerically(">", 0))
+	Expect(vms.Items).ToNot(BeEmpty())
 
 	datacenter, err := vsphereFinder.DatacenterOrDefault(ctx, input.Datacenter)
 	Expect(err).ShouldNot(HaveOccurred())
 	By("verifying storage policy is used by VMs")
 	for _, vm := range vms.Items {
 		si := object.NewSearchIndex(input.Client.Client)
-		ref, err := si.FindByUuid(ctx, datacenter, vm.Spec.BiosUUID, true, pointer.Bool(false))
+		ref, err := si.FindByUuid(ctx, datacenter, vm.Spec.BiosUUID, true, ptr.To(false))
 		Expect(err).NotTo(HaveOccurred())
 		found := false
 
@@ -146,7 +146,7 @@ func getVSphereVMsForCluster(clusterName, namespace string) *infrav1.VSphereVMLi
 		&vms,
 		client.InNamespace(namespace),
 		client.MatchingLabels{
-			v1beta1.ClusterNameLabel: clusterName,
+			clusterv1.ClusterNameLabel: clusterName,
 		},
 	)
 	Expect(err).NotTo(HaveOccurred())

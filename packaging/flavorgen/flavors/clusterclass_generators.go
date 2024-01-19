@@ -21,7 +21,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/utils/pointer"
+	"k8s.io/utils/ptr"
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	bootstrapv1 "sigs.k8s.io/cluster-api/bootstrap/kubeadm/api/v1beta1"
 	controlplanev1 "sigs.k8s.io/cluster-api/controlplane/kubeadm/api/v1beta1"
@@ -29,6 +29,7 @@ import (
 
 	infrav1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/v1beta1"
 	"sigs.k8s.io/cluster-api-provider-vsphere/packaging/flavorgen/flavors/env"
+	"sigs.k8s.io/cluster-api-provider-vsphere/packaging/flavorgen/flavors/kubevip"
 	"sigs.k8s.io/cluster-api-provider-vsphere/packaging/flavorgen/flavors/util"
 )
 
@@ -108,9 +109,10 @@ func getWorkersClass() clusterv1.WorkersClass {
 
 func getClusterClassPatches() []clusterv1.ClusterClassPatch {
 	return []clusterv1.ClusterClassPatch{
+		createEmptyArraysPatch(),
 		enableSSHPatch(),
 		infraClusterPatch(),
-		kubeVipEnabledPatch(),
+		kubevip.TopologyPatch(),
 	}
 }
 
@@ -120,7 +122,7 @@ func getCredSecretNameTemplate() *string {
 		"kind": "Secret",
 	}
 	templateStr, _ := yaml.Marshal(template)
-	return pointer.String(string(templateStr))
+	return ptr.To(string(templateStr))
 }
 
 func getControlPlaneEndpointTemplate() *string {
@@ -129,7 +131,7 @@ func getControlPlaneEndpointTemplate() *string {
 		"port": 6443,
 	}
 	templateStr, _ := yaml.Marshal(template)
-	return pointer.String(string(templateStr))
+	return ptr.To(string(templateStr))
 }
 
 func getEnableSSHIntoNodesTemplate() *string {
@@ -143,7 +145,7 @@ func getEnableSSHIntoNodesTemplate() *string {
 		},
 	}
 	templateStr, _ := yaml.Marshal(template)
-	return pointer.String(string(templateStr))
+	return ptr.To(string(templateStr))
 }
 
 func getClusterClassVariables() []clusterv1.ClusterClassVariable {
@@ -223,12 +225,6 @@ func newVSphereClusterTemplate() infrav1.VSphereClusterTemplate {
 }
 
 func newKubeadmControlPlaneTemplate(templateName string) controlplanev1.KubeadmControlPlaneTemplate {
-	files := []bootstrapv1.File{
-		{
-			Owner: "root:root",
-			Path:  "/etc/kubernetes/manifests/kube-vip.yaml",
-		},
-	}
 	return controlplanev1.KubeadmControlPlaneTemplate{
 		TypeMeta: metav1.TypeMeta{
 			Kind:       util.TypeToKind(&controlplanev1.KubeadmControlPlaneTemplate{}),
@@ -241,7 +237,7 @@ func newKubeadmControlPlaneTemplate(templateName string) controlplanev1.KubeadmC
 		Spec: controlplanev1.KubeadmControlPlaneTemplateSpec{
 			Template: controlplanev1.KubeadmControlPlaneTemplateResource{
 				Spec: controlplanev1.KubeadmControlPlaneTemplateResourceSpec{
-					KubeadmConfigSpec: defaultKubeadmInitSpec(files),
+					KubeadmConfigSpec: defaultKubeadmInitSpec([]bootstrapv1.File{}),
 				},
 			},
 		},

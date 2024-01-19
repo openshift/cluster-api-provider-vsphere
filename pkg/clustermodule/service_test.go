@@ -17,6 +17,7 @@ limitations under the License.
 package clustermodule
 
 import (
+	"context"
 	"fmt"
 	"testing"
 
@@ -26,13 +27,13 @@ import (
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 
 	infrav1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/v1beta1"
+	"sigs.k8s.io/cluster-api-provider-vsphere/internal/test/helpers/vcsim"
 	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/context/fake"
 )
 
 func TestService_Create(t *testing.T) {
-	svc := NewService()
-
 	t.Run("creation is skipped", func(t *testing.T) {
+		ctx := context.Background()
 		t.Run("when wrapper points to template != VSphereMachineTemplate", func(t *testing.T) {
 			md := machineDeployment("md", fake.Namespace, fake.Clusterv1a2Name)
 			md.Spec.Template.Spec.InfrastructureRef = corev1.ObjectReference{
@@ -42,10 +43,11 @@ func TestService_Create(t *testing.T) {
 			}
 
 			g := gomega.NewWithT(t)
-			controllerCtx := fake.NewControllerContext(fake.NewControllerManagerContext(md))
-			ctx := fake.NewClusterContext(controllerCtx)
+			controllerManagerContext := fake.NewControllerManagerContext(md)
+			clusterCtx := fake.NewClusterContext(ctx, controllerManagerContext)
+			svc := NewService(controllerManagerContext, controllerManagerContext.Client)
 
-			moduleUUID, err := svc.Create(ctx, mdWrapper{md})
+			moduleUUID, err := svc.Create(ctx, clusterCtx, mdWrapper{md})
 			g.Expect(err).ToNot(gomega.HaveOccurred())
 			g.Expect(moduleUUID).To(gomega.BeEmpty())
 		})
@@ -72,13 +74,60 @@ func TestService_Create(t *testing.T) {
 			}
 
 			g := gomega.NewWithT(t)
-			controllerCtx := fake.NewControllerContext(fake.NewControllerManagerContext(md, machineTemplate))
-			ctx := fake.NewClusterContext(controllerCtx)
+			controllerManagerContext := fake.NewControllerManagerContext(md, machineTemplate)
+			clusterCtx := fake.NewClusterContext(ctx, controllerManagerContext)
+			svc := NewService(controllerManagerContext, controllerManagerContext.Client)
 
-			moduleUUID, err := svc.Create(ctx, mdWrapper{md})
+			moduleUUID, err := svc.Create(ctx, clusterCtx, mdWrapper{md})
 			g.Expect(err).ToNot(gomega.HaveOccurred())
 			g.Expect(moduleUUID).To(gomega.BeEmpty())
 		})
+	})
+
+	t.Run("Create, DoesExist and Remove works", func(t *testing.T) {
+		g := gomega.NewWithT(t)
+		simr, err := vcsim.NewBuilder().Build()
+		defer simr.Destroy()
+		g.Expect(err).ToNot(gomega.HaveOccurred())
+		md := machineDeployment("md", fake.Namespace, fake.Clusterv1a2Name)
+		md.Spec.Template.Spec.InfrastructureRef = corev1.ObjectReference{
+			Kind:      "VSphereMachineTemplate",
+			Namespace: fake.Namespace,
+			Name:      "blah-template",
+		}
+
+		machineTemplate := &infrav1.VSphereMachineTemplate{
+			TypeMeta: metav1.TypeMeta{Kind: "VSphereMachineTemplate"},
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "blah-template",
+				Namespace: fake.Namespace,
+			},
+			Spec: infrav1.VSphereMachineTemplateSpec{
+				Template: infrav1.VSphereMachineTemplateResource{Spec: infrav1.VSphereMachineSpec{
+					VirtualMachineCloneSpec: infrav1.VirtualMachineCloneSpec{
+						Server:       simr.ServerURL().Host,
+						Datacenter:   "*",
+						ResourcePool: "/DC0/host/DC0_C0/Resources",
+					},
+				}},
+			},
+		}
+
+		controllerManagerContext := fake.NewControllerManagerContext(md, machineTemplate)
+		clusterCtx := fake.NewClusterContext(context.Background(), controllerManagerContext)
+		clusterCtx.VSphereCluster.Spec.Server = simr.ServerURL().Host
+		controllerManagerContext.Username = simr.Username()
+		controllerManagerContext.Password = simr.Password()
+
+		svc := NewService(controllerManagerContext, controllerManagerContext.Client)
+		moduleUUID, err := svc.Create(context.Background(), clusterCtx, mdWrapper{md})
+		g.Expect(err).ToNot(gomega.HaveOccurred())
+		g.Expect(moduleUUID).NotTo(gomega.BeEmpty())
+		exists, err := svc.DoesExist(context.Background(), clusterCtx, mdWrapper{md}, moduleUUID)
+		g.Expect(exists).To(gomega.BeTrue())
+		g.Expect(err).NotTo(gomega.HaveOccurred())
+		err = svc.Remove(context.Background(), clusterCtx, moduleUUID)
+		g.Expect(err).ToNot(gomega.HaveOccurred())
 	})
 }
 

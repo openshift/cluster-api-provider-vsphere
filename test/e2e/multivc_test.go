@@ -33,7 +33,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	infrav1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/v1beta1"
-	"sigs.k8s.io/cluster-api-provider-vsphere/test/helpers"
+	vsphereframework "sigs.k8s.io/cluster-api-provider-vsphere/test/framework"
 )
 
 type MultiVCenterSpecInput struct {
@@ -105,7 +105,7 @@ func VerifyMultiVC(ctx context.Context, input MultiVCenterSpecInput) {
 	}, clusterResources)
 
 	vms := getVSphereVMsForCluster(clusterName, namespace.Name)
-	Expect(len(vms.Items)).To(BeNumerically(">", 0))
+	Expect(vms.Items).ToNot(BeEmpty())
 
 	_, err := vsphereFinder.DatacenterOrDefault(ctx, input.Datacenter)
 	Expect(err).ShouldNot(HaveOccurred())
@@ -124,7 +124,7 @@ func VerifyMultiVC(ctx context.Context, input MultiVCenterSpecInput) {
 	})
 
 	By("Initializing the workload cluster")
-	helpers.InitBootstrapCluster(mgmtClusterProxy, e2eConfig, clusterctlConfigPath, artifactFolder)
+	vsphereframework.InitBootstrapCluster(ctx, mgmtClusterProxy, e2eConfig, clusterctlConfigPath, artifactFolder)
 
 	By("Ensure API servers are stable before doing move")
 	// Nb. This check was introduced to prevent doing move to self-hosted in an aggressive way and thus avoid flakes.
@@ -190,7 +190,7 @@ func VerifyMultiVC(ctx context.Context, input MultiVCenterSpecInput) {
 	}, clusterResources)
 
 	vms = getVSphereVMs(mgmtClusterProxy, wlClusterName, namespace.Name)
-	Expect(len(vms.Items)).To(BeNumerically(">", 0))
+	Expect(vms.Items).ToNot(BeEmpty())
 	if selfHostedCancelWatches != nil {
 		selfHostedCancelWatches()
 	}

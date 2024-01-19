@@ -17,34 +17,35 @@ limitations under the License.
 package fake
 
 import (
+	"context"
+
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/cluster-api/util/patch"
 
 	infrav1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/v1beta1"
-	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/context"
+	capvcontext "sigs.k8s.io/cluster-api-provider-vsphere/pkg/context"
 )
 
 // NewVMContext returns a fake VMContext for unit testing
 // reconcilers with a fake client.
-func NewVMContext(ctx *context.ControllerContext) *context.VMContext {
+func NewVMContext(ctx context.Context, controllerManagerCtx *capvcontext.ControllerManagerContext) *capvcontext.VMContext {
 	// Create the resources.
 	vsphereVM := newVSphereVM()
 
 	// Add the resources to the fake client.
-	if err := ctx.Client.Create(ctx, &vsphereVM); err != nil {
+	if err := controllerManagerCtx.Client.Create(ctx, &vsphereVM); err != nil {
 		panic(err)
 	}
 
-	helper, err := patch.NewHelper(&vsphereVM, ctx.Client)
+	helper, err := patch.NewHelper(&vsphereVM, controllerManagerCtx.Client)
 	if err != nil {
 		panic(err)
 	}
 
-	return &context.VMContext{
-		ControllerContext: ctx,
-		VSphereVM:         &vsphereVM,
-		Logger:            ctx.Logger.WithName(vsphereVM.Name),
-		PatchHelper:       helper,
+	return &capvcontext.VMContext{
+		ControllerManagerContext: controllerManagerCtx,
+		VSphereVM:                &vsphereVM,
+		PatchHelper:              helper,
 	}
 }
 

@@ -17,7 +17,6 @@ limitations under the License.
 package integration
 
 import (
-	goctx "context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -47,8 +46,8 @@ import (
 	"sigs.k8s.io/cluster-api/test/framework/clusterctl"
 	ctrl "sigs.k8s.io/controller-runtime"
 
-	infrav1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/vmware/v1beta1"
-	"sigs.k8s.io/cluster-api-provider-vsphere/test/helpers"
+	vmwarev1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/vmware/v1beta1"
+	vsphereframework "sigs.k8s.io/cluster-api-provider-vsphere/test/framework"
 )
 
 const (
@@ -67,9 +66,9 @@ const (
 )
 
 var (
+	ctx                    = ctrl.SetupSignalHandler()
 	testClusterName        string
 	dummyKubernetesVersion = "1.15.0+vmware.1"
-	ctx                    goctx.Context
 	k8sClient              dynamic.Interface
 )
 
@@ -86,8 +85,8 @@ var (
 	}
 
 	vsphereclustersResource = schema.GroupVersionResource{
-		Group:    infrav1.GroupVersion.Group,
-		Version:  infrav1.GroupVersion.Version,
+		Group:    vmwarev1.GroupVersion.Group,
+		Version:  vmwarev1.GroupVersion.Version,
 		Resource: "vsphereclusters",
 	}
 
@@ -104,14 +103,14 @@ var (
 	}
 
 	vspheremachinesResource = schema.GroupVersionResource{
-		Group:    infrav1.GroupVersion.Group,
-		Version:  infrav1.GroupVersion.Version,
+		Group:    vmwarev1.GroupVersion.Group,
+		Version:  vmwarev1.GroupVersion.Version,
 		Resource: "vspheremachines",
 	}
 
 	vspheremachinetemplateResource = schema.GroupVersionResource{
-		Group:    infrav1.GroupVersion.Group,
-		Version:  infrav1.GroupVersion.Version,
+		Group:    vmwarev1.GroupVersion.Group,
+		Version:  vmwarev1.GroupVersion.Version,
 		Resource: "vspheremachinetemplates",
 	}
 
@@ -157,14 +156,14 @@ type Manifests struct {
 
 type ClusterComponents struct {
 	Cluster        *clusterv1.Cluster
-	VSphereCluster *infrav1.VSphereCluster
+	VSphereCluster *vmwarev1.VSphereCluster
 }
 
 // ControlPlaneComponents contains the resources required to create a control
 // plane machine.
 type ControlPlaneComponents struct {
 	Machine        *clusterv1.Machine
-	VSphereMachine *infrav1.VSphereMachine
+	VSphereMachine *vmwarev1.VSphereMachine
 	KubeadmConfig  *bootstrapv1.KubeadmConfig
 }
 
@@ -172,7 +171,7 @@ type ControlPlaneComponents struct {
 // MachineDeployment.
 type WorkerComponents struct {
 	MachineDeployment      *clusterv1.MachineDeployment
-	VSphereMachineTemplate *infrav1.VSphereMachineTemplate
+	VSphereMachineTemplate *vmwarev1.VSphereMachineTemplate
 	KubeadmConfigTemplate  *bootstrapv1.KubeadmConfigTemplate
 }
 
@@ -203,7 +202,7 @@ var (
 	// with the providers specified in the configPath.
 	clusterctlConfigPath string
 
-	// bootstrapClusterProvider manages provisioning of the the bootstrap cluster to be used for the e2e tests.
+	// bootstrapClusterProvider manages provisioning of the bootstrap cluster to be used for the e2e tests.
 	// Please note that provisioning will be skipped if e2e.use-existing-cluster is provided.
 	bootstrapClusterProvider bootstrap.ClusterProvider
 
@@ -227,26 +226,25 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 	Expect(err).NotTo(HaveOccurred())
 
 	Expect(configPath).To(BeAnExistingFile(), "Invalid test suite argument. e2e.config should be an existing file.")
-	Expect(os.MkdirAll(artifactFolder, 0755)).To(Succeed(), "Invalid test suite argument. Can't create e2e.artifacts-folder %q", artifactFolder)
+	Expect(os.MkdirAll(artifactFolder, 0755)).To(Succeed(), "Invalid test suite argument. Can't create e2e.artifacts-folder %q", artifactFolder) //nolint:gosec // Non-production code
 
 	By("Initializing a runtime.Scheme with all the GVK relevant for this test")
 	scheme := initScheme()
 
 	Byf("Loading the e2e test configuration from %q", configPath)
-	e2eConfig, err = helpers.LoadE2EConfig(configPath)
+	e2eConfig, err = vsphereframework.LoadE2EConfig(ctx, configPath)
 	Expect(err).NotTo(HaveOccurred())
 
 	Byf("Creating a clusterctl local repository into %q", artifactFolder)
-	clusterctlConfigPath, err = helpers.CreateClusterctlLocalRepository(e2eConfig, filepath.Join(artifactFolder, "repository"), false)
+	clusterctlConfigPath, err = vsphereframework.CreateClusterctlLocalRepository(ctx, e2eConfig, filepath.Join(artifactFolder, "repository"), false)
 	Expect(err).NotTo(HaveOccurred())
 
 	By("Setting up the bootstrap cluster")
-	bootstrapClusterProvider, bootstrapClusterProxy, err = helpers.SetupBootstrapCluster(e2eConfig, scheme, useExistingCluster)
+	bootstrapClusterProvider, bootstrapClusterProxy, err = vsphereframework.SetupBootstrapCluster(ctx, e2eConfig, scheme, useExistingCluster)
 	Expect(err).NotTo(HaveOccurred())
 
 	By("Initializing the bootstrap cluster")
-	helpers.InitBootstrapCluster(bootstrapClusterProxy, e2eConfig, clusterctlConfigPath, artifactFolder)
-	ctx = goctx.Background()
+	vsphereframework.InitBootstrapCluster(ctx, bootstrapClusterProxy, e2eConfig, clusterctlConfigPath, artifactFolder)
 	return []byte(
 		strings.Join([]string{
 			artifactFolder,
@@ -266,7 +264,7 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 	kubeconfigPath := parts[3]
 
 	var err error
-	e2eConfig, err = helpers.LoadE2EConfig(configPath)
+	e2eConfig, err = vsphereframework.LoadE2EConfig(ctx, configPath)
 	Expect(err).NotTo(HaveOccurred())
 	bootstrapClusterProxy = framework.NewClusterProxy("bootstrap", kubeconfigPath, initScheme())
 	config := bootstrapClusterProxy.GetRESTConfig()
@@ -283,14 +281,14 @@ var _ = SynchronizedAfterSuite(func() {
 
 	By("Tearing down the management cluster")
 	if !skipCleanup {
-		helpers.TearDown(bootstrapClusterProvider, bootstrapClusterProxy)
+		vsphereframework.TearDown(ctx, bootstrapClusterProvider, bootstrapClusterProxy)
 	}
 })
 
 func initScheme() *runtime.Scheme {
 	sc := runtime.NewScheme()
 	framework.TryAddDefaultSchemes(sc)
-	_ = infrav1.AddToScheme(sc)
+	_ = vmwarev1.AddToScheme(sc)
 	return sc
 }
 
@@ -363,9 +361,9 @@ func generateManifests(testNamespace string) *Manifests {
 
 func createClusterComponents(testNamespace string) *ClusterComponents {
 	By("Creating a VSphereCluster")
-	vsphereCluster := infrav1.VSphereCluster{
+	vsphereCluster := vmwarev1.VSphereCluster{
 		TypeMeta: metav1.TypeMeta{
-			APIVersion: infrav1.GroupVersion.String(),
+			APIVersion: vmwarev1.GroupVersion.String(),
 			Kind:       "VSphereCluster",
 		},
 		ObjectMeta: metav1.ObjectMeta{
@@ -395,7 +393,7 @@ func createClusterComponents(testNamespace string) *ClusterComponents {
 				ServiceDomain: "cluster.local",
 			},
 			InfrastructureRef: &corev1.ObjectReference{
-				APIVersion: infrav1.GroupVersion.String(),
+				APIVersion: vmwarev1.GroupVersion.String(),
 				Kind:       "VSphereCluster",
 				Name:       vsphereCluster.Name,
 				Namespace:  vsphereCluster.Namespace,
@@ -417,9 +415,9 @@ func createControlPlaneComponentsList(testNamespace string) []*ControlPlaneCompo
 		var controlPlaneComponents ControlPlaneComponents
 
 		By("Creating a VSphereMachine")
-		vsphereMachine := infrav1.VSphereMachine{
+		vsphereMachine := vmwarev1.VSphereMachine{
 			TypeMeta: metav1.TypeMeta{
-				APIVersion: infrav1.GroupVersion.String(),
+				APIVersion: vmwarev1.GroupVersion.String(),
 				Kind:       "VSphereMachine",
 			},
 			ObjectMeta: metav1.ObjectMeta{
@@ -430,7 +428,7 @@ func createControlPlaneComponentsList(testNamespace string) []*ControlPlaneCompo
 					clusterv1.ClusterNameLabel:         testClusterName,
 				},
 			},
-			Spec: infrav1.VSphereMachineSpec{
+			Spec: vmwarev1.VSphereMachineSpec{
 				ImageName:    dummyVirtualMachineImageName,
 				ClassName:    controlPlaneMachineClassName,
 				StorageClass: controlPlaneMachineStorageClass,
@@ -485,7 +483,7 @@ func createControlPlaneComponentsList(testNamespace string) []*ControlPlaneCompo
 					},
 				},
 				InfrastructureRef: corev1.ObjectReference{
-					APIVersion: infrav1.GroupVersion.String(),
+					APIVersion: vmwarev1.GroupVersion.String(),
 					Kind:       "VSphereMachine",
 					Name:       vsphereMachine.Name,
 					Namespace:  vsphereMachine.Namespace,
@@ -506,9 +504,9 @@ func createWorkerComponents(testNamespace string) *WorkerComponents {
 	workerMachineDeploymentNameFmt := "%s-workers-0"
 
 	By("Creating VSphereMachineTemplates")
-	vsphereMachineTemplate := infrav1.VSphereMachineTemplate{
+	vsphereMachineTemplate := vmwarev1.VSphereMachineTemplate{
 		TypeMeta: metav1.TypeMeta{
-			APIVersion: infrav1.GroupVersion.String(),
+			APIVersion: vmwarev1.GroupVersion.String(),
 			Kind:       "VSphereMachineTemplate",
 		},
 		ObjectMeta: metav1.ObjectMeta{
@@ -575,7 +573,7 @@ func createWorkerComponents(testNamespace string) *WorkerComponents {
 						},
 					},
 					InfrastructureRef: corev1.ObjectReference{
-						APIVersion: infrav1.GroupVersion.String(),
+						APIVersion: vmwarev1.GroupVersion.String(),
 						Kind:       "VSphereMachineTemplate",
 						Name:       vsphereMachineTemplate.Name,
 						Namespace:  vsphereMachineTemplate.Namespace,
@@ -607,7 +605,6 @@ func createResource(resource schema.GroupVersionResource, obj runtimeObjectWithN
 	Expect(err).NotTo(HaveOccurred(), "Error creating %s %s/%s", resource, obj.GetNamespace(), obj.GetName())
 }
 
-//nolint:unparam
 func deleteResource(resource schema.GroupVersionResource, name, namespace string, propagationPolicy *metav1.DeletionPropagation) {
 	deleteOptions := metav1.DeleteOptions{PropagationPolicy: propagationPolicy}
 	err := k8sClient.Resource(resource).Namespace(namespace).Delete(ctx, name, deleteOptions)
@@ -632,7 +629,6 @@ func updateResourceStatus(resource schema.GroupVersionResource, obj runtimeObjec
 	Expect(err).NotTo(HaveOccurred(), "Error updating status of %s %s/%s", resource, obj.GetNamespace(), obj.GetName())
 }
 
-//nolint:gocritic
 func assertEventuallyExists(resource schema.GroupVersionResource, name, ns string, ownerRef *metav1.OwnerReference) *unstructuredv1.Unstructured {
 	var obj *unstructuredv1.Unstructured
 	EventuallyWithOffset(1, func() (bool, error) {
@@ -719,7 +715,7 @@ func assertVirtualMachineState(machine *clusterv1.Machine, vm *vmoprv1.VirtualMa
 // receives a control plane endpoint that matches the expected IP address.
 func assertClusterEventuallyGetsControlPlaneEndpoint(clusterName, clusterNs string, ipAddress string) {
 	EventuallyWithOffset(1, func() bool {
-		vsphereCluster := &infrav1.VSphereCluster{}
+		vsphereCluster := &vmwarev1.VSphereCluster{}
 		getResource(vsphereclustersResource, clusterName, clusterNs, vsphereCluster)
 		// If the control plane endpoint is undefined, return false
 		if vsphereCluster.Spec.ControlPlaneEndpoint.IsZero() {
@@ -772,7 +768,7 @@ func toOwnerRef(obj canBeReferenced) *metav1.OwnerReference {
 }
 
 func setIPAddressOnMachine(machineName, machineNs, ipAddress string) {
-	vsphereMachine := &infrav1.VSphereMachine{}
+	vsphereMachine := &vmwarev1.VSphereMachine{}
 	getResource(vspheremachinesResource, machineName, machineNs, vsphereMachine)
 	vsphereMachine.Status.IPAddr = ipAddress
 	updateResourceStatus(vspheremachinesResource, vsphereMachine)

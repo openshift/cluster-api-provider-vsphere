@@ -19,26 +19,19 @@ package controllers
 import (
 	"testing"
 
-	"github.com/go-logr/logr"
 	. "github.com/onsi/gomega"
 	"github.com/onsi/gomega/gbytes"
 	"github.com/vmware/govmomi/simulator"
-	"k8s.io/utils/pointer"
+	"k8s.io/utils/ptr"
 
 	infrav1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/v1beta1"
-	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/context"
+	"sigs.k8s.io/cluster-api-provider-vsphere/internal/test/helpers/vcsim"
+	capvcontext "sigs.k8s.io/cluster-api-provider-vsphere/pkg/context"
 	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/context/fake"
 	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/session"
-	"sigs.k8s.io/cluster-api-provider-vsphere/test/helpers/vcsim"
 )
 
-//nolint:paralleltest
-func TestVsphereDeploymentZoneReconciler_Reconcile_VerifyFailureDomain(t *testing.T) {
-	t.Run("for Compute Cluster Zone Failure Domain", ForComputeClusterZone)
-	t.Run("for Host Group Zone Failure Domain", ForHostGroupZone)
-}
-
-func ForComputeClusterZone(t *testing.T) {
+func TestVsphereDeploymentZoneReconciler_Reconcile_VerifyFailureDomain_ComputeClusterZone(t *testing.T) {
 	g := NewWithT(t)
 
 	model := simulator.VPX()
@@ -54,21 +47,19 @@ func ForComputeClusterZone(t *testing.T) {
 			"tags.attach k8s-region-west-2 /DC0/host/DC0_C0").
 		Build()
 	if err != nil {
-		t.Fatalf("failed to create VC simulator")
+		t.Fatalf("failed to create VC simulator %s", err)
 	}
 	t.Cleanup(simr.Destroy)
 
-	mgmtContext := fake.NewControllerManagerContext()
-	mgmtContext.Username = simr.Username()
-	mgmtContext.Password = simr.Password()
-
-	controllerCtx := fake.NewControllerContext(mgmtContext)
+	controllerManagerContext := fake.NewControllerManagerContext()
+	controllerManagerContext.Username = simr.Username()
+	controllerManagerContext.Password = simr.Password()
 
 	params := session.NewParams().
 		WithServer(simr.ServerURL().Host).
 		WithUserInfo(simr.Username(), simr.Password()).
 		WithDatacenter("*")
-	authSession, err := session.GetOrCreate(controllerCtx, params)
+	authSession, err := session.GetOrCreate(ctx, params)
 	g.Expect(err).NotTo(HaveOccurred())
 
 	vsphereFailureDomain := &infrav1.VSphereFailureDomain{
@@ -87,40 +78,38 @@ func ForComputeClusterZone(t *testing.T) {
 			},
 			Topology: infrav1.Topology{
 				Datacenter:     "DC0",
-				ComputeCluster: pointer.String("DC0_C0"),
+				ComputeCluster: ptr.To("DC0_C0"),
 			},
 		},
 	}
 
-	deploymentZoneCtx := &context.VSphereDeploymentZoneContext{
-		ControllerContext:    controllerCtx,
-		VSphereFailureDomain: vsphereFailureDomain,
-		Logger:               logr.Discard(),
-		AuthSession:          authSession,
+	deploymentZoneCtx := &capvcontext.VSphereDeploymentZoneContext{
+		ControllerManagerContext: controllerManagerContext,
+		AuthSession:              authSession,
 	}
 
-	reconciler := vsphereDeploymentZoneReconciler{controllerCtx}
+	reconciler := vsphereDeploymentZoneReconciler{controllerManagerContext}
 
-	g.Expect(reconciler.verifyFailureDomain(deploymentZoneCtx, vsphereFailureDomain.Spec.Region)).To(Succeed())
+	g.Expect(reconciler.verifyFailureDomain(ctx, deploymentZoneCtx, vsphereFailureDomain, vsphereFailureDomain.Spec.Region)).To(Succeed())
 	stdout := gbytes.NewBuffer()
 	g.Expect(simr.Run("tags.attached.ls k8s-region-west", stdout)).To(Succeed())
 	g.Expect(stdout).Should(gbytes.Say("Datacenter"))
 
-	g.Expect(reconciler.verifyFailureDomain(deploymentZoneCtx, vsphereFailureDomain.Spec.Zone)).To(Succeed())
+	g.Expect(reconciler.verifyFailureDomain(ctx, deploymentZoneCtx, vsphereFailureDomain, vsphereFailureDomain.Spec.Zone)).To(Succeed())
 	stdout = gbytes.NewBuffer()
 	g.Expect(simr.Run("tags.attached.ls k8s-region-west-2", stdout)).To(Succeed())
 	g.Expect(stdout).Should(gbytes.Say("ClusterComputeResource"))
 
-	vsphereFailureDomain.Spec.Topology.ComputeCluster = pointer.String("DC0_C1")
+	vsphereFailureDomain.Spec.Topology.ComputeCluster = ptr.To("DC0_C1")
 	// Since association is verified, the method errors since the tag is not associated to the object.
-	g.Expect(reconciler.verifyFailureDomain(deploymentZoneCtx, vsphereFailureDomain.Spec.Zone)).To(HaveOccurred())
+	g.Expect(reconciler.verifyFailureDomain(ctx, deploymentZoneCtx, vsphereFailureDomain, vsphereFailureDomain.Spec.Zone)).To(HaveOccurred())
 
 	// Since the tag does not belong to the category
 	vsphereFailureDomain.Spec.Zone.TagCategory = "diff-k8s-region"
-	g.Expect(reconciler.verifyFailureDomain(deploymentZoneCtx, vsphereFailureDomain.Spec.Zone)).To(HaveOccurred())
+	g.Expect(reconciler.verifyFailureDomain(ctx, deploymentZoneCtx, vsphereFailureDomain, vsphereFailureDomain.Spec.Zone)).To(HaveOccurred())
 }
 
-func ForHostGroupZone(t *testing.T) {
+func TestVsphereDeploymentZoneReconciler_Reconcile_VerifyFailureDomain_HostGroupZone(t *testing.T) {
 	g := NewWithT(t)
 
 	model := simulator.VPX()
@@ -139,17 +128,15 @@ func ForHostGroupZone(t *testing.T) {
 	}
 	t.Cleanup(simr.Destroy)
 
-	mgmtContext := fake.NewControllerManagerContext()
-	mgmtContext.Username = simr.Username()
-	mgmtContext.Password = simr.Password()
-
-	controllerCtx := fake.NewControllerContext(mgmtContext)
+	controllerManagerContext := fake.NewControllerManagerContext()
+	controllerManagerContext.Username = simr.Username()
+	controllerManagerContext.Password = simr.Password()
 
 	params := session.NewParams().
 		WithServer(simr.ServerURL().Host).
 		WithUserInfo(simr.Username(), simr.Password()).
 		WithDatacenter("*")
-	authSession, err := session.GetOrCreate(controllerCtx, params)
+	authSession, err := session.GetOrCreate(ctx, params)
 	g.Expect(err).NotTo(HaveOccurred())
 
 	vsphereFailureDomain := &infrav1.VSphereFailureDomain{
@@ -168,7 +155,7 @@ func ForHostGroupZone(t *testing.T) {
 			},
 			Topology: infrav1.Topology{
 				Datacenter:     "DC0",
-				ComputeCluster: pointer.String("DC0_C0"),
+				ComputeCluster: ptr.To("DC0_C0"),
 				Hosts: &infrav1.FailureDomainHosts{
 					HostGroupName: "test_grp_1",
 				},
@@ -176,30 +163,28 @@ func ForHostGroupZone(t *testing.T) {
 		},
 	}
 
-	deploymentZoneCtx := &context.VSphereDeploymentZoneContext{
-		ControllerContext:    controllerCtx,
-		VSphereFailureDomain: vsphereFailureDomain,
-		Logger:               logr.Discard(),
-		AuthSession:          authSession,
+	deploymentZoneCtx := &capvcontext.VSphereDeploymentZoneContext{
+		ControllerManagerContext: controllerManagerContext,
+		AuthSession:              authSession,
 	}
 
-	reconciler := vsphereDeploymentZoneReconciler{controllerCtx}
+	reconciler := vsphereDeploymentZoneReconciler{controllerManagerContext}
 
 	// Fails since no hosts are tagged
-	g.Expect(reconciler.verifyFailureDomain(deploymentZoneCtx, vsphereFailureDomain.Spec.Zone)).To(HaveOccurred())
+	g.Expect(reconciler.verifyFailureDomain(ctx, deploymentZoneCtx, vsphereFailureDomain, vsphereFailureDomain.Spec.Zone)).To(HaveOccurred())
 	stdout := gbytes.NewBuffer()
 
 	g.Expect(simr.Run("tags.attach k8s-region-west-2 /DC0/host/DC0_C0/DC0_C0_H0", stdout)).To(Succeed())
 	// Fails as not all hosts are tagged
-	g.Expect(reconciler.verifyFailureDomain(deploymentZoneCtx, vsphereFailureDomain.Spec.Zone)).To(HaveOccurred())
+	g.Expect(reconciler.verifyFailureDomain(ctx, deploymentZoneCtx, vsphereFailureDomain, vsphereFailureDomain.Spec.Zone)).To(HaveOccurred())
 
 	g.Expect(simr.Run("tags.attach k8s-region-west-2 /DC0/host/DC0_C0/DC0_C0_H1", stdout)).To(Succeed())
 	// Succeeds as all hosts are tagged
-	g.Expect(reconciler.verifyFailureDomain(deploymentZoneCtx, vsphereFailureDomain.Spec.Zone)).To(Succeed())
+	g.Expect(reconciler.verifyFailureDomain(ctx, deploymentZoneCtx, vsphereFailureDomain, vsphereFailureDomain.Spec.Zone)).To(Succeed())
 
 	// Since the tag does not belong to the category
 	vsphereFailureDomain.Spec.Zone.TagCategory = "diff-k8s-region"
-	g.Expect(reconciler.verifyFailureDomain(deploymentZoneCtx, vsphereFailureDomain.Spec.Zone)).To(HaveOccurred())
+	g.Expect(reconciler.verifyFailureDomain(ctx, deploymentZoneCtx, vsphereFailureDomain, vsphereFailureDomain.Spec.Zone)).To(HaveOccurred())
 }
 
 func TestVsphereDeploymentZoneReconciler_Reconcile_CreateAndAttachMetadata(t *testing.T) {
@@ -212,19 +197,18 @@ func TestVsphereDeploymentZoneReconciler_Reconcile_CreateAndAttachMetadata(t *te
 	}
 	t.Cleanup(simr.Destroy)
 
-	mgmtContext := fake.NewControllerManagerContext()
-	mgmtContext.Username = simr.Username()
-	mgmtContext.Password = simr.Password()
+	controllerManagerContext := fake.NewControllerManagerContext()
+	controllerManagerContext.Username = simr.Username()
+	controllerManagerContext.Password = simr.Password()
 
-	controllerCtx := fake.NewControllerContext(mgmtContext)
 	params := session.NewParams().
 		WithServer(simr.ServerURL().Host).
 		WithUserInfo(simr.Username(), simr.Password()).
 		WithDatacenter("*")
-	authSession, err := session.GetOrCreate(controllerCtx, params)
+	authSession, err := session.GetOrCreate(ctx, params)
 	NewWithT(t).Expect(err).NotTo(HaveOccurred())
 
-	reconciler := vsphereDeploymentZoneReconciler{controllerCtx}
+	reconciler := vsphereDeploymentZoneReconciler{controllerManagerContext}
 
 	tests := []struct {
 		name                     string
@@ -256,7 +240,7 @@ func TestVsphereDeploymentZoneReconciler_Reconcile_CreateAndAttachMetadata(t *te
 				},
 				Topology: infrav1.Topology{
 					Datacenter:     "DC0",
-					ComputeCluster: pointer.String("DC0_C0"),
+					ComputeCluster: ptr.To("DC0_C0"),
 				},
 			},
 		},
@@ -267,11 +251,11 @@ func TestVsphereDeploymentZoneReconciler_Reconcile_CreateAndAttachMetadata(t *te
 					Name:          "bar",
 					Type:          infrav1.HostGroupFailureDomain,
 					TagCategory:   "foo",
-					AutoConfigure: pointer.Bool(true),
+					AutoConfigure: ptr.To(true),
 				},
 				Topology: infrav1.Topology{
 					Datacenter:     "DC0",
-					ComputeCluster: pointer.String("DC0_C0"),
+					ComputeCluster: ptr.To("DC0_C0"),
 					Hosts: &infrav1.FailureDomainHosts{
 						HostGroupName: "group-one",
 						VMGroupName:   "vm-group-one",
@@ -287,14 +271,12 @@ func TestVsphereDeploymentZoneReconciler_Reconcile_CreateAndAttachMetadata(t *te
 			Spec: tests[0].vsphereFailureDomainSpec,
 		}
 
-		deploymentZoneCtx := &context.VSphereDeploymentZoneContext{
-			ControllerContext:    controllerCtx,
-			VSphereFailureDomain: vsphereFailureDomain,
-			Logger:               logr.Discard(),
-			AuthSession:          authSession,
+		deploymentZoneCtx := &capvcontext.VSphereDeploymentZoneContext{
+			ControllerManagerContext: controllerManagerContext,
+			AuthSession:              authSession,
 		}
 
-		g.Expect(reconciler.createAndAttachMetadata(deploymentZoneCtx, tests[0].vsphereFailureDomainSpec.Region)).NotTo(HaveOccurred())
+		g.Expect(reconciler.createAndAttachMetadata(ctx, deploymentZoneCtx, vsphereFailureDomain, tests[0].vsphereFailureDomainSpec.Region)).NotTo(HaveOccurred())
 		stdout := gbytes.NewBuffer()
 		g.Expect(simr.Run("tags.category.info k8s-region", stdout)).To(Succeed())
 		g.Expect(stdout).To(gbytes.Say("k8s-region"))
@@ -308,14 +290,12 @@ func TestVsphereDeploymentZoneReconciler_Reconcile_CreateAndAttachMetadata(t *te
 			Spec: tests[1].vsphereFailureDomainSpec,
 		}
 
-		deploymentZoneCtx := &context.VSphereDeploymentZoneContext{
-			ControllerContext:    controllerCtx,
-			VSphereFailureDomain: vsphereFailureDomain,
-			Logger:               logr.Discard(),
-			AuthSession:          authSession,
+		deploymentZoneCtx := &capvcontext.VSphereDeploymentZoneContext{
+			ControllerManagerContext: controllerManagerContext,
+			AuthSession:              authSession,
 		}
 
-		g.Expect(reconciler.createAndAttachMetadata(deploymentZoneCtx, tests[1].vsphereFailureDomainSpec.Zone)).NotTo(HaveOccurred())
+		g.Expect(reconciler.createAndAttachMetadata(ctx, deploymentZoneCtx, vsphereFailureDomain, tests[1].vsphereFailureDomainSpec.Zone)).NotTo(HaveOccurred())
 		stdout := gbytes.NewBuffer()
 		g.Expect(simr.Run("tags.category.info k8s-zone", stdout)).To(Succeed())
 		g.Expect(stdout).To(gbytes.Say("k8s-zone"))
@@ -329,14 +309,12 @@ func TestVsphereDeploymentZoneReconciler_Reconcile_CreateAndAttachMetadata(t *te
 			Spec: tests[2].vsphereFailureDomainSpec,
 		}
 
-		deploymentZoneCtx := &context.VSphereDeploymentZoneContext{
-			ControllerContext:    controllerCtx,
-			VSphereFailureDomain: vsphereFailureDomain,
-			Logger:               logr.Discard(),
-			AuthSession:          authSession,
+		deploymentZoneCtx := &capvcontext.VSphereDeploymentZoneContext{
+			ControllerManagerContext: controllerManagerContext,
+			AuthSession:              authSession,
 		}
 
-		g.Expect(reconciler.createAndAttachMetadata(deploymentZoneCtx, tests[2].vsphereFailureDomainSpec.Zone)).NotTo(HaveOccurred())
+		g.Expect(reconciler.createAndAttachMetadata(ctx, deploymentZoneCtx, vsphereFailureDomain, tests[2].vsphereFailureDomainSpec.Zone)).NotTo(HaveOccurred())
 		stdout := gbytes.NewBuffer()
 		g.Expect(simr.Run("tags.category.info foo", stdout)).To(Succeed())
 		g.Expect(stdout).To(gbytes.Say("foo"))

@@ -17,13 +17,32 @@ limitations under the License.
 package vmoperator
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	. "github.com/onsi/ginkgo/v2"
+	"github.com/onsi/ginkgo/v2/types"
 	. "github.com/onsi/gomega"
+	"k8s.io/component-base/logs"
+	"k8s.io/klog/v2"
+	ctrl "sigs.k8s.io/controller-runtime"
 )
+
+var ctx = ctrl.SetupSignalHandler()
 
 func TestCAPVServices(t *testing.T) {
 	RegisterFailHandler(Fail)
-	RunSpecs(t, "VMOperator Services Tests")
+
+	// Setting logger so we can set the log level to 5 to cover the code paths
+	// which are only executed when log level is set to >= 5.
+	ctrl.SetLogger(klog.Background())
+	_, err := logs.GlogSetter("5")
+	Expect(err).ToNot(HaveOccurred())
+
+	reporterConfig := types.NewDefaultReporterConfig()
+	if artifactFolder, exists := os.LookupEnv("ARTIFACTS"); exists {
+		reporterConfig.JUnitReport = filepath.Join(artifactFolder, "junit.ginkgo.pkg_services_vmoperator.xml")
+	}
+	RunSpecs(t, "VMOperator Services Suite", reporterConfig)
 }

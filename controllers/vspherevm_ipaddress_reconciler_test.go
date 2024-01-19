@@ -17,14 +17,13 @@ limitations under the License.
 package controllers
 
 import (
-	goctx "context"
+	"context"
 	"testing"
 
-	"github.com/go-logr/logr"
 	"github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/utils/pointer"
+	"k8s.io/utils/ptr"
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	ipamv1 "sigs.k8s.io/cluster-api/exp/ipam/api/v1alpha1"
 	"sigs.k8s.io/cluster-api/util/conditions"
@@ -32,21 +31,20 @@ import (
 	ctrlutil "sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	infrav1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/v1beta1"
-	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/context"
+	capvcontext "sigs.k8s.io/cluster-api-provider-vsphere/pkg/context"
 	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/context/fake"
 	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/util"
 )
 
 func Test_vmReconciler_reconcileIPAddressClaims(t *testing.T) {
 	name, namespace := "test-vm", "my-namespace"
-	setup := func(vsphereVM *infrav1.VSphereVM, initObjects ...client.Object) *context.VMContext {
-		ctx := fake.NewControllerContext(fake.NewControllerManagerContext(initObjects...))
-		return &context.VMContext{
-			ControllerContext: ctx,
-			VSphereVM:         vsphereVM,
-			Logger:            logr.Discard(),
+	setup := func(vsphereVM *infrav1.VSphereVM, initObjects ...client.Object) *capvcontext.VMContext {
+		return &capvcontext.VMContext{
+			ControllerManagerContext: fake.NewControllerManagerContext(initObjects...),
+			VSphereVM:                vsphereVM,
 		}
 	}
+	ctx := context.Background()
 
 	t.Run("when VSphereVM Spec has address pool references", func(t *testing.T) {
 		vsphereVM := &infrav1.VSphereVM{
@@ -80,11 +78,11 @@ func Test_vmReconciler_reconcileIPAddressClaims(t *testing.T) {
 			g := gomega.NewWithT(t)
 
 			testCtx := setup(vsphereVM)
-			err := vmReconciler{}.reconcileIPAddressClaims(testCtx)
+			err := vmReconciler{}.reconcileIPAddressClaims(ctx, testCtx)
 			g.Expect(err).ToNot(gomega.HaveOccurred())
 
 			ipAddrClaimList := &ipamv1.IPAddressClaimList{}
-			g.Expect(testCtx.Client.List(goctx.TODO(), ipAddrClaimList)).To(gomega.Succeed())
+			g.Expect(testCtx.Client.List(ctx, ipAddrClaimList)).To(gomega.Succeed())
 			g.Expect(ipAddrClaimList.Items).To(gomega.HaveLen(3))
 
 			for idx := range ipAddrClaimList.Items {
@@ -123,7 +121,7 @@ func Test_vmReconciler_reconcileIPAddressClaims(t *testing.T) {
 				ipAddrClaim(util.IPAddressClaimName(name, 1, 0), "my-pool-2"),
 				ipAddrClaim(util.IPAddressClaimName(name, 1, 1), "my-pool-3"),
 			)
-			err := vmReconciler{}.reconcileIPAddressClaims(testCtx)
+			err := vmReconciler{}.reconcileIPAddressClaims(ctx, testCtx)
 			g.Expect(err).ToNot(gomega.HaveOccurred())
 
 			claimedCondition := conditions.Get(testCtx.VSphereVM, infrav1.IPAddressClaimedCondition)
@@ -133,7 +131,7 @@ func Test_vmReconciler_reconcileIPAddressClaims(t *testing.T) {
 			g.Expect(claimedCondition.Message).To(gomega.Equal("3/3 claims being processed"))
 
 			ipAddrClaimList := &ipamv1.IPAddressClaimList{}
-			g.Expect(testCtx.Client.List(goctx.TODO(), ipAddrClaimList)).To(gomega.Succeed())
+			g.Expect(testCtx.Client.List(ctx, ipAddrClaimList)).To(gomega.Succeed())
 
 			for idx := range ipAddrClaimList.Items {
 				claim := ipAddrClaimList.Items[idx]
@@ -159,7 +157,7 @@ func Test_vmReconciler_reconcileIPAddressClaims(t *testing.T) {
 			realizedIPAddrClaimThree.Status.AddressRef.Name = "blah-three"
 
 			testCtx := setup(vsphereVM, realizedIPAddrClaimOne, realizedIPAddrClaimTwo, realizedIPAddrClaimThree)
-			err := vmReconciler{}.reconcileIPAddressClaims(testCtx)
+			err := vmReconciler{}.reconcileIPAddressClaims(ctx, testCtx)
 			g.Expect(err).ToNot(gomega.HaveOccurred())
 
 			claimedCondition := conditions.Get(testCtx.VSphereVM, infrav1.IPAddressClaimedCondition)
@@ -167,7 +165,7 @@ func Test_vmReconciler_reconcileIPAddressClaims(t *testing.T) {
 			g.Expect(claimedCondition.Status).To(gomega.Equal(corev1.ConditionTrue))
 
 			ipAddrClaimList := &ipamv1.IPAddressClaimList{}
-			g.Expect(testCtx.Client.List(goctx.TODO(), ipAddrClaimList)).To(gomega.Succeed())
+			g.Expect(testCtx.Client.List(ctx, ipAddrClaimList)).To(gomega.Succeed())
 
 			for idx := range ipAddrClaimList.Items {
 				claim := ipAddrClaimList.Items[idx]
@@ -203,7 +201,7 @@ func Test_vmReconciler_reconcileIPAddressClaims(t *testing.T) {
 				ipAddrClaimWithReadyConditionFalse,
 				secondIPAddrClaimWithReadyConditionTrue,
 			)
-			err := vmReconciler{}.reconcileIPAddressClaims(testCtx)
+			err := vmReconciler{}.reconcileIPAddressClaims(ctx, testCtx)
 			g.Expect(err).ToNot(gomega.HaveOccurred())
 
 			claimedCondition := conditions.Get(testCtx.VSphereVM, infrav1.IPAddressClaimedCondition)
@@ -232,7 +230,7 @@ func Test_vmReconciler_reconcileIPAddressClaims(t *testing.T) {
 				ipAddrClaimWithReadyConditionFalse,
 				iPAddrClaimWithNoReadyCondition,
 			)
-			err := vmReconciler{}.reconcileIPAddressClaims(testCtx)
+			err := vmReconciler{}.reconcileIPAddressClaims(ctx, testCtx)
 			g.Expect(err).ToNot(gomega.HaveOccurred())
 
 			claimedCondition := conditions.Get(testCtx.VSphereVM, infrav1.IPAddressClaimedCondition)
@@ -246,7 +244,7 @@ func Test_vmReconciler_reconcileIPAddressClaims(t *testing.T) {
 
 func poolRef(name string) corev1.TypedLocalObjectReference {
 	return corev1.TypedLocalObjectReference{
-		APIGroup: pointer.String("test.ipam.provider.io/v1"),
+		APIGroup: ptr.To("test.ipam.provider.io/v1"),
 		Name:     name,
 		Kind:     "my-pool-kind",
 	}
