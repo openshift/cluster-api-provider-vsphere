@@ -24,7 +24,7 @@ import (
 	"github.com/vmware/govmomi"
 	"github.com/vmware/govmomi/find"
 
-	"sigs.k8s.io/cluster-api-provider-vsphere/test/helpers/vcsim"
+	"sigs.k8s.io/cluster-api-provider-vsphere/internal/test/helpers/vcsim"
 )
 
 func TestVerifyAffinityRule(t *testing.T) {
@@ -47,11 +47,10 @@ func TestVerifyAffinityRule(t *testing.T) {
 	finder.SetDatacenter(dc)
 
 	computeClusterCtx := testComputeClusterCtx{
-		Context: context.Background(),
-		finder:  finder,
+		finder: finder,
 	}
 
-	rule, err := VerifyAffinityRule(computeClusterCtx, "DC0_C0", "blah-host-group", "blah-vm-group")
+	rule, err := VerifyAffinityRule(ctx, computeClusterCtx, "DC0_C0", "blah-host-group", "blah-vm-group")
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(rule.IsMandatory()).To(BeTrue())
 	g.Expect(rule.Disabled()).To(BeFalse())

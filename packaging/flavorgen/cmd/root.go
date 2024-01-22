@@ -14,6 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
+// Package cmd executes flavorgen commands.
 package cmd
 
 import (
@@ -126,13 +127,25 @@ func generateSingle(flavor string) (string, error) {
 	var objs []runtime.Object
 	switch flavor {
 	case flavors.VIP:
-		objs = flavors.MultiNodeTemplateWithKubeVIP()
+		var err error
+		objs, err = flavors.MultiNodeTemplateWithKubeVIP()
+		if err != nil {
+			return "", err
+		}
 	case flavors.ExternalLoadBalancer:
-		objs = flavors.MultiNodeTemplateWithExternalLoadBalancer()
+		var err error
+		objs, err = flavors.MultiNodeTemplateWithExternalLoadBalancer()
+		if err != nil {
+			return "", err
+		}
 	case flavors.ClusterClass:
 		objs = flavors.ClusterClassTemplateWithKubeVIP()
 	case flavors.ClusterTopology:
-		objs = flavors.ClusterTopologyTemplateKubeVIP()
+		var err error
+		objs, err = flavors.ClusterTopologyTemplateKubeVIP()
+		if err != nil {
+			return "", err
+		}
 		replacements = append(replacements, util.Replacement{
 			Kind:      "Cluster",
 			Name:      "${CLUSTER_NAME}",
@@ -140,9 +153,17 @@ func generateSingle(flavor string) (string, error) {
 			FieldPath: []string{"spec", "topology", "controlPlane", "replicas"},
 		})
 	case flavors.Ignition:
-		objs = flavors.MultiNodeTemplateWithKubeVIPIgnition()
+		var err error
+		objs, err = flavors.MultiNodeTemplateWithKubeVIPIgnition()
+		if err != nil {
+			return "", err
+		}
 	case flavors.NodeIPAM:
-		objs = flavors.MultiNodeTemplateWithKubeVIPNodeIPAM()
+		var err error
+		objs, err = flavors.MultiNodeTemplateWithKubeVIPNodeIPAM()
+		if err != nil {
+			return "", err
+		}
 	default:
 		return "", errors.Errorf("invalid flavor")
 	}

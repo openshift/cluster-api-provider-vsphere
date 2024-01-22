@@ -89,7 +89,7 @@ From this point forward changes which should land in the release have to be cher
       git checkout -b release-1.8
 
       # Push the release branch
-      # Note: `upstream` must be the remote pointing to `github.com/kubernetes-sigs/cluster-api`.
+      # Note: `upstream` must be the remote pointing to `github.com/kubernetes-sigs/cluster-api-provider-vsphere`.
       git push -u upstream release-1.8
      ```
 
@@ -109,6 +109,8 @@ From this point forward changes which should land in the release have to be cher
 5. Remove tests for old release branches if necessary
 6. Verify the jobs and dashboards a day later by taking a look at [testgrid](https://testgrid.k8s.io/sig-cluster-lifecycle-cluster-api-provider-vsphere)
 7. Update `.github/workflows/weekly-security-scan.yaml` - to setup Trivy and govulncheck scanning - `.github/workflows/weekly-md-link-check.yaml` - to setup link checking in the CAPI book - and `.github/workflows/weekly-test-release.yaml` - to verify the release target is working - for the currently supported branches.
+8. Update the [PR markdown link checker](https://github.com/kubernetes-sigs/cluster-api-provider-vsphere/blob/main/.github/workflows/pr-md-link-check.yaml) accordingly (e.g. `main` -> `release-1.8`).
+   - Prior art: [Update branch for link checker](https://github.com/kubernetes-sigs/cluster-api-provider-vsphere/pull/2242)
 
 ## Cut a release
 
@@ -124,7 +126,7 @@ From this point forward changes which should land in the release have to be cher
       git tag -s -a ${RELEASE_TAG} -m ${RELEASE_TAG}
 
       # Push tags
-      # Note: `upstream` must be the remote pointing to `github.com/kubernetes-sigs/cluster-api`.
+      # Note: `upstream` must be the remote pointing to `github.com/kubernetes-sigs/cluster-api-provider-vsphere`.
       git push upstream ${RELEASE_TAG}
    ```
 
@@ -151,7 +153,7 @@ From this point forward changes which should land in the release have to be cher
        i.e.  `export USER_FORK=<personal GitHub handle>`
        - `kpromo` uses `git@github.com:...` as remote to push the branch for the PR. If you don't have `ssh` set up you can configure
        git to use `https` instead via `git config --global url."https://github.com/".insteadOf git@github.com:`.
-       - This will automatically create a PR in [k8s.io](https://github.com/kubernetes/k8s.io) and assign the CAPI maintainers.
+       - This will automatically create a PR in [k8s.io](https://github.com/kubernetes/k8s.io) and assign the CAPV maintainers.
 4. Merge the PR (/lgtm + /hold cancel) and verify the images are available in the production registry:
     - Wait for the [promotion prow job](https://prow.k8s.io/?repo=kubernetes%2Fk8s.io&job=post-k8sio-image-promo) to complete successfully. Then verify that the production images are accessible:
 
@@ -170,7 +172,7 @@ From this point forward changes which should land in the release have to be cher
       7. **For minor releases** Modify `Changes since v1.x.y` to `Changes since v1.x`
          **Note**: The release notes tool includes all merges since the previous release branch was branched of.
    2. Publish the release and ensure release is flagged as `pre-release` for all `beta` and `rc` releases or `latest` for a new release in the most recent release branch.
-6. **For minor releases** Update supported versions in versions.md.
+6. **For minor releases** Update supported versions in README.md.
 
 - Cutting a release as of today requires permissions to:
   - Create a release tag on the GitHub repository.
@@ -180,9 +182,5 @@ From this point forward changes which should land in the release have to be cher
 
 The CAPV tests are pretty stable, but there are still some flaky tests from time to time. To reduce the amount of flakes please periodically:
 
-1. Take a look at recent CI failures via `k8s-triage`:
-    - [periodic-cluster-api-provider-vsphere-test-main](https://storage.googleapis.com/k8s-triage/index.html?pr=1&job=periodic-cluster-api-provider-vsphere-test-main)
-    - [periodic-cluster-api-provider-vsphere-test-integration-main](https://storage.googleapis.com/k8s-triage/index.html?pr=1&job=periodic-cluster-api-provider-vsphere-test-integration-main)
-    - [periodic-cluster-api-provider-vsphere-e2e-full-main](https://storage.googleapis.com/k8s-triage/index.html?pr=1&job=periodic-cluster-api-provider-vsphere-e2e-full-main)
-    - [periodic-cluster-api-provider-vsphere-conformance-main](https://storage.googleapis.com/k8s-triage/index.html?pr=1&job=periodic-cluster-api-provider-vsphere-conformance-main)
+1. Take a look at recent CI failures via [k8s-triage](https://storage.googleapis.com/k8s-triage/index.html?job=.*cluster-api-provider-vsphere.*)
 2. Open issues for occurring flakes and ideally fix them or find someone who can.

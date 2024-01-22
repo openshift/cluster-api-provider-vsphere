@@ -17,33 +17,36 @@ limitations under the License.
 package fake
 
 import (
-	apiextv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	"context"
+
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
+	capvcontext "sigs.k8s.io/cluster-api-provider-vsphere/pkg/context"
 	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/context/vmware"
 )
 
 // NewGuestClusterContext returns a fake GuestClusterContext for unit testing
 // guest cluster controllers with a fake client.
-func NewGuestClusterContext(ctx *vmware.ClusterContext, prototypeCluster bool, gcInitObjects ...client.Object) *vmware.GuestClusterContext {
+func NewGuestClusterContext(ctx context.Context, clusterCtx *vmware.ClusterContext, controllerManagerCtx *capvcontext.ControllerManagerContext, prototypeCluster bool, gcInitObjects ...client.Object) *vmware.GuestClusterContext {
 	if prototypeCluster {
-		cluster := newCluster(ctx.VSphereCluster)
-		if err := ctx.Client.Create(ctx, cluster); err != nil {
+		cluster := newCluster(clusterCtx.VSphereCluster)
+		if err := controllerManagerCtx.Client.Create(ctx, cluster); err != nil {
 			panic(err)
 		}
 	}
 
 	return &vmware.GuestClusterContext{
-		ClusterContext: ctx,
+		ClusterContext: clusterCtx,
 		GuestClient:    NewFakeGuestClusterClient(gcInitObjects...),
 	}
 }
 
 func NewFakeGuestClusterClient(initObjects ...client.Object) client.Client {
 	scheme := scheme.Scheme
-	_ = apiextv1.AddToScheme(scheme)
+	_ = apiextensionsv1.AddToScheme(scheme)
 
 	return fake.NewClientBuilder().WithScheme(scheme).WithObjects(initObjects...).Build()
 }

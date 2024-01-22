@@ -14,6 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
+// Package flavors contains tools to generate CAPV templates.
 package flavors
 
 import (
@@ -23,10 +24,12 @@ import (
 
 	"sigs.k8s.io/cluster-api-provider-vsphere/packaging/flavorgen/flavors/crs"
 	"sigs.k8s.io/cluster-api-provider-vsphere/packaging/flavorgen/flavors/env"
+	"sigs.k8s.io/cluster-api-provider-vsphere/packaging/flavorgen/flavors/kubevip"
 )
 
 const (
 	// Supported workload cluster flavors.
+
 	VIP                  = "vip"
 	ExternalLoadBalancer = "external-loadbalancer"
 	Ignition             = "ignition"
@@ -54,11 +57,17 @@ func ClusterClassTemplateWithKubeVIP() []runtime.Object {
 	return ClusterClassTemplate
 }
 
-func ClusterTopologyTemplateKubeVIP() []runtime.Object {
-	cluster := newClusterClassCluster()
+func ClusterTopologyTemplateKubeVIP() ([]runtime.Object, error) {
+	cluster, err := newClusterTopologyCluster()
+	if err != nil {
+		return nil, err
+	}
 	identitySecret := newIdentitySecret()
 	clusterResourceSet := newClusterResourceSet(cluster)
-	crsResourcesCSI := crs.CreateCrsResourceObjectsCSI(&clusterResourceSet)
+	crsResourcesCSI, err := crs.CreateCrsResourceObjectsCSI(&clusterResourceSet)
+	if err != nil {
+		return nil, err
+	}
 	crsResourcesCPI := crs.CreateCrsResourceObjectsCPI(&clusterResourceSet)
 	MultiNodeTemplate := []runtime.Object{
 		&cluster,
@@ -67,19 +76,24 @@ func ClusterTopologyTemplateKubeVIP() []runtime.Object {
 	}
 	MultiNodeTemplate = append(MultiNodeTemplate, crsResourcesCSI...)
 	MultiNodeTemplate = append(MultiNodeTemplate, crsResourcesCPI...)
-	return MultiNodeTemplate
+	return MultiNodeTemplate, nil
 }
 
-func MultiNodeTemplateWithKubeVIP() []runtime.Object {
+func MultiNodeTemplateWithKubeVIP() ([]runtime.Object, error) {
 	vsphereCluster := newVSphereCluster()
 	cpMachineTemplate := newVSphereMachineTemplate(env.ClusterNameVar)
 	workerMachineTemplate := newVSphereMachineTemplate(fmt.Sprintf("%s-worker", env.ClusterNameVar))
-	controlPlane := newKubeadmControlplane(cpMachineTemplate, newKubeVIPFiles())
+	controlPlane := newKubeadmControlplane(cpMachineTemplate, nil)
+	kubevip.PatchControlPlane(&controlPlane)
+
 	kubeadmJoinTemplate := newKubeadmConfigTemplate(fmt.Sprintf("%s%s", env.ClusterNameVar, env.MachineDeploymentNameSuffix), true)
 	cluster := newCluster(vsphereCluster, &controlPlane)
 	machineDeployment := newMachineDeployment(cluster, workerMachineTemplate, kubeadmJoinTemplate)
 	clusterResourceSet := newClusterResourceSet(cluster)
-	crsResourcesCSI := crs.CreateCrsResourceObjectsCSI(&clusterResourceSet)
+	crsResourcesCSI, err := crs.CreateCrsResourceObjectsCSI(&clusterResourceSet)
+	if err != nil {
+		return nil, err
+	}
 	crsResourcesCPI := crs.CreateCrsResourceObjectsCPI(&clusterResourceSet)
 	identitySecret := newIdentitySecret()
 
@@ -98,10 +112,10 @@ func MultiNodeTemplateWithKubeVIP() []runtime.Object {
 	MultiNodeTemplate = append(MultiNodeTemplate, crsResourcesCSI...)
 	MultiNodeTemplate = append(MultiNodeTemplate, crsResourcesCPI...)
 
-	return MultiNodeTemplate
+	return MultiNodeTemplate, nil
 }
 
-func MultiNodeTemplateWithExternalLoadBalancer() []runtime.Object {
+func MultiNodeTemplateWithExternalLoadBalancer() ([]runtime.Object, error) {
 	vsphereCluster := newVSphereCluster()
 	cpMachineTemplate := newVSphereMachineTemplate(env.ClusterNameVar)
 	workerMachineTemplate := newVSphereMachineTemplate(fmt.Sprintf("%s-worker", env.ClusterNameVar))
@@ -110,7 +124,10 @@ func MultiNodeTemplateWithExternalLoadBalancer() []runtime.Object {
 	cluster := newCluster(vsphereCluster, &controlPlane)
 	machineDeployment := newMachineDeployment(cluster, workerMachineTemplate, kubeadmJoinTemplate)
 	clusterResourceSet := newClusterResourceSet(cluster)
-	crsResourcesCSI := crs.CreateCrsResourceObjectsCSI(&clusterResourceSet)
+	crsResourcesCSI, err := crs.CreateCrsResourceObjectsCSI(&clusterResourceSet)
+	if err != nil {
+		return nil, err
+	}
 	crsResourcesCPI := crs.CreateCrsResourceObjectsCPI(&clusterResourceSet)
 	identitySecret := newIdentitySecret()
 
@@ -128,27 +145,31 @@ func MultiNodeTemplateWithExternalLoadBalancer() []runtime.Object {
 	MultiNodeTemplate = append(MultiNodeTemplate, crsResourcesCSI...)
 	MultiNodeTemplate = append(MultiNodeTemplate, crsResourcesCPI...)
 
-	return MultiNodeTemplate
+	return MultiNodeTemplate, nil
 }
 
-func MultiNodeTemplateWithKubeVIPIgnition() []runtime.Object {
+func MultiNodeTemplateWithKubeVIPIgnition() ([]runtime.Object, error) {
 	vsphereCluster := newVSphereCluster()
 	machineTemplate := newVSphereMachineTemplate(env.ClusterNameVar)
 
-	files := newKubeVIPFiles()
+	controlPlane := newIgnitionKubeadmControlplane(machineTemplate, nil)
+	kubevip.PatchControlPlane(&controlPlane)
+
 	// CABPK requires specifying file permissions in Ignition mode. Set a default value if not set.
-	for i := range files {
-		if files[i].Permissions == "" {
-			files[i].Permissions = "0400"
+	for i := range controlPlane.Spec.KubeadmConfigSpec.Files {
+		if controlPlane.Spec.KubeadmConfigSpec.Files[i].Permissions == "" {
+			controlPlane.Spec.KubeadmConfigSpec.Files[i].Permissions = "0400"
 		}
 	}
-	controlPlane := newIgnitionKubeadmControlplane(machineTemplate, files)
 
 	kubeadmJoinTemplate := newIgnitionKubeadmConfigTemplate()
 	cluster := newCluster(vsphereCluster, &controlPlane)
 	machineDeployment := newMachineDeployment(cluster, machineTemplate, kubeadmJoinTemplate)
 	clusterResourceSet := newClusterResourceSet(cluster)
-	crsResourcesCSI := crs.CreateCrsResourceObjectsCSI(&clusterResourceSet)
+	crsResourcesCSI, err := crs.CreateCrsResourceObjectsCSI(&clusterResourceSet)
+	if err != nil {
+		return nil, err
+	}
 	crsResourcesCPI := crs.CreateCrsResourceObjectsCPI(&clusterResourceSet)
 	identitySecret := newIdentitySecret()
 
@@ -166,19 +187,24 @@ func MultiNodeTemplateWithKubeVIPIgnition() []runtime.Object {
 	MultiNodeTemplate = append(MultiNodeTemplate, crsResourcesCSI...)
 	MultiNodeTemplate = append(MultiNodeTemplate, crsResourcesCPI...)
 
-	return MultiNodeTemplate
+	return MultiNodeTemplate, nil
 }
 
-func MultiNodeTemplateWithKubeVIPNodeIPAM() []runtime.Object {
+func MultiNodeTemplateWithKubeVIPNodeIPAM() ([]runtime.Object, error) {
 	vsphereCluster := newVSphereCluster()
 	cpMachineTemplate := newNodeIPAMVSphereMachineTemplate(env.ClusterNameVar)
 	workerMachineTemplate := newNodeIPAMVSphereMachineTemplate(fmt.Sprintf("%s-worker", env.ClusterNameVar))
-	controlPlane := newKubeadmControlplane(cpMachineTemplate, newKubeVIPFiles())
+	controlPlane := newKubeadmControlplane(cpMachineTemplate, nil)
+	kubevip.PatchControlPlane(&controlPlane)
+
 	kubeadmJoinTemplate := newKubeadmConfigTemplate(fmt.Sprintf("%s%s", env.ClusterNameVar, env.MachineDeploymentNameSuffix), true)
 	cluster := newCluster(vsphereCluster, &controlPlane)
 	machineDeployment := newMachineDeployment(cluster, workerMachineTemplate, kubeadmJoinTemplate)
 	clusterResourceSet := newClusterResourceSet(cluster)
-	crsResourcesCSI := crs.CreateCrsResourceObjectsCSI(&clusterResourceSet)
+	crsResourcesCSI, err := crs.CreateCrsResourceObjectsCSI(&clusterResourceSet)
+	if err != nil {
+		return nil, err
+	}
 	crsResourcesCPI := crs.CreateCrsResourceObjectsCPI(&clusterResourceSet)
 	identitySecret := newIdentitySecret()
 
@@ -197,5 +223,5 @@ func MultiNodeTemplateWithKubeVIPNodeIPAM() []runtime.Object {
 	MultiNodeTemplate = append(MultiNodeTemplate, crsResourcesCSI...)
 	MultiNodeTemplate = append(MultiNodeTemplate, crsResourcesCPI...)
 
-	return MultiNodeTemplate
+	return MultiNodeTemplate, nil
 }

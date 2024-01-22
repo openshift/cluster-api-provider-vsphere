@@ -17,7 +17,7 @@ limitations under the License.
 package controllers
 
 import (
-	goctx "context"
+	"context"
 	"fmt"
 	"strings"
 	"time"
@@ -32,41 +32,40 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	vmwarev1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/vmware/v1beta1"
-	helpers "sigs.k8s.io/cluster-api-provider-vsphere/test/helpers/vmware"
 )
 
 const (
 	testTargetNS        = "test-pvcsi-system"
-	testTargetSecret    = "test-pvcsi-secret" //nolint:gosec
+	testTargetSecret    = "test-pvcsi-secret" //nolint:gosec //Non-production code.
 	testSystemSvcAcctNs = "test-system-svc-acct-namespace"
 	testSystemSvcAcctCM = "test-system-svc-acct-cm"
 
-	testSecretToken = "ZXlKaGJHY2lPaUpTVXpJMU5pSXNJbXRwWkNJNklp" //nolint:gosec
+	testSecretToken = "ZXlKaGJHY2lPaUpTVXpJMU5pSXNJbXRwWkNJNklp" //nolint:gosec //Non-production code.
 )
 
 var truePointer = true
 
-func createTestResource(ctx goctx.Context, ctrlClient client.Client, obj client.Object) {
+func createTestResource(ctx context.Context, ctrlClient client.Client, obj client.Object) {
 	Expect(ctrlClient.Create(ctx, obj)).To(Succeed())
 }
 
-func deleteTestResource(ctx goctx.Context, ctrlClient client.Client, obj client.Object) {
+func deleteTestResource(ctx context.Context, ctrlClient client.Client, obj client.Object) {
 	Expect(ctrlClient.Delete(ctx, obj)).To(Succeed())
 }
 
-func createTargetSecretWithInvalidToken(ctx goctx.Context, guestClient client.Client, namespace string) {
+func createTargetSecretWithInvalidToken(ctx context.Context, guestClient client.Client, namespace string) {
 	secret := getTestTargetSecretWithInvalidToken(namespace)
 	Expect(guestClient.Create(ctx, secret)).To(Succeed())
 }
 
-func assertEventuallyExistsInNamespace(ctx goctx.Context, c client.Client, namespace, name string, obj client.Object) {
+func assertEventuallyExistsInNamespace(ctx context.Context, c client.Client, namespace, name string, obj client.Object) {
 	EventuallyWithOffset(2, func() error {
 		key := client.ObjectKey{Namespace: namespace, Name: name}
 		return c.Get(ctx, key, obj)
 	}).Should(Succeed())
 }
 
-func assertNoEntities(ctx goctx.Context, ctrlClient client.Client, namespace string) {
+func assertNoEntities(ctx context.Context, ctrlClient client.Client, namespace string) {
 	Consistently(func() int {
 		var serviceAccountList corev1.ServiceAccountList
 		err := ctrlClient.List(ctx, &serviceAccountList, client.InNamespace(namespace))
@@ -89,7 +88,7 @@ func assertNoEntities(ctx goctx.Context, ctrlClient client.Client, namespace str
 	}, time.Second*3).Should(Equal(0))
 }
 
-func assertServiceAccountAndUpdateSecret(ctx goctx.Context, ctrlClient client.Client, namespace, name string) {
+func assertServiceAccountAndUpdateSecret(ctx context.Context, ctrlClient client.Client, namespace, name string) {
 	svcAccount := &corev1.ServiceAccount{}
 	assertEventuallyExistsInNamespace(ctx, ctrlClient, namespace, name, svcAccount)
 	secret := &corev1.Secret{}
@@ -102,7 +101,7 @@ func assertServiceAccountAndUpdateSecret(ctx goctx.Context, ctrlClient client.Cl
 	Expect(ctrlClient.Update(ctx, secret)).To(Succeed())
 }
 
-func assertTargetSecret(ctx goctx.Context, guestClient client.Client, namespace, name string) { //nolint
+func assertTargetSecret(ctx context.Context, guestClient client.Client, namespace, name string) {
 	secret := &corev1.Secret{}
 	assertEventuallyExistsInNamespace(ctx, guestClient, namespace, name, secret)
 	EventuallyWithOffset(2, func() []byte {
@@ -112,7 +111,7 @@ func assertTargetSecret(ctx goctx.Context, guestClient client.Client, namespace,
 	}).Should(Equal([]byte(testSecretToken)))
 }
 
-func assertTargetNamespace(ctx *helpers.UnitTestContextForController, guestClient client.Client, namespaceName string, isExist bool) {
+func assertTargetNamespace(ctx context.Context, guestClient client.Client, namespaceName string, isExist bool) {
 	namespace := &corev1.Namespace{}
 	err := guestClient.Get(ctx, client.ObjectKey{Name: namespaceName}, namespace)
 	if isExist {
@@ -122,14 +121,14 @@ func assertTargetNamespace(ctx *helpers.UnitTestContextForController, guestClien
 	}
 }
 
-func assertRoleWithGetPVC(ctx *helpers.UnitTestContextForController, ctrlClient client.Client, namespace, name string) {
+func assertRoleWithGetPVC(ctx context.Context, ctrlClient client.Client, namespace, name string) {
 	var roleList rbacv1.RoleList
 	opts := &client.ListOptions{
 		Namespace: namespace,
 	}
 	err := ctrlClient.List(ctx, &roleList, opts)
 	Expect(err).ShouldNot(HaveOccurred())
-	Expect(len(roleList.Items)).To(Equal(1))
+	Expect(roleList.Items).To(HaveLen(1))
 	Expect(roleList.Items[0].Name).To(Equal(name))
 	Expect(roleList.Items[0].Rules).To(Equal([]rbacv1.PolicyRule{
 		{
@@ -140,14 +139,14 @@ func assertRoleWithGetPVC(ctx *helpers.UnitTestContextForController, ctrlClient 
 	}))
 }
 
-func assertRoleBinding(_ *helpers.UnitTestContextForController, ctrlClient client.Client, namespace, name string) {
+func assertRoleBinding(ctx context.Context, ctrlClient client.Client, namespace, name string) {
 	var roleBindingList rbacv1.RoleBindingList
 	opts := &client.ListOptions{
 		Namespace: namespace,
 	}
-	err := ctrlClient.List(goctx.TODO(), &roleBindingList, opts)
+	err := ctrlClient.List(ctx, &roleBindingList, opts)
 	Expect(err).ShouldNot(HaveOccurred())
-	Expect(len(roleBindingList.Items)).To(Equal(1))
+	Expect(roleBindingList.Items).To(HaveLen(1))
 	Expect(roleBindingList.Items[0].Name).To(Equal(name))
 	Expect(roleBindingList.Items[0].RoleRef).To(Equal(rbacv1.RoleRef{
 		Name:     name,
@@ -157,7 +156,7 @@ func assertRoleBinding(_ *helpers.UnitTestContextForController, ctrlClient clien
 }
 
 // assertProviderServiceAccountsCondition asserts the condition on the ProviderServiceAccount CR.
-func assertProviderServiceAccountsCondition(vCluster *vmwarev1.VSphereCluster, status corev1.ConditionStatus, message string, reason string, severity clusterv1.ConditionSeverity) { //nolint
+func assertProviderServiceAccountsCondition(vCluster *vmwarev1.VSphereCluster, status corev1.ConditionStatus, message string, reason string, severity clusterv1.ConditionSeverity) {
 	c := conditions.Get(vCluster, vmwarev1.ProviderServiceAccountsReadyCondition)
 	Expect(c).NotTo(BeNil())
 	Expect(c.Status).To(Equal(status))

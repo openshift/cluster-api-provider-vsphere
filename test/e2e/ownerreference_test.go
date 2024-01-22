@@ -28,7 +28,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/utils/pointer"
+	"k8s.io/utils/ptr"
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	bootstrapv1 "sigs.k8s.io/cluster-api/bootstrap/kubeadm/api/v1beta1"
 	controlplanev1 "sigs.k8s.io/cluster-api/controlplane/kubeadm/api/v1beta1"
@@ -54,7 +54,7 @@ var _ = Describe("OwnerReference checks with FailureDomains and ClusterIdentity"
 			BootstrapClusterProxy: bootstrapClusterProxy,
 			ArtifactFolder:        artifactFolder,
 			SkipCleanup:           skipCleanup,
-			Flavor:                pointer.String("ownerreferences"),
+			Flavor:                ptr.To("ownerreferences"),
 			PostMachinesProvisioned: func(proxy framework.ClusterProxy, namespace, clusterName string) {
 				// Inject a client to use for checkClusterIdentitySecretOwnerRef
 				checkClusterIdentitySecretOwnerRef(ctx, proxy.GetClient())
@@ -122,8 +122,7 @@ var (
 			return framework.HasExactOwners(owners, clusterClassOwner)
 		},
 		"VSphereMachine": func(owners []metav1.OwnerReference) error {
-			// The vSphereCluster takes ownership of all vSphereMachines in addition to the core Machine.
-			return framework.HasExactOwners(owners, vSphereClusterOwner, machineController)
+			return framework.HasExactOwners(owners, machineController)
 		},
 		"VSphereMachineTemplate": func(owners []metav1.OwnerReference) error {
 			// The vSphereMachineTemplate can be owned by the Cluster or the ClusterClass.
@@ -158,15 +157,15 @@ var (
 	// CAPI owners.
 	clusterClassOwner       = metav1.OwnerReference{Kind: "ClusterClass", APIVersion: clusterv1.GroupVersion.String()}
 	clusterOwner            = metav1.OwnerReference{Kind: "Cluster", APIVersion: clusterv1.GroupVersion.String()}
-	clusterController       = metav1.OwnerReference{Kind: "Cluster", APIVersion: clusterv1.GroupVersion.String(), Controller: pointer.Bool(true)}
-	machineController       = metav1.OwnerReference{Kind: "Machine", APIVersion: clusterv1.GroupVersion.String(), Controller: pointer.Bool(true)}
+	clusterController       = metav1.OwnerReference{Kind: "Cluster", APIVersion: clusterv1.GroupVersion.String(), Controller: ptr.To(true)}
+	machineController       = metav1.OwnerReference{Kind: "Machine", APIVersion: clusterv1.GroupVersion.String(), Controller: ptr.To(true)}
 	clusterResourceSetOwner = metav1.OwnerReference{Kind: "ClusterResourceSet", APIVersion: addonsv1.GroupVersion.String()}
 
 	// KCP owner.
-	kubeadmControlPlaneController = metav1.OwnerReference{Kind: "KubeadmControlPlane", APIVersion: controlplanev1.GroupVersion.String(), Controller: pointer.Bool(true)}
+	kubeadmControlPlaneController = metav1.OwnerReference{Kind: "KubeadmControlPlane", APIVersion: controlplanev1.GroupVersion.String(), Controller: ptr.To(true)}
 
 	// CAPBK owner.
-	kubeadmConfigController = metav1.OwnerReference{Kind: "KubeadmConfig", APIVersion: bootstrapv1.GroupVersion.String(), Controller: pointer.Bool(true)}
+	kubeadmConfigController = metav1.OwnerReference{Kind: "KubeadmConfig", APIVersion: bootstrapv1.GroupVersion.String(), Controller: ptr.To(true)}
 )
 
 // The following names are hardcoded in templates to make cleanup easier.
@@ -265,6 +264,7 @@ func forcePeriodicReconcile(ctx context.Context, c ctrlclient.Client, namespace 
 	ticker := time.NewTicker(20 * time.Second)
 	stopTimer := time.NewTimer(5 * time.Minute)
 	go func() {
+		defer GinkgoRecover()
 		for {
 			select {
 			case <-ticker.C:

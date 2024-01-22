@@ -17,8 +17,9 @@ limitations under the License.
 package test
 
 import (
-	goctx "context"
+	"context"
 	"encoding/json"
+	"os"
 	"os/exec"
 	"path"
 	"path/filepath"
@@ -27,6 +28,7 @@ import (
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
+	"github.com/onsi/ginkgo/v2/types"
 	. "github.com/onsi/gomega"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/client-go/kubernetes/scheme"
@@ -43,7 +45,7 @@ import (
 var (
 	testEnv       *envtest.Environment
 	restConfig    *rest.Config
-	ctx, cancel   = goctx.WithCancel(goctx.Background())
+	ctx, cancel   = context.WithCancel(context.Background())
 	clusterAPIDir = findModuleDir("sigs.k8s.io/cluster-api")
 )
 
@@ -57,7 +59,11 @@ func init() {
 func TestAPIs(t *testing.T) {
 	RegisterFailHandler(Fail)
 
-	RunSpecs(t, "VMware Controllers Suite")
+	reporterConfig := types.NewDefaultReporterConfig()
+	if artifactFolder, exists := os.LookupEnv("ARTIFACTS"); exists {
+		reporterConfig.JUnitReport = filepath.Join(artifactFolder, "junit.ginkgo.controllers_vmware_test.xml")
+	}
+	RunSpecs(t, "VMware Controller Suite", reporterConfig)
 }
 
 func getTestEnv() (*envtest.Environment, *rest.Config) {
@@ -65,7 +71,8 @@ func getTestEnv() (*envtest.Environment, *rest.Config) {
 	utilruntime.Must(vmwarev1.AddToScheme(scheme.Scheme))
 
 	// Get the root of the current file to use in CRD paths.
-	_, filename, _, _ := goruntime.Caller(0) //nolint
+	_, filename, _, ok := goruntime.Caller(0)
+	Expect(ok).To(BeTrue(), "Failed to get information for current file from runtime")
 	root := path.Join(path.Dir(filename), "..", "..", "..")
 
 	localTestEnv := &envtest.Environment{

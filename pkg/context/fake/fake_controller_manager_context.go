@@ -17,12 +17,9 @@ limitations under the License.
 package fake
 
 import (
-	goctx "context"
-
 	vmoprv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha1"
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
-	clientrecord "k8s.io/client-go/tools/record"
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	controlplanev1 "sigs.k8s.io/cluster-api/controlplane/kubeadm/api/v1beta1"
 	ipamv1 "sigs.k8s.io/cluster-api/exp/ipam/api/v1alpha1"
@@ -32,15 +29,14 @@ import (
 
 	infrav1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/v1beta1"
 	vmwarev1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/vmware/v1beta1"
-	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/context"
-	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/record"
+	capvcontext "sigs.k8s.io/cluster-api-provider-vsphere/pkg/context"
 )
 
 // NewControllerManagerContext returns a fake ControllerManagerContext for unit
 // testing reconcilers and webhooks with a fake client. You can choose to
 // initialize it with a slice of runtime.Object.
 
-func NewControllerManagerContext(initObjects ...client.Object) *context.ControllerManagerContext {
+func NewControllerManagerContext(initObjects ...client.Object) *capvcontext.ControllerManagerContext {
 	scheme := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(scheme)
 	_ = clusterv1.AddToScheme(scheme)
@@ -55,8 +51,7 @@ func NewControllerManagerContext(initObjects ...client.Object) *context.Controll
 		&vmwarev1.VSphereCluster{},
 	).WithObjects(initObjects...).Build()
 
-	return &context.ControllerManagerContext{
-		Context:                 goctx.Background(),
+	return &capvcontext.ControllerManagerContext{
 		Client:                  clientWithObjects,
 		Logger:                  ctrllog.Log.WithName(ControllerManagerName),
 		Scheme:                  scheme,
@@ -64,6 +59,5 @@ func NewControllerManagerContext(initObjects ...client.Object) *context.Controll
 		Name:                    ControllerManagerName,
 		LeaderElectionNamespace: LeaderElectionNamespace,
 		LeaderElectionID:        LeaderElectionID,
-		Recorder:                record.New(clientrecord.NewFakeRecorder(1024)),
 	}
 }

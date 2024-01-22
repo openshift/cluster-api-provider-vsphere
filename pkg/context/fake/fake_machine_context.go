@@ -17,36 +17,37 @@ limitations under the License.
 package fake
 
 import (
+	"context"
+
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 
 	infrav1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/v1beta1"
-	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/context"
+	capvcontext "sigs.k8s.io/cluster-api-provider-vsphere/pkg/context"
 )
 
 // NewMachineContext returns a fake VIMMachineContext for unit testing
 // reconcilers with a fake client.
-func NewMachineContext(ctx *context.ClusterContext) *context.VIMMachineContext {
+func NewMachineContext(ctx context.Context, clusterCtx *capvcontext.ClusterContext, controllerManagerCtx *capvcontext.ControllerManagerContext) *capvcontext.VIMMachineContext {
 	// Create the machine resources.
 	machine := newMachineV1a4()
 	vsphereMachine := newVSphereMachine(machine)
 
 	// Add the cluster resources to the fake cluster client.
-	if err := ctx.Client.Create(ctx, &machine); err != nil {
+	if err := controllerManagerCtx.Client.Create(ctx, &machine); err != nil {
 		panic(err)
 	}
-	if err := ctx.Client.Create(ctx, &vsphereMachine); err != nil {
+	if err := controllerManagerCtx.Client.Create(ctx, &vsphereMachine); err != nil {
 		panic(err)
 	}
 
-	return &context.VIMMachineContext{
-		BaseMachineContext: &context.BaseMachineContext{
-			ControllerContext: ctx.ControllerContext,
-			Cluster:           ctx.Cluster,
-			Machine:           &machine,
-			Logger:            ctx.Logger.WithName(vsphereMachine.Name),
+	return &capvcontext.VIMMachineContext{
+		BaseMachineContext: &capvcontext.BaseMachineContext{
+			ControllerManagerContext: controllerManagerCtx,
+			Cluster:                  clusterCtx.Cluster,
+			Machine:                  &machine,
 		},
-		VSphereCluster: ctx.VSphereCluster,
+		VSphereCluster: clusterCtx.VSphereCluster,
 		VSphereMachine: &vsphereMachine,
 	}
 }
@@ -75,8 +76,8 @@ func newVSphereMachine(owner clusterv1.Machine) infrav1.VSphereMachine {
 			UID:       VSphereMachineUUID,
 			OwnerReferences: []metav1.OwnerReference{
 				{
-					APIVersion:         owner.APIVersion,
-					Kind:               owner.Kind,
+					APIVersion:         clusterv1.GroupVersion.String(),
+					Kind:               "Machine",
 					Name:               owner.Name,
 					UID:                owner.UID,
 					BlockOwnerDeletion: &boolTrue,

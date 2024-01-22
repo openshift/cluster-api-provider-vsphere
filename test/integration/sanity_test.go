@@ -25,10 +25,10 @@ import (
 	vmoprv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/utils/pointer"
+	"k8s.io/utils/ptr"
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 
-	infrav1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/vmware/v1beta1"
+	vmwarev1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/vmware/v1beta1"
 )
 
 // The purpose of this test is to start up a CAPI controller against a real API
@@ -70,8 +70,8 @@ var _ = Describe("Sanity tests", func() {
 		// and that the VSphereCluster has an OwnerRef that points to the CAPI Cluster.
 		cluster := assertEventuallyExists(clustersResource, mf.ClusterComponents.Cluster.Name, mf.ClusterComponents.Cluster.Namespace, nil)
 		clusterOwnerRef := toOwnerRef(cluster)
-		clusterOwnerRef.Controller = pointer.Bool(true)
-		clusterOwnerRef.BlockOwnerDeletion = pointer.Bool(true)
+		clusterOwnerRef.Controller = ptr.To(true)
+		clusterOwnerRef.BlockOwnerDeletion = ptr.To(true)
 		assertEventuallyExists(vsphereclustersResource, mf.ClusterComponents.Cluster.Name, mf.ClusterComponents.Cluster.Namespace, clusterOwnerRef)
 
 		// CREATE the CAPI Machine, VSphereMachine, and KubeadmConfig resources for
@@ -86,8 +86,8 @@ var _ = Describe("Sanity tests", func() {
 		// the CAPI Machine.
 		machine := assertEventuallyExists(machinesResource, controlPlane.Machine.Name, controlPlane.Machine.Namespace, nil)
 		machineOwnerRef := toOwnerRef(machine)
-		machineOwnerRef.Controller = pointer.Bool(true)
-		machineOwnerRef.BlockOwnerDeletion = pointer.Bool(true)
+		machineOwnerRef.Controller = ptr.To(true)
+		machineOwnerRef.BlockOwnerDeletion = ptr.To(true)
 		assertEventuallyExists(vspheremachinesResource, controlPlane.Machine.Name, controlPlane.Machine.Namespace, machineOwnerRef)
 		assertEventuallyExists(kubeadmconfigResources, controlPlane.Machine.Name, controlPlane.Machine.Namespace, machineOwnerRef)
 	})
@@ -132,7 +132,7 @@ var _ = Describe("Sanity tests", func() {
 			getResource(machinesResource, controlPlane.Machine.Name, controlPlane.Machine.Namespace, machine)
 
 			// GET the associated VSphereMachine.
-			vsphereMachine := &infrav1.VSphereMachine{}
+			vsphereMachine := &vmwarev1.VSphereMachine{}
 			getResource(vspheremachinesResource, controlPlane.Machine.Name, controlPlane.Machine.Namespace, vsphereMachine)
 
 			// ASSERT the VirtualMachine and bootstrap data ConfigMap resources

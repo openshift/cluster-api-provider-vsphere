@@ -26,12 +26,12 @@ import (
 	. "github.com/onsi/gomega"
 	"github.com/onsi/gomega/gbytes"
 	"github.com/vmware/govmomi/simulator"
-	"k8s.io/utils/pointer"
+	"k8s.io/utils/ptr"
 
 	infrav1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/v1beta1"
+	"sigs.k8s.io/cluster-api-provider-vsphere/internal/test/helpers/vcsim"
 	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/services/govmomi/find"
 	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/session"
-	"sigs.k8s.io/cluster-api-provider-vsphere/test/helpers/vcsim"
 )
 
 const TestHostGroup = "host-group-alpha"
@@ -56,7 +56,7 @@ func TestObjectFunc(t *testing.T) {
 
 	topology := infrav1.Topology{
 		Datacenter:     defaultDatacenter.Name(),
-		ComputeCluster: pointer.String(defaultDatacenter.Name() + "_C0"),
+		ComputeCluster: ptr.To(defaultDatacenter.Name() + "_C0"),
 		Hosts:          &infrav1.FailureDomainHosts{HostGroupName: TestHostGroup},
 	}
 

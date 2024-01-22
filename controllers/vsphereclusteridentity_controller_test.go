@@ -17,8 +17,6 @@ limitations under the License.
 package controllers
 
 import (
-	goctx "context"
-
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
@@ -31,8 +29,7 @@ import (
 )
 
 var _ = Describe("VSphereClusterIdentity Reconciler", func() {
-	ctx := goctx.Background()
-	controllerNamespace := testEnv.Manager.GetContext().Namespace
+	controllerNamespace := testEnv.Manager.GetControllerManagerContext().Namespace
 
 	Context("Reconcile Normal", func() {
 		It("should set the ownerRef on a secret and set Ready condition", func() {
@@ -160,7 +157,7 @@ var _ = Describe("VSphereClusterIdentity Reconciler", func() {
 					return false
 				}
 
-				if i.Status.Ready == false && conditions.GetReason(i, infrav1.CredentialsAvailableCondidtion) == infrav1.SecretAlreadyInUseReason {
+				if !i.Status.Ready && conditions.GetReason(i, infrav1.CredentialsAvailableCondidtion) == infrav1.SecretAlreadyInUseReason {
 					return true
 				}
 				return false
@@ -184,7 +181,7 @@ var _ = Describe("VSphereClusterIdentity Reconciler", func() {
 					return false
 				}
 
-				if i.Status.Ready == false && conditions.GetReason(i, infrav1.CredentialsAvailableCondidtion) == infrav1.SecretNotAvailableReason {
+				if !i.Status.Ready && conditions.GetReason(i, infrav1.CredentialsAvailableCondidtion) == infrav1.SecretNotAvailableReason {
 					return true
 				}
 				return false

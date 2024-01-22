@@ -16,7 +16,6 @@ limitations under the License.
 
 package vcenter
 
-//nolint:all
 import (
 	ctx "context"
 	"crypto/tls"
@@ -24,13 +23,11 @@ import (
 
 	"github.com/vmware/govmomi/object"
 	"github.com/vmware/govmomi/simulator"
-
-	// run init func to register the tagging API endpoints.
-	_ "github.com/vmware/govmomi/vapi/simulator"
+	_ "github.com/vmware/govmomi/vapi/simulator" // run init func to register the tagging API endpoints.
 	"github.com/vmware/govmomi/vim25/types"
 
-	"sigs.k8s.io/cluster-api-provider-vsphere/apis/v1beta1"
-	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/context"
+	infrav1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/v1beta1"
+	capvcontext "sigs.k8s.io/cluster-api-provider-vsphere/pkg/context"
 	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/session"
 )
 
@@ -40,7 +37,7 @@ func TestGetDiskSpec(t *testing.T) {
 	model, session, server := initSimulator(t)
 	t.Cleanup(model.Remove)
 	t.Cleanup(server.Close)
-	vm := simulator.Map.Any("VirtualMachine").(*simulator.VirtualMachine) //nolint:forcetypeassert
+	vm := simulator.Map.Any("VirtualMachine").(*simulator.VirtualMachine)
 	machine := object.NewVirtualMachine(session.Client.Client, vm.Reference())
 
 	devices, err := machine.Device(ctx.TODO())
@@ -51,7 +48,7 @@ func TestGetDiskSpec(t *testing.T) {
 	if len(defaultDisks) < 1 {
 		t.Fatal("Unable to find attached disk for resize")
 	}
-	disk := defaultDisks[0].(*types.VirtualDisk)            //nolint:forcetypeassert
+	disk := defaultDisks[0].(*types.VirtualDisk)
 	disk.CapacityInKB = int64(defaultSizeGiB) * 1024 * 1024 // GiB
 	if err := machine.EditDevice(ctx.TODO(), disk); err != nil {
 		t.Fatalf("Can't resize disk for specified size")
@@ -114,23 +111,18 @@ func TestGetDiskSpec(t *testing.T) {
 	for _, test := range testCases {
 		tc := test
 		t.Run(tc.name, func(t *testing.T) {
-			cloneSpec := v1beta1.VirtualMachineCloneSpec{
+			cloneSpec := infrav1.VirtualMachineCloneSpec{
 				DiskGiB:            tc.cloneDiskSize,
 				AdditionalDisksGiB: tc.additionalCloneDiskSizes,
 			}
-			vsphereVM := &v1beta1.VSphereVM{
-				Spec: v1beta1.VSphereVMSpec{
+			vsphereVM := &infrav1.VSphereVM{
+				Spec: infrav1.VSphereVMSpec{
 					VirtualMachineCloneSpec: cloneSpec,
 				},
 			}
-			vmContext := &context.VMContext{VSphereVM: vsphereVM}
+			vmContext := &capvcontext.VMContext{VSphereVM: vsphereVM}
 			devices, err := getDiskSpec(vmContext, tc.disks)
-			switch {
-			case tc.err != "" && err == nil:
-				fallthrough
-			case tc.err == "" && err != nil:
-				fallthrough
-			case err != nil && tc.err != err.Error():
+			if (tc.err != "" && err == nil) || (tc.err == "" && err != nil) || (err != nil && tc.err != err.Error()) {
 				t.Fatalf("Expected to get '%v' error from getDiskSpec, got: '%v'", tc.err, err)
 			}
 			if deviceFound := len(devices) != 0; tc.expectDevice != deviceFound {

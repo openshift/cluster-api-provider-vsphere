@@ -18,11 +18,11 @@ package e2e
 
 import (
 	. "github.com/onsi/ginkgo/v2"
-	"k8s.io/utils/pointer"
+	"k8s.io/utils/ptr"
 	capi_e2e "sigs.k8s.io/cluster-api/test/e2e"
 )
 
-var _ = Describe("Cluster Creation using Cluster API quick-start test [PR-Blocking]", func() {
+var _ = Describe("Cluster Creation using Cluster API quick-start test", func() {
 	capi_e2e.QuickStartSpec(ctx, func() capi_e2e.QuickStartSpecInput {
 		return capi_e2e.QuickStartSpecInput{
 			E2EConfig:             e2eConfig,
@@ -42,7 +42,7 @@ var _ = Describe("ClusterClass Creation using Cluster API quick-start test [PR-B
 			BootstrapClusterProxy: bootstrapClusterProxy,
 			ArtifactFolder:        artifactFolder,
 			SkipCleanup:           skipCleanup,
-			Flavor:                pointer.String("topology"),
+			Flavor:                ptr.To("topology"),
 		}
 	})
 })
@@ -55,7 +55,7 @@ var _ = Describe("Cluster creation with [Ignition] bootstrap [PR-Blocking]", fun
 			BootstrapClusterProxy: bootstrapClusterProxy,
 			ArtifactFolder:        artifactFolder,
 			SkipCleanup:           skipCleanup,
-			Flavor:                pointer.String("ignition"),
+			Flavor:                ptr.To("ignition"),
 		}
 	})
 })

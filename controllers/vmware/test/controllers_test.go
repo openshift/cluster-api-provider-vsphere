@@ -17,9 +17,8 @@ limitations under the License.
 package test
 
 import (
-	goctx "context"
+	"context"
 	"fmt"
-	"os"
 	"reflect"
 	"time"
 
@@ -35,11 +34,12 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	ctrlmgr "sigs.k8s.io/controller-runtime/pkg/manager"
+	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
 	infrav1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/v1beta1"
 	vmwarev1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/vmware/v1beta1"
 	"sigs.k8s.io/cluster-api-provider-vsphere/controllers"
-	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/context"
+	capvcontext "sigs.k8s.io/cluster-api-provider-vsphere/pkg/context"
 	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/manager"
 )
 
@@ -135,8 +135,8 @@ func deployCluster(namespace string, k8sClient client.Client) (client.ObjectKey,
 	infraCluster := newInfraCluster(namespace, cluster)
 	infraCluster.SetOwnerReferences([]metav1.OwnerReference{
 		{
-			APIVersion: cluster.APIVersion,
-			Kind:       cluster.Kind,
+			APIVersion: clusterv1.GroupVersion.String(),
+			Kind:       "Cluster",
 			Name:       cluster.Name,
 			UID:        cluster.UID,
 		},
@@ -162,8 +162,8 @@ func deployCAPIMachine(namespace string, cluster *clusterv1.Cluster, k8sClient c
 			},
 			OwnerReferences: []metav1.OwnerReference{
 				{
-					APIVersion: cluster.APIVersion,
-					Kind:       cluster.Kind,
+					APIVersion: clusterv1.GroupVersion.String(),
+					Kind:       "Cluster",
 					Name:       cluster.Name,
 					UID:        cluster.UID,
 				},
@@ -184,8 +184,8 @@ func deployInfraMachine(namespace string, machine *clusterv1.Machine, finalizers
 	infraMachine := newInfraMachine(namespace, machine)
 	infraMachine.SetOwnerReferences([]metav1.OwnerReference{
 		{
-			APIVersion: machine.APIVersion,
-			Kind:       machine.Kind,
+			APIVersion: clusterv1.GroupVersion.String(),
+			Kind:       "Machine",
 			Name:       machine.Name,
 			UID:        machine.UID,
 		},
@@ -208,16 +208,6 @@ func updateClusterInfraRef(cluster *clusterv1.Cluster, infraCluster client.Objec
 }
 
 func getManager(cfg *rest.Config, networkProvider string) manager.Manager {
-	contentFmt := `username: '%s'
-	password: '%s'
-	`
-	tmpFile, err := os.CreateTemp("", "creds")
-	Expect(err).NotTo(HaveOccurred())
-
-	content := fmt.Sprintf(contentFmt, cfg.Username, cfg.Password)
-	_, err = tmpFile.Write([]byte(content))
-	Expect(err).NotTo(HaveOccurred())
-
 	opts := manager.Options{
 		Options: ctrlmgr.Options{
 			Scheme: scheme.Scheme,
@@ -226,35 +216,36 @@ func getManager(cfg *rest.Config, networkProvider string) manager.Manager {
 				opts.SyncPeriod = &syncPeriod
 				return cache.New(config, opts)
 			},
-			MetricsBindAddress: "0",
+			Metrics: metricsserver.Options{
+				BindAddress: "0",
+			},
 		},
 		KubeConfig:      cfg,
 		NetworkProvider: networkProvider,
-		CredentialsFile: tmpFile.Name(),
 	}
 
 	controllerOpts := controller.Options{MaxConcurrentReconciles: 10}
 
-	opts.AddToManager = func(ctx *context.ControllerManagerContext, mgr ctrlmgr.Manager) error {
-		if err := controllers.AddClusterControllerToManager(ctx, mgr, &vmwarev1.VSphereCluster{}, controllerOpts); err != nil {
+	opts.AddToManager = func(ctx context.Context, controllerCtx *capvcontext.ControllerManagerContext, mgr ctrlmgr.Manager) error {
+		if err := controllers.AddClusterControllerToManager(ctx, controllerCtx, mgr, true, controllerOpts); err != nil {
 			return err
 		}
 
-		return controllers.AddMachineControllerToManager(ctx, mgr, &vmwarev1.VSphereMachine{}, controllerOpts)
+		return controllers.AddMachineControllerToManager(ctx, controllerCtx, mgr, true, controllerOpts)
 	}
 
-	mgr, err := manager.New(opts)
+	mgr, err := manager.New(ctx, opts)
 	Expect(err).NotTo(HaveOccurred())
 	return mgr
 }
 
-func initManagerAndBuildClient(networkProvider string) (client.Client, goctx.CancelFunc) {
+func initManagerAndBuildClient(networkProvider string) (client.Client, context.CancelFunc) {
 	By("setting up a new manager")
 	mgr := getManager(restConfig, networkProvider)
 	k8sClient := mgr.GetClient()
 
 	By("starting the manager")
-	managerCtx, managerCancel := goctx.WithCancel(ctx)
+	managerCtx, managerCancel := context.WithCancel(ctx)
 
 	go func() {
 		managerRuntimeError := mgr.Start(managerCtx)
@@ -266,7 +257,7 @@ func initManagerAndBuildClient(networkProvider string) (client.Client, goctx.Can
 	return k8sClient, managerCancel
 }
 
-func prepareClient(isLoadBalanced bool) (cli client.Client, cancelation goctx.CancelFunc) {
+func prepareClient(isLoadBalanced bool) (cli client.Client, cancelation context.CancelFunc) {
 	networkProvider := ""
 	if isLoadBalanced {
 		networkProvider = manager.DummyLBNetworkProvider
@@ -285,7 +276,7 @@ var (
 var _ = Describe("Conformance tests", func() {
 	var (
 		k8sClient     client.Client
-		managerCancel goctx.CancelFunc
+		managerCancel context.CancelFunc
 		key           *client.ObjectKey
 		obj           *client.Object
 	)
@@ -336,7 +327,7 @@ var _ = Describe("Conformance tests", func() {
 var _ = Describe("Reconciliation tests", func() {
 	var (
 		k8sClient     client.Client
-		managerCancel goctx.CancelFunc
+		managerCancel context.CancelFunc
 	)
 
 	// assertEventuallyFinalizers is used to assert an object eventually has one
@@ -355,7 +346,7 @@ var _ = Describe("Reconciliation tests", func() {
 			if err := k8sClient.Get(ctx, key, obj); err != nil {
 				return "", err
 			}
-			vSphereMachine := obj.(*vmwarev1.VSphereMachine) //nolint:forcetypeassert
+			vSphereMachine := obj.(*vmwarev1.VSphereMachine)
 			return vSphereMachine.Status.VMStatus, nil
 		}, time.Second*30).Should(Equal(expectedState))
 	}
@@ -365,7 +356,7 @@ var _ = Describe("Reconciliation tests", func() {
 			if err := k8sClient.Get(ctx, key, obj); err != nil {
 				return "", err
 			}
-			vsphereCluster := obj.(*vmwarev1.VSphereCluster) //nolint:forcetypeassert
+			vsphereCluster := obj.(*vmwarev1.VSphereCluster)
 			return vsphereCluster.Spec.ControlPlaneEndpoint.Host, nil
 		}, time.Second*30).Should(Equal(expectedIP))
 	}

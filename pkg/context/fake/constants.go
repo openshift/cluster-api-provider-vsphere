@@ -14,6 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
+// Package fake contains fake context objects for testing.
 package fake
 
 const (
@@ -41,17 +42,16 @@ const (
 	// ClusterUUID is the UID of the fake CAPI cluster.
 	ClusterUUID = "00000000-0000-0000-0000-000000000002"
 
+	//TODO:(killianmuldoon) assess whether the versioned constants e.g. Clusterv1a2Name are needed.
+
 	// Clusterv1a2Name is the name of the fake CAPI v1alpha3 Cluster resource.
 	Clusterv1a2Name = "fake-cluster"
 
 	// Clusterv1a2UUID is the UID of the fake CAPI v1alpha3 Cluster resource.
 	Clusterv1a2UUID = "00000000-0000-0000-0000-000000000000"
 
-	// Machinev1a2Name is the name of the fake CAPI v1alpha3 Machine resource.
-	Machinev1a2Name = "fake-machine"
-
-	// Machinev1a2UUID is the UID of the fake CAPI v1alpha3 Machine resource.
-	Machinev1a2UUID = "00000000-0000-0000-0000-000000000001"
+	// InfrastructureRefName is the name of the InfrastructureRef in fake CAPI Cluster resource.
+	InfrastructureRefName = "fake-cluster-infrastructure-ref"
 
 	VSphereClusterName = "fake-vsphere-cluster"
 
