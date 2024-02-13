@@ -11,9 +11,9 @@ FROM registry.ci.openshift.org/ocp/4.16:base-rhel9
 
 LABEL description="Cluster API Provider vSphere Controller Manager"
 
-COPY --from=builder /build/manager /bin/manager
+COPY --from=builder /build/manager /manager
 COPY --from=builder /build/openshift/manifests /manifests
 
-ENTRYPOINT [ "/bin/manager" ]
+ENTRYPOINT [ "/manager" ]
 
 LABEL io.openshift.release.operator true
