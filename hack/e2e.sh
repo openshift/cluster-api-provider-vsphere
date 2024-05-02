@@ -21,6 +21,16 @@ set -o pipefail # any non-zero exit code in a piped command causes the pipeline 
 export PATH=${PWD}/hack/tools/bin:${PATH}
 REPO_ROOT=$(git rev-parse --show-toplevel)
 
+# In CI, ARTIFACTS is set to a different directory. This stores the value of
+# ARTIFACTS i1n ORIGINAL_ARTIFACTS and replaces ARTIFACTS by a temporary directory
+# which gets cleaned up from credentials at the end of the test.
+export ORIGINAL_ARTIFACTS=""
+export ARTIFACTS="${ARTIFACTS:-${REPO_ROOT}/_artifacts}"
+if [[ "${ARTIFACTS}" != "${REPO_ROOT}/_artifacts" ]]; then
+  ORIGINAL_ARTIFACTS="${ARTIFACTS}"
+  ARTIFACTS=$(mktemp -d)
+fi
+
 # shellcheck source=./hack/ensure-kubectl.sh
 source "${REPO_ROOT}/hack/ensure-kubectl.sh"
 
@@ -36,6 +46,17 @@ on_exit() {
   # logout of gcloud
   if [ "${AUTH}" ]; then
     gcloud auth revoke
+  fi
+
+  # Cleanup VSPHERE_PASSWORD from temporary artifacts directory.
+  if [[ "${ORIGINAL_ARTIFACTS}" != "" ]]; then
+    grep -r -l -e "${VSPHERE_PASSWORD}" "${ARTIFACTS}" | while IFS= read -r file
+    do
+      echo "Cleaning up VSPHERE_PASSWORD from file ${file}"
+      sed -i "s/${VSPHERE_PASSWORD}/REDACTED/g" "${file}"
+    done
+    # Move all artifacts to the original artifacts location.
+    mv "${ARTIFACTS}"/* "${ORIGINAL_ARTIFACTS}/"
   fi
 }
 
@@ -65,7 +86,7 @@ export GC_KIND="false"
 # Run the vpn client in container
 docker run --rm -d --name vpn -v "${HOME}/.openvpn/:${HOME}/.openvpn/" \
   -w "${HOME}/.openvpn/" --cap-add=NET_ADMIN --net=host --device=/dev/net/tun \
-  gcr.io/cluster-api-provider-vsphere/extra/openvpn:latest
+  gcr.io/k8s-staging-capi-vsphere/extra/openvpn:latest
 
 # Tail the vpn logs
 docker logs vpn
@@ -121,16 +142,19 @@ WORKLOAD_CONTROL_PLANE_ENDPOINT_IP=$(claim_ip "${WORKLOAD_IPCLAIM_NAME}")
 export WORKLOAD_CONTROL_PLANE_ENDPOINT_IP
 echo "Acquired Workload Cluster Control Plane IP: $WORKLOAD_CONTROL_PLANE_ENDPOINT_IP"
 
-# save the docker image locally
-make e2e-image
-mkdir -p /tmp/images
-docker save gcr.io/k8s-staging-cluster-api/capv-manager:e2e -o "$DOCKER_IMAGE_TAR"
+# Only build and upload the image if we run tests which require it to save some $.
+if [[ -z "${GINKGO_FOCUS+x}" ]]; then
+  # save the docker image locally
+  make e2e-image
+  mkdir -p /tmp/images
+  docker save gcr.io/k8s-staging-cluster-api/capv-manager:e2e -o "$DOCKER_IMAGE_TAR"
 
-# store the image on gcs
-login
-E2E_IMAGE_SHA=$(docker inspect --format='{{index .Id}}' gcr.io/k8s-staging-cluster-api/capv-manager:e2e)
-export E2E_IMAGE_SHA
-gsutil cp ${DOCKER_IMAGE_TAR} gs://capv-ci/"$E2E_IMAGE_SHA"
+  # store the image on gcs
+  login
+  E2E_IMAGE_SHA=$(docker inspect --format='{{index .Id}}' gcr.io/k8s-staging-cluster-api/capv-manager:e2e)
+  export E2E_IMAGE_SHA
+  gsutil cp ${DOCKER_IMAGE_TAR} gs://capv-ci/"$E2E_IMAGE_SHA"
+fi
 
 # Run e2e tests
 make e2e

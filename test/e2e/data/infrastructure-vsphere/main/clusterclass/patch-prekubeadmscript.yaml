@@ -4,7 +4,7 @@
     definitions:
     - jsonPatches:
       - op: add
-        path: /spec/template/spec/kubeadmConfigSpec/preKubeadmCommands/-
+        path: /spec/template/spec/kubeadmConfigSpec/preKubeadmCommands/0
         value: "/opt/prekubeadmscript.sh"
       - op: add
         path: /spec/template/spec/kubeadmConfigSpec/files/-
@@ -13,7 +13,7 @@
             owner: root:root
             path:  "/opt/prekubeadmscript.sh"
             permissions: "0755"
-            content: {{ printf "%q" .preKubeadmScript }}
+            content: {{ printf "%q" (regexReplaceAll "(KUBERNETES_VERSION=.*)" .preKubeadmScript (printf "KUBERNETES_VERSION=%s" .builtin.controlPlane.version)) }}
       selector:
         apiVersion: controlplane.cluster.x-k8s.io/v1beta1
         kind: KubeadmControlPlaneTemplate
@@ -21,7 +21,7 @@
           controlPlane: true
     - jsonPatches:
       - op: add
-        path: /spec/template/spec/preKubeadmCommands/-
+        path: /spec/template/spec/preKubeadmCommands/0
         value: "/opt/prekubeadmscript.sh"
       - op: add
         path: /spec/template/spec/files/-
@@ -30,7 +30,7 @@
             owner: root:root
             path:  "/opt/prekubeadmscript.sh"
             permissions: "0755"
-            content: {{ printf "%q" .preKubeadmScript }}
+            content: {{ printf "%q" (regexReplaceAll "(KUBERNETES_VERSION=.*)" .preKubeadmScript (printf "KUBERNETES_VERSION=%s" .builtin.machineDeployment.version)) }}
       selector:
         apiVersion: bootstrap.cluster.x-k8s.io/v1beta1
         kind: KubeadmConfigTemplate
