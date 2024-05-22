@@ -22,27 +22,23 @@ import (
 )
 
 var _ = Describe("When testing ClusterClass changes [ClusterClass]", func() {
-	const specName = "clusterclass-changes" // copied from CAPI
-	Setup(specName, func(testSpecificSettingsGetter func() testSettings) {
-		capie2e.ClusterClassChangesSpec(ctx, func() capie2e.ClusterClassChangesSpecInput {
-			return capie2e.ClusterClassChangesSpecInput{
-				E2EConfig:             e2eConfig,
-				ClusterctlConfigPath:  testSpecificSettingsGetter().ClusterctlConfigPath,
-				BootstrapClusterProxy: bootstrapClusterProxy,
-				ArtifactFolder:        artifactFolder,
-				SkipCleanup:           skipCleanup,
-				Flavor:                testSpecificSettingsGetter().FlavorForMode("topology"),
-				PostNamespaceCreated:  testSpecificSettingsGetter().PostNamespaceCreatedFunc,
-				ModifyControlPlaneFields: map[string]interface{}{
-					"spec.machineTemplate.nodeDrainTimeout": "10s",
-				},
-				ModifyMachineDeploymentBootstrapConfigTemplateFields: map[string]interface{}{
-					"spec.template.spec.verbosity": int64(4),
-				},
-				ModifyMachineDeploymentInfrastructureMachineTemplateFields: map[string]interface{}{
-					"spec.template.spec.numCPUs": int64(4),
-				},
-			}
-		})
+	capie2e.ClusterClassChangesSpec(ctx, func() capie2e.ClusterClassChangesSpecInput {
+		return capie2e.ClusterClassChangesSpecInput{
+			E2EConfig:             e2eConfig,
+			ClusterctlConfigPath:  clusterctlConfigPath,
+			BootstrapClusterProxy: bootstrapClusterProxy,
+			ArtifactFolder:        artifactFolder,
+			SkipCleanup:           skipCleanup,
+			Flavor:                "topology",
+			ModifyControlPlaneFields: map[string]interface{}{
+				"spec.machineTemplate.nodeDrainTimeout": "10s",
+			},
+			ModifyMachineDeploymentBootstrapConfigTemplateFields: map[string]interface{}{
+				"spec.template.spec.verbosity": int64(4),
+			},
+			ModifyMachineDeploymentInfrastructureMachineTemplateFields: map[string]interface{}{
+				"spec.template.spec.numCPUs": int64(4),
+			},
+		}
 	})
 })

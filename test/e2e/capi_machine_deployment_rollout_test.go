@@ -19,24 +19,19 @@ package e2e
 import (
 	. "github.com/onsi/ginkgo/v2"
 	capi_e2e "sigs.k8s.io/cluster-api/test/e2e"
-	"sigs.k8s.io/cluster-api/test/framework/clusterctl"
 )
 
 var _ = Describe("ClusterAPI Machine Deployment Tests", func() {
-	const specName = "md-rollout" // copied from CAPI
 	Context("Running the MachineDeployment rollout spec", func() {
-		Setup(specName, func(testSpecificSettingsGetter func() testSettings) {
-			capi_e2e.MachineDeploymentRolloutSpec(ctx, func() capi_e2e.MachineDeploymentRolloutSpecInput {
-				return capi_e2e.MachineDeploymentRolloutSpecInput{
-					E2EConfig:             e2eConfig,
-					ClusterctlConfigPath:  testSpecificSettingsGetter().ClusterctlConfigPath,
-					BootstrapClusterProxy: bootstrapClusterProxy,
-					ArtifactFolder:        artifactFolder,
-					SkipCleanup:           skipCleanup,
-					Flavor:                testSpecificSettingsGetter().FlavorForMode(clusterctl.DefaultFlavor),
-					PostNamespaceCreated:  testSpecificSettingsGetter().PostNamespaceCreatedFunc,
-				}
-			})
+		capi_e2e.MachineDeploymentRolloutSpec(ctx, func() capi_e2e.MachineDeploymentRolloutSpecInput {
+			return capi_e2e.MachineDeploymentRolloutSpecInput{
+				E2EConfig:             e2eConfig,
+				ClusterctlConfigPath:  clusterctlConfigPath,
+				BootstrapClusterProxy: bootstrapClusterProxy,
+				ArtifactFolder:        artifactFolder,
+				SkipCleanup:           skipCleanup,
+			}
 		})
 	})
+
 })

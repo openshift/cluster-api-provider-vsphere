@@ -30,15 +30,12 @@ import (
 const (
 	// Supported workload cluster flavors.
 
-	VIP                       = "vip"
-	ExternalLoadBalancer      = "external-loadbalancer"
-	Ignition                  = "ignition"
-	ClusterClass              = "cluster-class"
-	ClusterTopology           = "cluster-topology"
-	NodeIPAM                  = "node-ipam"
-	Supervisor                = "supervisor"
-	ClusterClassSupervisor    = "cluster-class-supervisor"
-	ClusterTopologySupervisor = "cluster-topology-supervisor"
+	VIP                  = "vip"
+	ExternalLoadBalancer = "external-loadbalancer"
+	Ignition             = "ignition"
+	ClusterClass         = "cluster-class"
+	ClusterTopology      = "cluster-topology"
+	NodeIPAM             = "node-ipam"
 )
 
 func ClusterClassTemplateWithKubeVIP() []runtime.Object {
@@ -60,51 +57,8 @@ func ClusterClassTemplateWithKubeVIP() []runtime.Object {
 	return ClusterClassTemplate
 }
 
-func ClusterClassTemplateSupervisor() []runtime.Object {
-	vSphereClusterTemplate := newVMWareClusterTemplate()
-	clusterClass := newVMWareClusterClass()
-	machineTemplate := newVMWareMachineTemplate(fmt.Sprintf("%s-template", env.ClusterClassNameVar))
-	workerMachineTemplate := newVMWareMachineTemplate(fmt.Sprintf("%s-worker-machinetemplate", env.ClusterClassNameVar))
-	controlPlaneTemplate := newKubeadmControlPlaneTemplate(fmt.Sprintf("%s-controlplane", env.ClusterClassNameVar))
-	controlPlaneTemplate.Spec.Template.Spec.KubeadmConfigSpec.PreKubeadmCommands = append([]string{"dhclient eth0"}, controlPlaneTemplate.Spec.Template.Spec.KubeadmConfigSpec.PreKubeadmCommands...)
-	kubeadmJoinTemplate := newKubeadmConfigTemplate(fmt.Sprintf("%s-worker-bootstrap-template", env.ClusterClassNameVar), false)
-	kubeadmJoinTemplate.Spec.Template.Spec.PreKubeadmCommands = append([]string{"dhclient eth0"}, kubeadmJoinTemplate.Spec.Template.Spec.PreKubeadmCommands...)
-
-	ClusterClassTemplate := []runtime.Object{
-		&vSphereClusterTemplate,
-		&clusterClass,
-		&machineTemplate,
-		&workerMachineTemplate,
-		&controlPlaneTemplate,
-		&kubeadmJoinTemplate,
-	}
-	return ClusterClassTemplate
-}
-
 func ClusterTopologyTemplateKubeVIP() ([]runtime.Object, error) {
-	cluster, err := newClusterTopologyCluster(false)
-	if err != nil {
-		return nil, err
-	}
-	identitySecret := newIdentitySecret()
-	clusterResourceSet := newClusterResourceSet(cluster)
-	crsResourcesCSI, err := crs.CreateCrsResourceObjectsCSI(&clusterResourceSet)
-	if err != nil {
-		return nil, err
-	}
-	crsResourcesCPI := crs.CreateCrsResourceObjectsCPI(&clusterResourceSet)
-	MultiNodeTemplate := []runtime.Object{
-		&cluster,
-		&identitySecret,
-		&clusterResourceSet,
-	}
-	MultiNodeTemplate = append(MultiNodeTemplate, crsResourcesCSI...)
-	MultiNodeTemplate = append(MultiNodeTemplate, crsResourcesCPI...)
-	return MultiNodeTemplate, nil
-}
-
-func ClusterTopologyTemplateSupervisor() ([]runtime.Object, error) {
-	cluster, err := newClusterTopologyCluster(true)
+	cluster, err := newClusterTopologyCluster()
 	if err != nil {
 		return nil, err
 	}
@@ -129,50 +83,12 @@ func MultiNodeTemplateWithKubeVIP() ([]runtime.Object, error) {
 	vsphereCluster := newVSphereCluster()
 	cpMachineTemplate := newVSphereMachineTemplate(env.ClusterNameVar)
 	workerMachineTemplate := newVSphereMachineTemplate(fmt.Sprintf("%s-worker", env.ClusterNameVar))
-	controlPlane := newKubeadmControlplane(&cpMachineTemplate, nil)
+	controlPlane := newKubeadmControlplane(cpMachineTemplate, nil)
 	kubevip.PatchControlPlane(&controlPlane)
 
 	kubeadmJoinTemplate := newKubeadmConfigTemplate(fmt.Sprintf("%s%s", env.ClusterNameVar, env.MachineDeploymentNameSuffix), true)
-	cluster := newCluster(&vsphereCluster, &controlPlane)
-	machineDeployment := newMachineDeployment(cluster, &workerMachineTemplate, kubeadmJoinTemplate)
-	clusterResourceSet := newClusterResourceSet(cluster)
-	crsResourcesCSI, err := crs.CreateCrsResourceObjectsCSI(&clusterResourceSet)
-	if err != nil {
-		return nil, err
-	}
-	crsResourcesCPI := crs.CreateCrsResourceObjectsCPI(&clusterResourceSet)
-	identitySecret := newIdentitySecret()
-
-	MultiNodeTemplate := []runtime.Object{
-		&cluster,
-		&vsphereCluster,
-		&cpMachineTemplate,
-		&workerMachineTemplate,
-		&controlPlane,
-		&kubeadmJoinTemplate,
-		&machineDeployment,
-		&clusterResourceSet,
-		&identitySecret,
-	}
-
-	MultiNodeTemplate = append(MultiNodeTemplate, crsResourcesCSI...)
-	MultiNodeTemplate = append(MultiNodeTemplate, crsResourcesCPI...)
-
-	return MultiNodeTemplate, nil
-}
-
-func MultiNodeTemplateSupervisor() ([]runtime.Object, error) {
-	vsphereCluster := newVMWareCluster()
-	cpMachineTemplate := newVMWareMachineTemplate(env.ClusterNameVar)
-	workerMachineTemplate := newVMWareMachineTemplate(fmt.Sprintf("%s-worker", env.ClusterNameVar))
-	controlPlane := newKubeadmControlplane(&cpMachineTemplate, nil)
-	controlPlane.Spec.KubeadmConfigSpec.PreKubeadmCommands = append([]string{"dhclient eth0"}, controlPlane.Spec.KubeadmConfigSpec.PreKubeadmCommands...)
-	kubevip.PatchControlPlane(&controlPlane)
-
-	kubeadmJoinTemplate := newKubeadmConfigTemplate(fmt.Sprintf("%s%s", env.ClusterNameVar, env.MachineDeploymentNameSuffix), true)
-	kubeadmJoinTemplate.Spec.Template.Spec.PreKubeadmCommands = append([]string{"dhclient eth0"}, kubeadmJoinTemplate.Spec.Template.Spec.PreKubeadmCommands...)
-	cluster := newCluster(&vsphereCluster, &controlPlane)
-	machineDeployment := newMachineDeployment(cluster, &workerMachineTemplate, kubeadmJoinTemplate)
+	cluster := newCluster(vsphereCluster, &controlPlane)
+	machineDeployment := newMachineDeployment(cluster, workerMachineTemplate, kubeadmJoinTemplate)
 	clusterResourceSet := newClusterResourceSet(cluster)
 	crsResourcesCSI, err := crs.CreateCrsResourceObjectsCSI(&clusterResourceSet)
 	if err != nil {
@@ -203,10 +119,10 @@ func MultiNodeTemplateWithExternalLoadBalancer() ([]runtime.Object, error) {
 	vsphereCluster := newVSphereCluster()
 	cpMachineTemplate := newVSphereMachineTemplate(env.ClusterNameVar)
 	workerMachineTemplate := newVSphereMachineTemplate(fmt.Sprintf("%s-worker", env.ClusterNameVar))
-	controlPlane := newKubeadmControlplane(&cpMachineTemplate, nil)
+	controlPlane := newKubeadmControlplane(cpMachineTemplate, nil)
 	kubeadmJoinTemplate := newKubeadmConfigTemplate(fmt.Sprintf("%s%s", env.ClusterNameVar, env.MachineDeploymentNameSuffix), true)
-	cluster := newCluster(&vsphereCluster, &controlPlane)
-	machineDeployment := newMachineDeployment(cluster, &workerMachineTemplate, kubeadmJoinTemplate)
+	cluster := newCluster(vsphereCluster, &controlPlane)
+	machineDeployment := newMachineDeployment(cluster, workerMachineTemplate, kubeadmJoinTemplate)
 	clusterResourceSet := newClusterResourceSet(cluster)
 	crsResourcesCSI, err := crs.CreateCrsResourceObjectsCSI(&clusterResourceSet)
 	if err != nil {
@@ -247,8 +163,8 @@ func MultiNodeTemplateWithKubeVIPIgnition() ([]runtime.Object, error) {
 	}
 
 	kubeadmJoinTemplate := newIgnitionKubeadmConfigTemplate()
-	cluster := newCluster(&vsphereCluster, &controlPlane)
-	machineDeployment := newMachineDeployment(cluster, &machineTemplate, kubeadmJoinTemplate)
+	cluster := newCluster(vsphereCluster, &controlPlane)
+	machineDeployment := newMachineDeployment(cluster, machineTemplate, kubeadmJoinTemplate)
 	clusterResourceSet := newClusterResourceSet(cluster)
 	crsResourcesCSI, err := crs.CreateCrsResourceObjectsCSI(&clusterResourceSet)
 	if err != nil {
@@ -278,12 +194,12 @@ func MultiNodeTemplateWithKubeVIPNodeIPAM() ([]runtime.Object, error) {
 	vsphereCluster := newVSphereCluster()
 	cpMachineTemplate := newNodeIPAMVSphereMachineTemplate(env.ClusterNameVar)
 	workerMachineTemplate := newNodeIPAMVSphereMachineTemplate(fmt.Sprintf("%s-worker", env.ClusterNameVar))
-	controlPlane := newKubeadmControlplane(&cpMachineTemplate, nil)
+	controlPlane := newKubeadmControlplane(cpMachineTemplate, nil)
 	kubevip.PatchControlPlane(&controlPlane)
 
 	kubeadmJoinTemplate := newKubeadmConfigTemplate(fmt.Sprintf("%s%s", env.ClusterNameVar, env.MachineDeploymentNameSuffix), true)
-	cluster := newCluster(&vsphereCluster, &controlPlane)
-	machineDeployment := newMachineDeployment(cluster, &workerMachineTemplate, kubeadmJoinTemplate)
+	cluster := newCluster(vsphereCluster, &controlPlane)
+	machineDeployment := newMachineDeployment(cluster, workerMachineTemplate, kubeadmJoinTemplate)
 	clusterResourceSet := newClusterResourceSet(cluster)
 	crsResourcesCSI, err := crs.CreateCrsResourceObjectsCSI(&clusterResourceSet)
 	if err != nil {

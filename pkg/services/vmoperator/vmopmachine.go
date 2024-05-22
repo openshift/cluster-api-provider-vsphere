@@ -43,8 +43,7 @@ import (
 
 // VmopMachineService reconciles VM Operator VM.
 type VmopMachineService struct {
-	Client                                client.Client
-	ConfigureControlPlaneVMReadinessProbe bool
+	Client client.Client
 }
 
 // GetMachinesInCluster returns a list of VSphereMachine objects belonging to the cluster.
@@ -346,10 +345,7 @@ func (v *VmopMachineService) reconcileVMOperatorVM(ctx context.Context, supervis
 		// Once the initial control plane node is ready, we can re-add the probe so
 		// that subsequent machines do not attempt to speak to a kube-apiserver
 		// that is not yet ready.
-		// Not all network providers (for example, NSX-VPC) provide support for VM
-		// readiness probes. The flag PerformsVMReadinessProbe is used to determine
-		// whether a VM readiness probe should be conducted.
-		if v.ConfigureControlPlaneVMReadinessProbe && infrautilv1.IsControlPlaneMachine(supervisorMachineCtx.Machine) && supervisorMachineCtx.Cluster.Status.ControlPlaneReady {
+		if infrautilv1.IsControlPlaneMachine(supervisorMachineCtx.Machine) && supervisorMachineCtx.Cluster.Status.ControlPlaneReady {
 			vmOperatorVM.Spec.ReadinessProbe = &vmoprv1.Probe{
 				TCPSocket: &vmoprv1.TCPSocketAction{
 					Port: intstr.FromInt(defaultAPIBindPort),
@@ -524,7 +520,7 @@ func (v *VmopMachineService) addVolumes(ctx context.Context, supervisorMachineCt
 				AccessModes: []corev1.PersistentVolumeAccessMode{
 					corev1.ReadWriteOnce,
 				},
-				Resources: corev1.VolumeResourceRequirements{
+				Resources: corev1.ResourceRequirements{
 					Requests: volume.Capacity,
 				},
 				StorageClassName: &storageClassName,

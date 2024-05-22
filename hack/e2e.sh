@@ -21,8 +21,6 @@ set -o pipefail # any non-zero exit code in a piped command causes the pipeline 
 export PATH=${PWD}/hack/tools/bin:${PATH}
 REPO_ROOT=$(git rev-parse --show-toplevel)
 
-RE_VCSIM='\[vcsim\\]'
-
 # In CI, ARTIFACTS is set to a different directory. This stores the value of
 # ARTIFACTS i1n ORIGINAL_ARTIFACTS and replaces ARTIFACTS by a temporary directory
 # which gets cleaned up from credentials at the end of the test.
@@ -37,10 +35,13 @@ fi
 source "${REPO_ROOT}/hack/ensure-kubectl.sh"
 
 on_exit() {
-  # kill the VPN only when we started it (not vcsim)
-  if [[ ! "${GINKGO_FOCUS:-}" =~ $RE_VCSIM ]]; then
-    docker kill vpn
-  fi
+  # release IPClaim
+  echo "Releasing IP claims"
+  kubectl --kubeconfig="${KUBECONFIG}" delete "ipaddressclaim.ipam.cluster.x-k8s.io" "${CONTROL_PLANE_IPCLAIM_NAME}" || true
+  kubectl --kubeconfig="${KUBECONFIG}" delete "ipaddressclaim.ipam.cluster.x-k8s.io" "${WORKLOAD_IPCLAIM_NAME}" || true
+
+  # kill the VPN
+  docker kill vpn
 
   # logout of gcloud
   if [ "${AUTH}" ]; then
@@ -49,13 +50,11 @@ on_exit() {
 
   # Cleanup VSPHERE_PASSWORD from temporary artifacts directory.
   if [[ "${ORIGINAL_ARTIFACTS}" != "" ]]; then
-    if [ -z "$VSPHERE_PASSWORD" ]; then
-      grep -r -l -e "${VSPHERE_PASSWORD}" "${ARTIFACTS}" | while IFS= read -r file
-      do
-        echo "Cleaning up VSPHERE_PASSWORD from file ${file}"
-        sed -i "s/${VSPHERE_PASSWORD}/REDACTED/g" "${file}"
-      done || true
-    fi
+    grep -r -l -e "${VSPHERE_PASSWORD}" "${ARTIFACTS}" | while IFS= read -r file
+    do
+      echo "Cleaning up VSPHERE_PASSWORD from file ${file}"
+      sed -i "s/${VSPHERE_PASSWORD}/REDACTED/g" "${file}"
+    done
     # Move all artifacts to the original artifacts location.
     mv "${ARTIFACTS}"/* "${ORIGINAL_ARTIFACTS}/"
   fi
@@ -71,87 +70,88 @@ function login() {
   fi
 }
 
-# NOTE: when running on CI without presets, value for variables are missing: GOVC_URL, GOVC_USERNAME, GOVC_PASSWORD, VM_SSH_PUB_KEY),
-#  but this is not an issue when we are targeting vcsim (corresponding VSPHERE_ variables will be injected during test setup).
 AUTH=
 E2E_IMAGE_SHA=
 GCR_KEY_FILE="${GCR_KEY_FILE:-}"
-export VSPHERE_SERVER="${GOVC_URL:-}"
-export VSPHERE_USERNAME="${GOVC_USERNAME:-}"
-export VSPHERE_PASSWORD="${GOVC_PASSWORD:-}"
-export VSPHERE_SSH_AUTHORIZED_KEY="${VM_SSH_PUB_KEY:-}"
+export VSPHERE_SERVER="${GOVC_URL}"
+export VSPHERE_USERNAME="${GOVC_USERNAME}"
+export VSPHERE_PASSWORD="${GOVC_PASSWORD}"
+export VSPHERE_SSH_AUTHORIZED_KEY="${VM_SSH_PUB_KEY}"
 export VSPHERE_SSH_PRIVATE_KEY="/root/ssh/.private-key/private-key"
-export E2E_CONF_FILE="${REPO_ROOT}/test/e2e/config/vsphere.yaml"
-export E2E_CONF_OVERRIDE_FILE=""
-export E2E_VM_OPERATOR_VERSION="${VM_OPERATOR_VERSION:-v1.8.6-0-gde75746a}"
+export E2E_CONF_FILE="${REPO_ROOT}/test/e2e/config/vsphere-ci.yaml"
 export ARTIFACTS="${ARTIFACTS:-${REPO_ROOT}/_artifacts}"
 export DOCKER_IMAGE_TAR="/tmp/images/image.tar"
 export GC_KIND="false"
 
-# Make tests run in-parallel
-export GINKGO_NODES=5
+# Run the vpn client in container
+docker run --rm -d --name vpn -v "${HOME}/.openvpn/:${HOME}/.openvpn/" \
+  -w "${HOME}/.openvpn/" --cap-add=NET_ADMIN --net=host --device=/dev/net/tun \
+  gcr.io/k8s-staging-capi-vsphere/extra/openvpn:latest
 
-# Set the kubeconfig to the IPAM cluster so the e2e tests can claim ip addresses
-# for kube-vip.
-export E2E_IPAM_KUBECONFIG="/root/ipam-conf/capv-services.conf"
+# Tail the vpn logs
+docker logs vpn
 
-# Only run the vpn/check for IPAM when we need them (not vcsim)
-if [[ ! "${GINKGO_FOCUS:-}" =~ $RE_VCSIM ]]; then
-  # Run the vpn client in container
-  docker run --rm -d --name vpn -v "${HOME}/.openvpn/:${HOME}/.openvpn/" \
-    -w "${HOME}/.openvpn/" --cap-add=NET_ADMIN --net=host --device=/dev/net/tun \
-    gcr.io/k8s-staging-capi-vsphere/extra/openvpn:latest
+# Sleep to allow vpn container to start running
+sleep 30
 
-  # Tail the vpn logs
-  docker logs vpn
 
-  # Wait until the VPN connection is active and we are able to reach the ipam cluster
-  function wait_for_ipam_reachable() {
-    local n=0
-    until [ $n -ge 30 ]; do
-      kubectl --kubeconfig="${E2E_IPAM_KUBECONFIG}" --request-timeout=2s  get inclusterippools.ipam.cluster.x-k8s.io && RET=$? || RET=$?
-      if [[ "$RET" -eq 0 ]]; then
-        break
-      fi
-      n=$((n + 1))
-      sleep 1
-    done
-    return "$RET"
-  }
-  wait_for_ipam_reachable
-fi
+function kubectl_get_jsonpath() {
+  local OBJECT_KIND="${1}"
+  local OBJECT_NAME="${2}"
+  local JSON_PATH="${3}"
+  local n=0
+  until [ $n -ge 30 ]; do
+    OUTPUT=$(kubectl --kubeconfig="${KUBECONFIG}" get "${OBJECT_KIND}.ipam.cluster.x-k8s.io" "${OBJECT_NAME}" -o=jsonpath="${JSON_PATH}")
+    if [[ "${OUTPUT}" != "" ]]; then
+      break
+    fi
+    n=$((n + 1))
+    sleep 1
+  done
+
+  if [[ "${OUTPUT}" == "" ]]; then
+    echo "Received empty output getting ${JSON_PATH} from ${OBJECT_KIND}/${OBJECT_NAME}" 1>&2
+    return 1
+  else
+    echo "${OUTPUT}"
+    return 0
+  fi
+}
+
+function claim_ip() {
+  IPCLAIM_NAME="$1"
+  export IPCLAIM_NAME
+  envsubst < "${REPO_ROOT}/hack/ipclaim-template.yaml" | kubectl --kubeconfig="${KUBECONFIG}" create -f - 1>&2
+  IPADDRESS_NAME=$(kubectl_get_jsonpath ipaddressclaim "${IPCLAIM_NAME}" '{@.status.addressRef.name}')
+  kubectl --kubeconfig="${KUBECONFIG}" get "ipaddresses.ipam.cluster.x-k8s.io" "${IPADDRESS_NAME}" -o=jsonpath='{@.spec.address}'
+}
+
+export KUBECONFIG="/root/ipam-conf/capv-services.conf"
 
 make envsubst
 
-# Only pre-pull vm-operator image where running in supervisor mode.
-if [[ ${GINKGO_FOCUS:-} =~ \\\[supervisor\\\] ]]; then
-  kind::prepullImage () {
-    local image=$1
-    image="${image//+/_}"
+# Retrieve an IP to be used as the kube-vip IP
+CONTROL_PLANE_IPCLAIM_NAME="ip-claim-$(openssl rand -hex 20)"
+CONTROL_PLANE_ENDPOINT_IP=$(claim_ip "${CONTROL_PLANE_IPCLAIM_NAME}")
+export CONTROL_PLANE_ENDPOINT_IP
+echo "Acquired Control Plane IP: $CONTROL_PLANE_ENDPOINT_IP"
 
-    if [[ "$(docker images -q "$image" 2> /dev/null)" == "" ]]; then
-      echo "+ Pulling $image"
-      docker pull "$image"
-    else
-      echo "+ image $image already present in the system, skipping pre-pull"
-    fi
-  }
-   kind::prepullImage "gcr.io/k8s-staging-capi-vsphere/extra/vm-operator:${E2E_VM_OPERATOR_VERSION}"
-fi
-
-ARCH="$(go env GOARCH)"
+# Retrieve an IP to be used for the workload cluster in v1a3/v1a4 -> v1b1 upgrade tests
+WORKLOAD_IPCLAIM_NAME="workload-ip-claim-$(openssl rand -hex 20)"
+WORKLOAD_CONTROL_PLANE_ENDPOINT_IP=$(claim_ip "${WORKLOAD_IPCLAIM_NAME}")
+export WORKLOAD_CONTROL_PLANE_ENDPOINT_IP
+echo "Acquired Workload Cluster Control Plane IP: $WORKLOAD_CONTROL_PLANE_ENDPOINT_IP"
 
 # Only build and upload the image if we run tests which require it to save some $.
-# NOTE: the image is required for clusterctl upgrade tests, and those test are run only as part of the main e2e test job (without any focus)
 if [[ -z "${GINKGO_FOCUS+x}" ]]; then
-  # Save the docker image locally
-  make e2e-images
+  # save the docker image locally
+  make e2e-image
   mkdir -p /tmp/images
-  docker save "gcr.io/k8s-staging-capi-vsphere/cluster-api-vsphere-controller-${ARCH}:dev" -o "$DOCKER_IMAGE_TAR"
+  docker save gcr.io/k8s-staging-cluster-api/capv-manager:e2e -o "$DOCKER_IMAGE_TAR"
 
-  # Store the image on gcs
+  # store the image on gcs
   login
-  E2E_IMAGE_SHA=$(docker inspect --format='{{index .Id}}' "gcr.io/k8s-staging-capi-vsphere/cluster-api-vsphere-controller-${ARCH}:dev")
+  E2E_IMAGE_SHA=$(docker inspect --format='{{index .Id}}' gcr.io/k8s-staging-cluster-api/capv-manager:e2e)
   export E2E_IMAGE_SHA
   gsutil cp ${DOCKER_IMAGE_TAR} gs://capv-ci/"$E2E_IMAGE_SHA"
 fi

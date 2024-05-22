@@ -3,7 +3,6 @@ project_name: govmomi
 
 builds:
   - id: govc
-    no_main_check: true
     goos: &goos-defs
       - linux
       - darwin
@@ -14,7 +13,6 @@ builds:
       - arm
       - arm64
       - mips64le
-      - s390x
     env:
       - CGO_ENABLED=0
       - PKGPATH=github.com/vmware/govmomi/govc/flags
@@ -23,7 +21,6 @@ builds:
     ldflags:
       - "-X {{.Env.PKGPATH}}.BuildVersion={{.Version}} -X {{.Env.PKGPATH}}.BuildCommit={{.ShortCommit}} -X {{.Env.PKGPATH}}.BuildDate={{.Date}}"
   - id: vcsim
-    no_main_check: true
     goos: *goos-defs
     goarch: *goarch-defs
     env:
@@ -32,18 +29,6 @@ builds:
     binary: vcsim
     ldflags:
       - "-X main.buildVersion={{.Version}} -X main.buildCommit={{.ShortCommit}} -X main.buildDate={{.Date}}"
-
-nfpms:
-  - package_name: govmomi
-    builds:
-      - govc
-      - vcsim
-    homepage: https://github.com/vmware/govmomi
-    maintainer: Doug MacEachern <dougm@vmware.com>
-    description: |-
-      vSphere CLI
-    formats:
-      - rpm
 
 archives:
   - id: govcbuild
@@ -105,7 +90,7 @@ brews:
     commit_author:
       name: Alfred the Narwhal
       email: cna-alfred@vmware.com
-    directory: Formula
+    folder: Formula
     homepage: "https://github.com/vmware/govmomi/blob/main/govc/README.md"
     description: "govc is a vSphere CLI built on top of govmomi."
     test: |
@@ -125,7 +110,7 @@ brews:
     commit_author:
       name: Alfred the Narwhal
       email: cna-alfred@vmware.com
-    directory: Formula
+    folder: Formula
     homepage: "https://github.com/vmware/govmomi/blob/main/vcsim/README.md"
     description: "vcsim is a vSphere API simulator built on top of govmomi."
     test: |

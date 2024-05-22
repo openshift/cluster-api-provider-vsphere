@@ -72,11 +72,6 @@ func (add *addHost) Run(task *Task) (types.AnyType, types.BaseMethodFault) {
 	host.Summary.Host = &host.Self
 	host.Config.Host = host.Self
 
-	task.ctx.Map.WithLock(task.ctx, *cr.EnvironmentBrowser, func() {
-		eb := task.ctx.Map.Get(*cr.EnvironmentBrowser).(*EnvironmentBrowser)
-		eb.addHost(task.ctx, host.Self)
-	})
-
 	cr.Host = append(cr.Host, host.Reference())
 	addComputeResource(cr.Summary.GetComputeResourceSummary(), host)
 
@@ -474,7 +469,7 @@ func CreateClusterComputeResource(ctx *Context, f *Folder, name string, spec typ
 	}
 
 	cluster := &ClusterComputeResource{}
-	cluster.EnvironmentBrowser = newEnvironmentBrowser(ctx)
+	cluster.EnvironmentBrowser = newEnvironmentBrowser()
 	cluster.Name = name
 	cluster.Network = ctx.Map.getEntityDatacenter(f).defaultNetwork()
 	cluster.Summary = &types.ClusterComputeResourceSummary{

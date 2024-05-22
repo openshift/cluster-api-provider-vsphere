@@ -1,34 +1,22 @@
 .git
 .github
 .vscode
+
+.dockerignore
 .gitignore
 .golangci.yml
+*.out
 bin/
-**/*.yaml
-hack/
+hack/.bin/
+hack/tools/bin/
 out/
 docs/
-packaging/
-templates/
+scripts/
 **/*.md
-**/.tiltbuild
-**/config/**/*.yaml
-**/config/**/*.yaml-e
-_artifacts
-Makefile
-**/Makefile
-
-# ignores changes to test-only code to avoid extra rebuilds
-test/e2e/**
-
-# We want to ignore any frequently modified files to avoid cache-busting the COPY ./ ./
-# Binaries for programs and plugins
-**/*.exe
-**/*.dll
-**/*.so
-**/*.dylib
-**/bin/**
-**/out/**
+*.test
+cluster-api-provider-vsphere
+examples/provider-components/provider-components*.yaml
+test/
 
 # go.work files
 go.work

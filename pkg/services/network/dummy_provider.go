@@ -38,10 +38,6 @@ func (np *dummyNetworkProvider) HasLoadBalancer() bool {
 	return false
 }
 
-func (np *dummyNetworkProvider) SupportsVMReadinessProbe() bool {
-	return true
-}
-
 func (np *dummyNetworkProvider) ProvisionClusterNetwork(_ context.Context, _ *vmware.ClusterContext) error {
 	return nil
 }

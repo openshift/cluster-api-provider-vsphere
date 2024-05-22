@@ -17,6 +17,7 @@ limitations under the License.
 package crs
 
 import (
+	"fmt"
 	"path"
 
 	"github.com/pkg/errors"
@@ -100,6 +101,7 @@ func CreateCrsResourceObjectsCSI(crs *addonsv1.ClusterResourceSet) ([]runtime.Ob
 func ConfigForCSI() *types.CPIConfig {
 	config := &types.CPIConfig{}
 
+	config.Global.ClusterID = fmt.Sprintf("%s/%s", env.NamespaceVar, env.ClusterNameVar)
 	config.Global.Thumbprint = env.VSphereThumbprint
 	config.Network.Name = env.VSphereNetworkVar
 
