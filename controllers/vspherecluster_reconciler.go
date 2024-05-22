@@ -91,7 +91,7 @@ func (r *clusterReconciler) Reconcile(ctx context.Context, req ctrl.Request) (_ 
 	// Create the patch helper.
 	patchHelper, err := patch.NewHelper(vsphereCluster, r.Client)
 	if err != nil {
-		return reconcile.Result{}, err
+		return reconcile.Result{}, pkgerrors.Wrap(err, "failed to initialize patch helper")
 	}
 
 	// Create the cluster context for this request.
@@ -264,8 +264,12 @@ func (r *clusterReconciler) reconcileIdentitySecret(ctx context.Context, cluster
 	if !ctrlutil.ContainsFinalizer(secret, infrav1.SecretIdentitySetFinalizer) {
 		ctrlutil.AddFinalizer(secret, infrav1.SecretIdentitySetFinalizer)
 	}
+	err = helper.Patch(ctx, secret)
+	if err != nil {
+		return pkgerrors.Wrapf(err, "Failed to patch secret %s", klog.KObj(secret))
+	}
 
-	return helper.Patch(ctx, secret)
+	return nil
 }
 
 func (r *clusterReconciler) reconcileVCenterConnectivity(ctx context.Context, clusterCtx *capvcontext.ClusterContext) (*session.Session, error) {

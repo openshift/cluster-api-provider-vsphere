@@ -19,7 +19,6 @@ package vcsim
 import (
 	"crypto/tls"
 	"fmt"
-	"net/url"
 	"os"
 	"os/exec"
 	"strings"
@@ -31,10 +30,8 @@ import (
 
 // Builder helps in creating a vcsim simulator.
 type Builder struct {
-	skipModelCreate bool
-	url             *url.URL
-	model           *simulator.Model
-	operations      []string
+	model      *simulator.Model
+	operations []string
 }
 
 // NewBuilder returns a new a Builder.
@@ -48,19 +45,6 @@ func (b *Builder) WithModel(model *simulator.Model) *Builder {
 	return b
 }
 
-// SkipModelCreate tells the builder to skip creating the model, because it is already created before passing it
-// to WithModel.
-func (b *Builder) SkipModelCreate() *Builder {
-	b.skipModelCreate = true
-	return b
-}
-
-// WithURL defines the url to be used for service listening.
-func (b *Builder) WithURL(url *url.URL) *Builder {
-	b.url = url
-	return b
-}
-
 // WithOperations defines the operation that the Builder should executed on the newly created vcsim instance.
 func (b *Builder) WithOperations(ops ...string) *Builder {
 	b.operations = append(b.operations, ops...)
@@ -69,15 +53,9 @@ func (b *Builder) WithOperations(ops ...string) *Builder {
 
 // Build the vcsim instance.
 func (b *Builder) Build() (*Simulator, error) {
-	if !b.skipModelCreate {
-		err := b.model.Create()
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	if b.url != nil {
-		b.model.Service.Listen = b.url
+	err := b.model.Create()
+	if err != nil {
+		return nil, err
 	}
 
 	b.model.Service.TLS = new(tls.Config)

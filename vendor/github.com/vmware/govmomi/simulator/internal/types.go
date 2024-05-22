@@ -41,7 +41,6 @@ type FetchResponse struct {
 }
 
 type FetchBody struct {
-	Req    *Fetch         `xml:"Fetch,omitempty"`
 	Res    *FetchResponse `xml:"FetchResponse,omitempty"`
 	Fault_ *soap.Fault    `xml:"http://schemas.xmlsoap.org/soap/envelope/ Fault,omitempty"`
 }

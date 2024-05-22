@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"reflect"
 	"sort"
-	"strings"
 	"time"
 
 	. "github.com/onsi/gomega"
@@ -31,7 +30,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	kerrors "k8s.io/apimachinery/pkg/util/errors"
-	"k8s.io/utils/ptr"
+	"k8s.io/utils/pointer"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
@@ -113,12 +112,6 @@ func AssertOwnerReferences(namespace, kubeconfigPath string, assertFuncs ...map[
 		ctx := context.Background()
 
 		graph, err := clusterctlcluster.GetOwnerGraph(ctx, namespace, kubeconfigPath)
-		// Sometimes the conversion-webhooks are not ready yet / cert-managers ca-injector
-		// may not yet have injected the new ca bundle after the upgrade.
-		// If this is the case we return an error to retry.
-		if err != nil && strings.Contains(err.Error(), "x509: certificate signed by unknown authority") {
-			return err
-		}
 		Expect(err).ToNot(HaveOccurred())
 		for _, v := range graph {
 			if _, ok := allAssertFuncs[v.Object.Kind]; !ok {
@@ -146,11 +139,11 @@ var (
 	machineHealthCheckKind = "MachineHealthCheck"
 
 	clusterOwner                = metav1.OwnerReference{Kind: clusterKind, APIVersion: coreGroupVersion}
-	clusterController           = metav1.OwnerReference{Kind: clusterKind, APIVersion: coreGroupVersion, Controller: ptr.To(true)}
+	clusterController           = metav1.OwnerReference{Kind: clusterKind, APIVersion: coreGroupVersion, Controller: pointer.Bool(true)}
 	clusterClassOwner           = metav1.OwnerReference{Kind: clusterClassKind, APIVersion: coreGroupVersion}
-	machineDeploymentController = metav1.OwnerReference{Kind: machineDeploymentKind, APIVersion: coreGroupVersion, Controller: ptr.To(true)}
-	machineSetController        = metav1.OwnerReference{Kind: machineSetKind, APIVersion: coreGroupVersion, Controller: ptr.To(true)}
-	machineController           = metav1.OwnerReference{Kind: machineKind, APIVersion: coreGroupVersion, Controller: ptr.To(true)}
+	machineDeploymentController = metav1.OwnerReference{Kind: machineDeploymentKind, APIVersion: coreGroupVersion, Controller: pointer.Bool(true)}
+	machineSetController        = metav1.OwnerReference{Kind: machineSetKind, APIVersion: coreGroupVersion, Controller: pointer.Bool(true)}
+	machineController           = metav1.OwnerReference{Kind: machineKind, APIVersion: coreGroupVersion, Controller: pointer.Bool(true)}
 )
 
 // CoreOwnerReferenceAssertion maps Cluster API core types to functions which return an error if the passed
@@ -194,7 +187,7 @@ var (
 	clusterResourceSetBindingKind = "ClusterResourceSetBinding"
 	machinePoolKind               = "MachinePool"
 
-	machinePoolController = metav1.OwnerReference{Kind: machinePoolKind, APIVersion: expv1.GroupVersion.String(), Controller: ptr.To(true)}
+	machinePoolController = metav1.OwnerReference{Kind: machinePoolKind, APIVersion: expv1.GroupVersion.String(), Controller: pointer.Bool(true)}
 
 	clusterResourceSetOwner = metav1.OwnerReference{Kind: clusterResourceSetKind, APIVersion: addonsv1.GroupVersion.String()}
 )
@@ -246,7 +239,7 @@ var (
 
 	kubeadmControlPlaneGroupVersion = controlplanev1.GroupVersion.String()
 
-	kubeadmControlPlaneController = metav1.OwnerReference{Kind: kubeadmControlPlaneKind, APIVersion: kubeadmControlPlaneGroupVersion, Controller: ptr.To(true)}
+	kubeadmControlPlaneController = metav1.OwnerReference{Kind: kubeadmControlPlaneKind, APIVersion: kubeadmControlPlaneGroupVersion, Controller: pointer.Bool(true)}
 )
 
 // KubeadmControlPlaneOwnerReferenceAssertions maps Kubeadm control plane types to functions which return an error if the passed
@@ -270,7 +263,7 @@ var (
 	kubeadmConfigTemplateKind = "KubeadmConfigTemplate"
 
 	kubeadmConfigGroupVersion = bootstrapv1.GroupVersion.String()
-	kubeadmConfigController   = metav1.OwnerReference{Kind: kubeadmConfigKind, APIVersion: kubeadmConfigGroupVersion, Controller: ptr.To(true)}
+	kubeadmConfigController   = metav1.OwnerReference{Kind: kubeadmConfigKind, APIVersion: kubeadmConfigGroupVersion, Controller: pointer.Bool(true)}
 )
 
 // KubeadmBootstrapOwnerReferenceAssertions maps KubeadmBootstrap types to functions which return an error if the passed OwnerReferences

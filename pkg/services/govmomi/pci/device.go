@@ -84,7 +84,6 @@ func createBackingInfo(spec infrav1.PCIDeviceSpec) *types.VirtualPCIPassthroughD
 				DeviceId: *spec.DeviceID,
 			},
 		},
-		CustomLabel: spec.CustomLabel,
 	}
 }
 

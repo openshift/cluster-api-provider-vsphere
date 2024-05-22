@@ -21,7 +21,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha1"
-	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
@@ -34,7 +33,6 @@ import (
 	"net/http/cookiejar"
 	"net/url"
 	"os"
-	"path"
 	"path/filepath"
 	"reflect"
 	"regexp"
@@ -61,10 +59,9 @@ const (
 )
 
 // defaultUserAgent is the default user agent string, e.g.
-// "govc govmomi/0.28.0 (go1.18.3;linux;amd64)"
+// "govmomi/0.28.0 (go1.18.3;linux;amd64)"
 var defaultUserAgent = fmt.Sprintf(
-	"%s %s/%s (%s)",
-	execName(),
+	"%s/%s (%s)",
 	version.ClientName,
 	version.ClientVersion,
 	strings.Join([]string{runtime.Version(), runtime.GOOS, runtime.GOARCH}, ";"),
@@ -389,20 +386,6 @@ func ThumbprintSHA1(cert *x509.Certificate) string {
 	return strings.Join(hex, ":")
 }
 
-// ThumbprintSHA256 returns the sha256 thumbprint of the given cert.
-func ThumbprintSHA256(cert *x509.Certificate) string {
-	sum := sha256.Sum256(cert.Raw)
-	hex := make([]string, len(sum))
-	for i, b := range sum {
-		hex[i] = fmt.Sprintf("%02X", b)
-	}
-	return strings.Join(hex, ":")
-}
-
-func thumbprintMatches(thumbprint string, cert *x509.Certificate) bool {
-	return thumbprint == ThumbprintSHA256(cert) || thumbprint == ThumbprintSHA1(cert)
-}
-
 func (c *Client) dialTLSContext(
 	ctx context.Context,
 	network, addr string) (net.Conn, error) {
@@ -434,13 +417,14 @@ func (c *Client) dialTLSContext(
 	}
 
 	cert := conn.ConnectionState().PeerCertificates[0]
-	if thumbprintMatches(thumbprint, cert) {
-		return conn, nil
+	peer := ThumbprintSHA1(cert)
+	if thumbprint != peer {
+		_ = conn.Close()
+
+		return nil, fmt.Errorf("host %q thumbprint does not match %q", addr, thumbprint)
 	}
 
-	_ = conn.Close()
-
-	return nil, fmt.Errorf("host %q thumbprint does not match %q", addr, thumbprint)
+	return conn, nil
 }
 
 // splitHostPort is similar to net.SplitHostPort,
@@ -476,42 +460,6 @@ func (c *Client) SetCertificate(cert tls.Certificate) {
 
 	// Extension or HoK certificate
 	t.TLSClientConfig.Certificates = []tls.Certificate{cert}
-}
-
-// UseServiceVersion sets Client.Version to the current version of the service endpoint via /sdk/vimServiceVersions.xml
-func (c *Client) UseServiceVersion(kind ...string) error {
-	ns := "vim"
-	if len(kind) != 0 {
-		ns = kind[0]
-	}
-
-	u := c.URL()
-	u.Path = path.Join("/sdk", ns+"ServiceVersions.xml")
-
-	res, err := c.Get(u.String())
-	if err != nil {
-		return err
-	}
-
-	if res.StatusCode != http.StatusOK {
-		return fmt.Errorf("http.Get(%s): %s", u.Path, res.Status)
-	}
-
-	v := struct {
-		Namespace *string `xml:"namespace>name"`
-		Version   *string `xml:"namespace>version"`
-	}{
-		&c.Namespace,
-		&c.Version,
-	}
-
-	err = xml.NewDecoder(res.Body).Decode(&v)
-	_ = res.Body.Close()
-	if err != nil {
-		return fmt.Errorf("xml.Decode(%s): %s", u.Path, err)
-	}
-
-	return nil
 }
 
 // Tunnel returns a Client configured to proxy requests through vCenter's http port 80,
@@ -978,13 +926,4 @@ func (c *Client) DownloadFile(ctx context.Context, file string, u *url.URL, para
 	}
 
 	return c.WriteFile(ctx, file, rc, contentLength, param.Progress, param.Writer)
-}
-
-// execName gets the name of the executable for the current process
-func execName() string {
-	name, err := os.Executable()
-	if err != nil {
-		return "N/A"
-	}
-	return strings.TrimSuffix(filepath.Base(name), ".exe")
 }

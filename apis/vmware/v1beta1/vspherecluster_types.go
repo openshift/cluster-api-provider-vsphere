@@ -34,7 +34,6 @@ const (
 
 // VSphereClusterSpec defines the desired state of VSphereCluster.
 type VSphereClusterSpec struct {
-	// +optional
 	ControlPlaneEndpoint clusterv1.APIEndpoint `json:"controlPlaneEndpoint"`
 }
 
