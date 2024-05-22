@@ -28,7 +28,7 @@ metadata:
 spec:
   controlPlaneEndpoint:
     host: ${CONTROL_PLANE_ENDPOINT_IP}
-    port: 6443
+    port: ${CONTROL_PLANE_ENDPOINT_PORT:=6443}
   identityRef:
     kind: Secret
     name: '${CLUSTER_NAME}'
@@ -89,29 +89,41 @@ spec:
           - args:
             - manager
             env:
-            - name: cp_enable
+            - name: vip_arp
               value: "true"
-            - name: vip_interface
-              value: ${VIP_NETWORK_INTERFACE:=""}
-            - name: address
-              value: ${CONTROL_PLANE_ENDPOINT_IP}
             - name: port
               value: "6443"
-            - name: vip_arp
+            - name: vip_interface
+              value: ${VIP_NETWORK_INTERFACE:=""}
+            - name: vip_cidr
+              value: "32"
+            - name: cp_enable
+              value: "true"
+            - name: cp_namespace
+              value: kube-system
+            - name: vip_ddns
+              value: "false"
+            - name: svc_enable
+              value: "true"
+            - name: svc_leasename
+              value: plndr-svcs-lock
+            - name: svc_election
               value: "true"
             - name: vip_leaderelection
               value: "true"
+            - name: vip_leasename
+              value: plndr-cp-lock
             - name: vip_leaseduration
               value: "15"
             - name: vip_renewdeadline
               value: "10"
             - name: vip_retryperiod
               value: "2"
-            - name: svc_enable
-              value: "true"
-            - name: svc_election
-              value: "true"
-            image: ghcr.io/kube-vip/kube-vip:v0.6.3
+            - name: address
+              value: ${CONTROL_PLANE_ENDPOINT_IP}
+            - name: prometheus_server
+              value: :2112
+            image: ghcr.io/kube-vip/kube-vip:v0.6.4
             imagePullPolicy: IfNotPresent
             name: kube-vip
             resources: {}
@@ -129,7 +141,6 @@ spec:
           volumes:
           - hostPath:
               path: /etc/kubernetes/admin.conf
-              type: File
             name: kubeconfig
           - hostPath:
               path: /etc/kube-vip.hosts
@@ -188,7 +199,7 @@ spec:
             /etc/kubernetes/manifests/kube-vip.yaml
         fi
       owner: root:root
-      path: /etc/kube-vip-prepare.sh
+      path: /etc/pre-kubeadm-commands/50-kube-vip-prepare.sh
       permissions: "0700"
     format: ignition
     ignition:
@@ -223,7 +234,7 @@ spec:
                 RemainAfterExit=yes
                 Environment=OUTPUT=/run/metadata/coreos
                 ExecStart=/usr/bin/mkdir --parent /run/metadata
-                ExecStart=/usr/bin/bash -cv 'echo "COREOS_CUSTOM_HOSTNAME=$(/usr/share/oem/bin/vmtoolsd --cmd "info-get guestinfo.metadata" | base64 -d | grep local-hostname | awk {\'print $2\'} | tr -d \'"\')" > $${OUTPUT}'
+                ExecStart=/usr/bin/bash -cv 'echo "COREOS_CUSTOM_HOSTNAME=$("$(find /usr/bin /usr/share/oem -name vmtoolsd -type f -executable 2>/dev/null | head -n 1)" --cmd "info-get guestinfo.metadata" | base64 -d | grep local-hostname | awk {\'print $2\'} | tr -d \'"\')" > $${OUTPUT}'
             - name: set-hostname.service
               enabled: true
               contents: |
@@ -266,7 +277,9 @@ spec:
     preKubeadmCommands:
     - envsubst < /etc/kubeadm.yml > /etc/kubeadm.yml.tmp
     - mv /etc/kubeadm.yml.tmp /etc/kubeadm.yml
-    - /etc/kube-vip-prepare.sh
+    - mkdir -p /etc/pre-kubeadm-commands
+    - for script in $(find /etc/pre-kubeadm-commands/ -name '*.sh' -type f | sort);
+      do echo "Running script $script"; "$script"; done
     users:
     - name: core
       sshAuthorizedKeys:
@@ -321,7 +334,7 @@ spec:
                   RemainAfterExit=yes
                   Environment=OUTPUT=/run/metadata/coreos
                   ExecStart=/usr/bin/mkdir --parent /run/metadata
-                  ExecStart=/usr/bin/bash -cv 'echo "COREOS_CUSTOM_HOSTNAME=$(/usr/share/oem/bin/vmtoolsd --cmd "info-get guestinfo.metadata" | base64 -d | grep local-hostname | awk {\'print $2\'} | tr -d \'"\')" > $${OUTPUT}'
+                  ExecStart=/usr/bin/bash -cv 'echo "COREOS_CUSTOM_HOSTNAME=$("$(find /usr/bin /usr/share/oem -name vmtoolsd -type f -executable 2>/dev/null | head -n 1)" --cmd "info-get guestinfo.metadata" | base64 -d | grep local-hostname | awk {\'print $2\'} | tr -d \'"\')" > $${OUTPUT}'
               - name: set-hostname.service
                 enabled: true
                 contents: |
@@ -358,6 +371,9 @@ spec:
       preKubeadmCommands:
       - envsubst < /etc/kubeadm.yml > /etc/kubeadm.yml.tmp
       - mv /etc/kubeadm.yml.tmp /etc/kubeadm.yml
+      - mkdir -p /etc/pre-kubeadm-commands
+      - for script in $(find /etc/pre-kubeadm-commands/ -name '*.sh' -type f | sort);
+        do echo "Running script $script"; "$script"; done
       users:
       - name: core
         sshAuthorizedKeys:
@@ -410,8 +426,6 @@ spec:
   - kind: ConfigMap
     name: csi-manifests
   - kind: Secret
-    name: cloud-controller-manager
-  - kind: Secret
     name: cloud-provider-vsphere-credentials
   - kind: ConfigMap
     name: cpi-manifests
@@ -441,7 +455,6 @@ stringData:
       csi-vsphere.conf: |+
         [Global]
         thumbprint = "${VSPHERE_TLS_THUMBPRINT}"
-        cluster-id = "${NAMESPACE}/${CLUSTER_NAME}"
 
         [VirtualCenter "${VSPHERE_SERVER}"]
         user = "${VSPHERE_USERNAME}"
@@ -1312,23 +1325,6 @@ metadata:
 apiVersion: v1
 kind: Secret
 metadata:
-  name: cloud-controller-manager
-  namespace: '${NAMESPACE}'
-stringData:
-  data: |
-    apiVersion: v1
-    kind: ServiceAccount
-    metadata:
-      labels:
-        component: cloud-controller-manager
-        vsphere-cpi-infra: service-account
-      name: cloud-controller-manager
-      namespace: kube-system
-type: addons.cluster.x-k8s.io/resource-set
----
-apiVersion: v1
-kind: Secret
-metadata:
   name: cloud-provider-vsphere-credentials
   namespace: '${NAMESPACE}'
 stringData:
@@ -1351,108 +1347,221 @@ apiVersion: v1
 data:
   data: |
     ---
+    # Source: vsphere-cpi/templates/service-account.yaml
+    apiVersion: v1
+    kind: ServiceAccount
+    metadata:
+      name: cloud-controller-manager
+      labels:
+        app: vsphere-cpi
+        vsphere-cpi-infra: service-account
+        component: cloud-controller-manager
+      namespace: kube-system
+    ---
+    # Source: vsphere-cpi/templates/role.yaml
     apiVersion: rbac.authorization.k8s.io/v1
     kind: ClusterRole
     metadata:
+      name: cloud-controller-manager
       labels:
-        component: cloud-controller-manager
+        app: vsphere-cpi
         vsphere-cpi-infra: role
-      name: system:cloud-controller-manager
+        component: cloud-controller-manager
     rules:
-    - apiGroups:
-      - ""
-      resources:
-      - events
-      verbs:
-      - create
-      - patch
-      - update
-    - apiGroups:
-      - ""
-      resources:
-      - nodes
-      verbs:
-      - '*'
-    - apiGroups:
-      - ""
-      resources:
-      - nodes/status
-      verbs:
-      - patch
-    - apiGroups:
-      - ""
-      resources:
-      - services
-      verbs:
-      - list
-      - patch
-      - update
-      - watch
-    - apiGroups:
-      - ""
-      resources:
-      - services/status
-      verbs:
-      - patch
-    - apiGroups:
-      - ""
-      resources:
-      - serviceaccounts
-      verbs:
-      - create
-      - get
-      - list
-      - watch
-      - update
-    - apiGroups:
-      - ""
-      resources:
-      - persistentvolumes
-      verbs:
-      - get
-      - list
-      - watch
-      - update
-    - apiGroups:
-      - ""
-      resources:
-      - endpoints
-      verbs:
-      - create
-      - get
-      - list
-      - watch
-      - update
-    - apiGroups:
-      - ""
-      resources:
-      - secrets
-      verbs:
-      - get
-      - list
-      - watch
-    - apiGroups:
-      - coordination.k8s.io
-      resources:
-      - leases
-      verbs:
-      - get
-      - watch
-      - list
-      - update
-      - create
+      - apiGroups:
+          - ""
+        resources:
+          - events
+        verbs:
+          - create
+          - patch
+          - update
+      - apiGroups:
+          - ""
+        resources:
+          - nodes
+        verbs:
+          - "*"
+      - apiGroups:
+          - ""
+        resources:
+          - nodes/status
+        verbs:
+          - patch
+      - apiGroups:
+          - ""
+        resources:
+          - services
+        verbs:
+          - list
+          - patch
+          - update
+          - watch
+      - apiGroups:
+          - ""
+        resources:
+          - services/status
+        verbs:
+          - patch
+      - apiGroups:
+          - ""
+        resources:
+          - serviceaccounts
+        verbs:
+          - create
+          - get
+          - list
+          - watch
+          - update
+      - apiGroups:
+          - ""
+        resources:
+          - persistentvolumes
+        verbs:
+          - get
+          - list
+          - update
+          - watch
+      - apiGroups:
+          - ""
+        resources:
+          - endpoints
+        verbs:
+          - create
+          - get
+          - list
+          - watch
+          - update
+      - apiGroups:
+          - ""
+        resources:
+          - secrets
+        verbs:
+          - get
+          - list
+          - watch
+      - apiGroups:
+          - "coordination.k8s.io"
+        resources:
+          - leases
+        verbs:
+          - create
+          - get
+          - list
+          - watch
+          - update
+    ---
+    # Source: vsphere-cpi/templates/daemonset.yaml
+    apiVersion: apps/v1
+    kind: DaemonSet
+    metadata:
+      name: vsphere-cpi
+      labels:
+        app: vsphere-cpi
+        vsphere-cpi-infra: daemonset
+        component: cloud-controller-manager
+        tier: control-plane
+      namespace: kube-system
+      annotations:
+    spec:
+      selector:
+        matchLabels:
+          app: vsphere-cpi
+      updateStrategy:
+        type: RollingUpdate
+      template:
+        metadata:
+          labels:
+            app: vsphere-cpi
+            component: cloud-controller-manager
+            tier: control-plane
+            release: release-name
+            vsphere-cpi-infra: daemonset
+        spec:
+          tolerations:
+          - key: node.cloudprovider.kubernetes.io/uninitialized
+            value: "true"
+            effect: NoSchedule
+          - key: node-role.kubernetes.io/master
+            effect: NoSchedule
+            operator: Exists
+          - key: node-role.kubernetes.io/control-plane
+            effect: NoSchedule
+            operator: Exists
+          - key: node.kubernetes.io/not-ready
+            effect: NoSchedule
+            operator: Exists
+          - key: CriticalAddonsOnly
+            effect: NoExecute
+            operator: Exists
+          securityContext:
+            fsGroup: 1001
+            runAsUser: 1001
+          serviceAccountName: cloud-controller-manager
+          hostNetwork: true
+          dnsPolicy: ClusterFirst
+          priorityClassName: system-node-critical
+          containers:
+          - name: vsphere-cpi
+            image: gcr.io/cloud-provider-vsphere/cpi/release/manager:${CPI_IMAGE_K8S_VERSION}
+            imagePullPolicy: IfNotPresent
+            args:
+              - --cloud-provider=vsphere
+              - --v=2
+              - --cloud-config=/etc/cloud/vsphere.conf
+            volumeMounts:
+              - mountPath: /etc/cloud
+                name: vsphere-config-volume
+                readOnly: true
+          volumes:
+            - name: vsphere-config-volume
+              configMap:
+                name: cloud-config
+          affinity:
+            nodeAffinity:
+              requiredDuringSchedulingIgnoredDuringExecution:
+                nodeSelectorTerms:
+                - matchExpressions:
+                  - key: node-role.kubernetes.io/control-plane
+                    operator: Exists
+                - matchExpressions:
+                  - key: node-role.kubernetes.io/master
+                    operator: Exists
+    ---
+    apiVersion: rbac.authorization.k8s.io/v1
+    kind: RoleBinding
+    metadata:
+      labels:
+        app: vsphere-cpi
+        component: cloud-controller-manager
+        vsphere-cpi-infra: role-binding
+      name: servicecatalog.k8s.io:apiserver-authentication-reader
+      namespace: kube-system
+    roleRef:
+      apiGroup: rbac.authorization.k8s.io
+      kind: Role
+      name: extension-apiserver-authentication-reader
+    subjects:
+    - apiGroup: ""
+      kind: ServiceAccount
+      name: cloud-controller-manager
+      namespace: kube-system
+    - apiGroup: ""
+      kind: User
+      name: cloud-controller-manager
     ---
     apiVersion: rbac.authorization.k8s.io/v1
     kind: ClusterRoleBinding
     metadata:
       labels:
+        app: vsphere-cpi
         component: cloud-controller-manager
         vsphere-cpi-infra: cluster-role-binding
-      name: system:cloud-controller-manager
+      name: cloud-controller-manager
     roleRef:
       apiGroup: rbac.authorization.k8s.io
       kind: ClusterRole
-      name: system:cloud-controller-manager
+      name: cloud-controller-manager
     subjects:
     - kind: ServiceAccount
       name: cloud-controller-manager
@@ -1475,95 +1584,8 @@ data:
             server: '${VSPHERE_SERVER}'
     kind: ConfigMap
     metadata:
-      name: vsphere-cloud-config
+      name: cloud-config
       namespace: kube-system
-    ---
-    apiVersion: rbac.authorization.k8s.io/v1
-    kind: RoleBinding
-    metadata:
-      labels:
-        component: cloud-controller-manager
-        vsphere-cpi-infra: role-binding
-      name: servicecatalog.k8s.io:apiserver-authentication-reader
-      namespace: kube-system
-    roleRef:
-      apiGroup: rbac.authorization.k8s.io
-      kind: Role
-      name: extension-apiserver-authentication-reader
-    subjects:
-    - kind: ServiceAccount
-      name: cloud-controller-manager
-      namespace: kube-system
-    - kind: User
-      name: cloud-controller-manager
-    ---
-    apiVersion: apps/v1
-    kind: DaemonSet
-    metadata:
-      labels:
-        component: cloud-controller-manager
-        tier: control-plane
-      name: vsphere-cloud-controller-manager
-      namespace: kube-system
-    spec:
-      selector:
-        matchLabels:
-          name: vsphere-cloud-controller-manager
-      template:
-        metadata:
-          labels:
-            component: cloud-controller-manager
-            name: vsphere-cloud-controller-manager
-            tier: control-plane
-        spec:
-          affinity:
-            nodeAffinity:
-              requiredDuringSchedulingIgnoredDuringExecution:
-                nodeSelectorTerms:
-                - matchExpressions:
-                  - key: node-role.kubernetes.io/control-plane
-                    operator: Exists
-                - matchExpressions:
-                  - key: node-role.kubernetes.io/master
-                    operator: Exists
-          containers:
-          - args:
-            - --v=2
-            - --cloud-provider=vsphere
-            - --cloud-config=/etc/cloud/vsphere.conf
-            image: gcr.io/cloud-provider-vsphere/cpi/release/manager:${CPI_IMAGE_K8S_VERSION}
-            name: vsphere-cloud-controller-manager
-            resources:
-              requests:
-                cpu: 200m
-            volumeMounts:
-            - mountPath: /etc/cloud
-              name: vsphere-config-volume
-              readOnly: true
-          hostNetwork: true
-          priorityClassName: system-node-critical
-          securityContext:
-            runAsUser: 1001
-          serviceAccountName: cloud-controller-manager
-          tolerations:
-          - effect: NoSchedule
-            key: node.cloudprovider.kubernetes.io/uninitialized
-            value: "true"
-          - effect: NoSchedule
-            key: node-role.kubernetes.io/master
-            operator: Exists
-          - effect: NoSchedule
-            key: node-role.kubernetes.io/control-plane
-            operator: Exists
-          - effect: NoSchedule
-            key: node.kubernetes.io/not-ready
-            operator: Exists
-          volumes:
-          - configMap:
-              name: vsphere-cloud-config
-            name: vsphere-config-volume
-      updateStrategy:
-        type: RollingUpdate
 kind: ConfigMap
 metadata:
   name: cpi-manifests

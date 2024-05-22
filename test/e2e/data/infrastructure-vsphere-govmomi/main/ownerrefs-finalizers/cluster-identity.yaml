@@ -1,0 +1,11 @@
+---
+apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
+kind: VSphereClusterIdentity
+metadata:
+  name: ownerrefs-finalizers
+spec:
+  secretName: ownerrefs-finalizers
+  allowedNamespaces:
+    selector:
+      matchLabels:
+        kubernetes.io/metadata.name: '${NAMESPACE}'

@@ -24,6 +24,7 @@ import (
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/cluster-api/test/framework/clusterctl"
+	. "sigs.k8s.io/cluster-api/test/framework/ginkgoextensions"
 	"sigs.k8s.io/cluster-api/util"
 
 	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/constants"
@@ -32,44 +33,49 @@ import (
 type NodeLabelingSpecInput struct {
 	InfraClients
 	Global    GlobalInput
+	SpecName  string
 	Namespace *corev1.Namespace
 }
 
 var _ = Describe("Label nodes with ESXi host info", func() {
-	var (
-		namespace *corev1.Namespace
-	)
+	const specName = "node-labeling"
+	Setup(specName, func(testSpecificSettingsGetter func() testSettings) {
+		var (
+			namespace *corev1.Namespace
+		)
 
-	BeforeEach(func() {
-		Expect(bootstrapClusterProxy).NotTo(BeNil(), "BootstrapClusterProxy can't be nil")
-		namespace = setupSpecNamespace("node-labeling-e2e")
-	})
+		BeforeEach(func() {
+			Expect(bootstrapClusterProxy).NotTo(BeNil(), "BootstrapClusterProxy can't be nil")
+			namespace = setupSpecNamespace("node-labeling-e2e")
+		})
 
-	AfterEach(func() {
-		cleanupSpecNamespace(namespace)
-	})
+		AfterEach(func() {
+			cleanupSpecNamespace(namespace)
+		})
 
-	It("creates a workload cluster whose nodes have the ESXi host info", func() {
-		VerifyNodeLabeling(ctx, NodeLabelingSpecInput{
-			Namespace: namespace,
-			InfraClients: InfraClients{
-				Client:     vsphereClient,
-				RestClient: restClient,
-				Finder:     vsphereFinder,
-			},
-			Global: GlobalInput{
-				BootstrapClusterProxy: bootstrapClusterProxy,
-				ClusterctlConfigPath:  clusterctlConfigPath,
-				E2EConfig:             e2eConfig,
-				ArtifactFolder:        artifactFolder,
-			},
+		It("creates a workload cluster whose nodes have the ESXi host info", func() {
+			VerifyNodeLabeling(ctx, NodeLabelingSpecInput{
+				SpecName:  specName,
+				Namespace: namespace,
+				InfraClients: InfraClients{
+					Client:     vsphereClient,
+					RestClient: restClient,
+					Finder:     vsphereFinder,
+				},
+				Global: GlobalInput{
+					BootstrapClusterProxy: bootstrapClusterProxy,
+					ClusterctlConfigPath:  testSpecificSettingsGetter().ClusterctlConfigPath,
+					E2EConfig:             e2eConfig,
+					ArtifactFolder:        artifactFolder,
+				},
+			})
 		})
 	})
 })
 
 func VerifyNodeLabeling(ctx context.Context, input NodeLabelingSpecInput) {
 	var (
-		specName         = "node-labeling"
+		specName         = input.SpecName
 		namespace        = input.Namespace
 		clusterResources = new(clusterctl.ApplyClusterTemplateAndWaitResult)
 	)

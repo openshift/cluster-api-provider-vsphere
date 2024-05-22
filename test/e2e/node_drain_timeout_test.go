@@ -18,17 +18,23 @@ package e2e
 
 import (
 	. "github.com/onsi/ginkgo/v2"
+	"k8s.io/utils/ptr"
 	capi_e2e "sigs.k8s.io/cluster-api/test/e2e"
 )
 
 var _ = Describe("When testing node drain timeout", func() {
-	capi_e2e.NodeDrainTimeoutSpec(ctx, func() capi_e2e.NodeDrainTimeoutSpecInput {
-		return capi_e2e.NodeDrainTimeoutSpecInput{
-			E2EConfig:             e2eConfig,
-			ClusterctlConfigPath:  clusterctlConfigPath,
-			BootstrapClusterProxy: bootstrapClusterProxy,
-			ArtifactFolder:        artifactFolder,
-			SkipCleanup:           skipCleanup,
-		}
+	const specName = "node-drain" // copied from CAPI
+	Setup(specName, func(testSpecificSettingsGetter func() testSettings) {
+		capi_e2e.NodeDrainTimeoutSpec(ctx, func() capi_e2e.NodeDrainTimeoutSpecInput {
+			return capi_e2e.NodeDrainTimeoutSpecInput{
+				E2EConfig:             e2eConfig,
+				ClusterctlConfigPath:  testSpecificSettingsGetter().ClusterctlConfigPath,
+				BootstrapClusterProxy: bootstrapClusterProxy,
+				ArtifactFolder:        artifactFolder,
+				SkipCleanup:           skipCleanup,
+				Flavor:                ptr.To(testSpecificSettingsGetter().FlavorForMode("node-drain")),
+				PostNamespaceCreated:  testSpecificSettingsGetter().PostNamespaceCreatedFunc,
+			}
+		})
 	})
 })
