@@ -155,7 +155,19 @@ func (ip *informerCache) GetInformer(ctx context.Context, obj client.Object) (In
 	if err != nil {
 		return nil, err
 	}
-	return i.Informer, err
+	return i.Informer, nil
+}
+
+func (ic *informerCache) getInformerForKind(ctx context.Context, gvk schema.GroupVersionKind, obj runtime.Object) (bool, *internal.Cache, error) {
+	if ic.readerFailOnMissingInformer {
+		cache, started, ok := ic.Informers.Peek(gvk, obj)
+		if !ok {
+			return false, nil, &ErrResourceNotCached{GVK: gvk}
+		}
+		return started, cache, nil
+	}
+
+	return ic.Informers.Get(ctx, gvk, obj, &internal.GetOptions{})
 }
 
 // NeedLeaderElection implements the LeaderElectionRunnable interface

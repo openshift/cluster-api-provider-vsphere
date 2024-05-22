@@ -53,15 +53,15 @@ func (wh *Webhook) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var reviewResponse Response
 	if r.Body == nil {
 		err = errors.New("request body is empty")
-		wh.log.Error(err, "bad request")
+		wh.getLogger(nil).Error(err, "bad request")
 		reviewResponse = Errored(http.StatusBadRequest, err)
 		wh.writeResponse(w, reviewResponse)
 		return
 	}
 
 	defer r.Body.Close()
-	if body, err = ioutil.ReadAll(r.Body); err != nil {
-		wh.log.Error(err, "unable to read the body from the incoming request")
+	if body, err = io.ReadAll(r.Body); err != nil {
+		wh.getLogger(nil).Error(err, "unable to read the body from the incoming request")
 		reviewResponse = Errored(http.StatusBadRequest, err)
 		wh.writeResponse(w, reviewResponse)
 		return
@@ -70,7 +70,7 @@ func (wh *Webhook) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// verify the content type is accurate
 	if contentType := r.Header.Get("Content-Type"); contentType != "application/json" {
 		err = fmt.Errorf("contentType=%s, expected application/json", contentType)
-		wh.log.Error(err, "unable to process a request with an unknown content type", "content type", contentType)
+		wh.getLogger(nil).Error(err, "unable to process a request with unknown content type")
 		reviewResponse = Errored(http.StatusBadRequest, err)
 		wh.writeResponse(w, reviewResponse)
 		return
@@ -89,7 +89,7 @@ func (wh *Webhook) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ar.SetGroupVersionKind(v1.SchemeGroupVersion.WithKind("AdmissionReview"))
 	_, actualAdmRevGVK, err := admissionCodecs.UniversalDeserializer().Decode(body, nil, &ar)
 	if err != nil {
-		wh.log.Error(err, "unable to decode the request")
+		wh.getLogger(nil).Error(err, "unable to decode the request")
 		reviewResponse = Errored(http.StatusBadRequest, err)
 		wh.writeResponse(w, reviewResponse)
 		return

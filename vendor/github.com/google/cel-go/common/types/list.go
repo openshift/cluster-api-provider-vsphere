@@ -40,13 +40,13 @@ var (
 // NewDynamicList returns a traits.Lister with heterogenous elements.
 // value should be an array of "native" types, i.e. any type that
 // NativeToValue() can convert to a ref.Val.
-func NewDynamicList(adapter ref.TypeAdapter, value interface{}) traits.Lister {
+func NewDynamicList(adapter ref.TypeAdapter, value any) traits.Lister {
 	refValue := reflect.ValueOf(value)
 	return &baseList{
 		TypeAdapter: adapter,
 		value:       value,
 		size:        refValue.Len(),
-		get: func(i int) interface{} {
+		get: func(i int) any {
 			return refValue.Index(i).Interface()
 		},
 	}
@@ -58,7 +58,7 @@ func NewStringList(adapter ref.TypeAdapter, elems []string) traits.Lister {
 		TypeAdapter: adapter,
 		value:       elems,
 		size:        len(elems),
-		get:         func(i int) interface{} { return elems[i] },
+		get:         func(i int) any { return elems[i] },
 	}
 }
 
@@ -70,7 +70,7 @@ func NewRefValList(adapter ref.TypeAdapter, elems []ref.Val) traits.Lister {
 		TypeAdapter: adapter,
 		value:       elems,
 		size:        len(elems),
-		get:         func(i int) interface{} { return elems[i] },
+		get:         func(i int) any { return elems[i] },
 	}
 }
 
@@ -80,7 +80,7 @@ func NewProtoList(adapter ref.TypeAdapter, list protoreflect.List) traits.Lister
 		TypeAdapter: adapter,
 		value:       list,
 		size:        list.Len(),
-		get:         func(i int) interface{} { return list.Get(i).Interface() },
+		get:         func(i int) any { return list.Get(i).Interface() },
 	}
 }
 
@@ -91,8 +91,25 @@ func NewJSONList(adapter ref.TypeAdapter, l *structpb.ListValue) traits.Lister {
 		TypeAdapter: adapter,
 		value:       l,
 		size:        len(vals),
-		get:         func(i int) interface{} { return vals[i] },
+		get:         func(i int) any { return vals[i] },
 	}
+}
+
+// NewMutableList creates a new mutable list whose internal state can be modified.
+func NewMutableList(adapter ref.TypeAdapter) traits.MutableLister {
+	var mutableValues []ref.Val
+	l := &mutableList{
+		baseList: &baseList{
+			TypeAdapter: adapter,
+			value:       mutableValues,
+			size:        0,
+		},
+		mutableValues: mutableValues,
+	}
+	l.get = func(i int) any {
+		return l.mutableValues[i]
+	}
+	return l
 }
 
 // baseList points to a list containing elements of any type.
@@ -100,7 +117,7 @@ func NewJSONList(adapter ref.TypeAdapter, l *structpb.ListValue) traits.Lister {
 // The `ref.TypeAdapter` enables native type to CEL type conversions.
 type baseList struct {
 	ref.TypeAdapter
-	value interface{}
+	value any
 
 	// size indicates the number of elements within the list.
 	// Since objects are immutable the size of a list is static.
@@ -279,11 +296,56 @@ func (l *baseList) Value() interface{} {
 	return l.value
 }
 
+// String converts the list to a human readable string form.
+func (l *baseList) String() string {
+	var sb strings.Builder
+	sb.WriteString("[")
+	for i := 0; i < l.size; i++ {
+		sb.WriteString(fmt.Sprintf("%v", l.get(i)))
+		if i != l.size-1 {
+			sb.WriteString(", ")
+		}
+	}
+	sb.WriteString("]")
+	return sb.String()
+}
+
+// mutableList aggregates values into its internal storage. For use with internal CEL variables only.
+type mutableList struct {
+	*baseList
+	mutableValues []ref.Val
+}
+
+// Add copies elements from the other list into the internal storage of the mutable list.
+// The ref.Val returned by Add is the receiver.
+func (l *mutableList) Add(other ref.Val) ref.Val {
+	switch otherList := other.(type) {
+	case *mutableList:
+		l.mutableValues = append(l.mutableValues, otherList.mutableValues...)
+		l.size += len(otherList.mutableValues)
+	case traits.Lister:
+		for i := IntZero; i < otherList.Size().(Int); i++ {
+			l.size++
+			l.mutableValues = append(l.mutableValues, otherList.Get(i))
+		}
+	default:
+		return MaybeNoSuchOverloadErr(otherList)
+	}
+	return l
+}
+
+// ToImmutableList returns an immutable list based on the internal storage of the mutable list.
+func (l *mutableList) ToImmutableList() traits.Lister {
+	// The reference to internal state is guaranteed to be safe as this call is only performed
+	// when mutations have been completed.
+	return NewRefValList(l.TypeAdapter, l.mutableValues)
+}
+
 // concatList combines two list implementations together into a view.
 // The `ref.TypeAdapter` enables native type to CEL type conversions.
 type concatList struct {
 	ref.TypeAdapter
-	value    interface{}
+	value    any
 	prevList traits.Lister
 	nextList traits.Lister
 }
@@ -329,8 +391,8 @@ func (l *concatList) Contains(elem ref.Val) ref.Val {
 }
 
 // ConvertToNative implements the ref.Val interface method.
-func (l *concatList) ConvertToNative(typeDesc reflect.Type) (interface{}, error) {
-	combined := NewDynamicList(l.TypeAdapter, l.Value().([]interface{}))
+func (l *concatList) ConvertToNative(typeDesc reflect.Type) (any, error) {
+	combined := NewDynamicList(l.TypeAdapter, l.Value().([]any))
 	return combined.ConvertToNative(typeDesc)
 }
 

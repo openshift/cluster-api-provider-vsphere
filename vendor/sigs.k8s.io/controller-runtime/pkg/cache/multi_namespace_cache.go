@@ -87,9 +87,42 @@ var _ Cache = &multiNamespaceCache{}
 func (c *multiNamespaceCache) GetInformer(ctx context.Context, obj client.Object) (Informer, error) {
 	informers := map[string]Informer{}
 
-	// If the object is clusterscoped, get the informer from clusterCache,
+func (c *multiNamespaceCache) GetInformer(ctx context.Context, obj client.Object, opts ...InformerGetOption) (Informer, error) {
+	// If the object is cluster scoped, get the informer from clusterCache,
 	// if not use the namespaced caches.
-	isNamespaced, err := objectutil.IsAPINamespaced(obj, c.Scheme, c.RESTMapper)
+	isNamespaced, err := apiutil.IsObjectNamespaced(obj, c.Scheme, c.RESTMapper)
+	if err != nil {
+		return nil, err
+	}
+	if !isNamespaced {
+		clusterCacheInformer, err := c.clusterCache.GetInformer(ctx, obj, opts...)
+		if err != nil {
+			return nil, err
+		}
+
+		return &multiNamespaceInformer{
+			namespaceToInformer: map[string]Informer{
+				globalCache: clusterCacheInformer,
+			},
+		}, nil
+	}
+
+	namespaceToInformer := map[string]Informer{}
+	for ns, cache := range c.namespaceToCache {
+		informer, err := cache.GetInformer(ctx, obj, opts...)
+		if err != nil {
+			return nil, err
+		}
+		namespaceToInformer[ns] = informer
+	}
+
+	return &multiNamespaceInformer{namespaceToInformer: namespaceToInformer}, nil
+}
+
+func (c *multiNamespaceCache) GetInformerForKind(ctx context.Context, gvk schema.GroupVersionKind, opts ...InformerGetOption) (Informer, error) {
+	// If the object is cluster scoped, get the informer from clusterCache,
+	// if not use the namespaced caches.
+	isNamespaced, err := apiutil.IsGVKNamespaced(gvk, c.RESTMapper)
 	if err != nil {
 		return nil, err
 	}
@@ -323,8 +356,8 @@ func (i *multiNamespaceInformer) AddIndexers(indexers toolscache.Indexers) error
 // HasSynced checks if each namespaced informer has synced.
 func (i *multiNamespaceInformer) HasSynced() bool {
 	for _, informer := range i.namespaceToInformer {
-		if ok := informer.HasSynced(); !ok {
-			return ok
+		if !informer.HasSynced() {
+			return false
 		}
 	}
 	return true

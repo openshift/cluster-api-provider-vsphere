@@ -218,12 +218,38 @@ func (assertion *AsyncAssertion) match(matcher types.GomegaMatcher, desiredMatch
 				return true
 			}
 
-			select {
-			case <-time.After(assertion.pollingInterval):
-				value, err = assertion.pollActual()
-				if err == nil {
-					mayChange = assertion.matcherMayChange(matcher, value)
-					matches, err = matcher.Match(value)
+		if nextPoll == nil {
+			nextPoll = assertion.afterPolling()
+		}
+
+		select {
+		case <-nextPoll:
+			a, e := pollActual()
+			lock.Lock()
+			actual, actualErr = a, e
+			lock.Unlock()
+			if actualErr == nil {
+				lock.Lock()
+				lastValidActual = actual
+				hasLastValidActual = true
+				lock.Unlock()
+				oracleMatcherSaysStop = assertion.matcherSaysStopTrying(matcher, actual)
+				m, e := assertion.pollMatcher(matcher, actual)
+				lock.Lock()
+				matches, matcherErr = m, e
+				lock.Unlock()
+			}
+		case <-contextDone:
+			fail("Context was cancelled")
+			return false
+		case <-timeout:
+			if assertion.asyncType == AsyncAssertionTypeEventually {
+				fail("Timed out")
+				return false
+			} else {
+				if isTryAgainAfterError {
+					fail("Timed out while waiting on TryAgainAfter")
+					return false
 				}
 			case <-timeout:
 				return true

@@ -17,9 +17,7 @@ limitations under the License.
 // Package config implements clusterctl config functionality.
 package config
 
-import _ "embed"
-
-// ClusterctlAPIManifest contains the clustectl manifests in raw bytes format.
-//
-//go:embed manifest/clusterctl-api.yaml
-var ClusterctlAPIManifest []byte
+// Package policy is for any kind of policy object.  Suitable examples, even if
+// they aren't all here, are PodDisruptionBudget, PodSecurityPolicy,
+// NetworkPolicy, etc.
+package v1 // import "k8s.io/api/policy/v1"

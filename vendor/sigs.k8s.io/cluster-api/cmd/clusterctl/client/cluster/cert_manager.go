@@ -265,7 +265,27 @@ func (cm *certManagerClient) EnsureLatestVersion() error {
 	return cm.install()
 }
 
-func (cm *certManagerClient) deleteObjs(objs []unstructured.Unstructured) error {
+func (cm *certManagerClient) migrateCRDs(ctx context.Context) error {
+	config, err := cm.configClient.CertManager().Get()
+	if err != nil {
+		return err
+	}
+
+	// Gets the new cert-manager components from the repository.
+	objs, err := cm.getManifestObjs(ctx, config)
+	if err != nil {
+		return err
+	}
+
+	c, err := cm.proxy.NewClient()
+	if err != nil {
+		return err
+	}
+
+	return newCRDMigrator(c).Run(ctx, objs)
+}
+
+func (cm *certManagerClient) deleteObjs(ctx context.Context, objs []unstructured.Unstructured) error {
 	deleteCertManagerBackoff := newWriteBackoff()
 	for i := range objs {
 		obj := objs[i]

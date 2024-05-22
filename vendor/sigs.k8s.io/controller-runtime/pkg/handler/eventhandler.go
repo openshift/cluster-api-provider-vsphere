@@ -41,7 +41,7 @@ import (
 // Most users shouldn't need to implement their own EventHandler.
 type EventHandler interface {
 	// Create is called in response to an create event - e.g. Pod Creation.
-	Create(event.CreateEvent, workqueue.RateLimitingInterface)
+	Create(context.Context, event.CreateEvent, workqueue.RateLimitingInterface)
 
 	// Update is called in response to an update event -  e.g. Pod Updated.
 	Update(event.UpdateEvent, workqueue.RateLimitingInterface)

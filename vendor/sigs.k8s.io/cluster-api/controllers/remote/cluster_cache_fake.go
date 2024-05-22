@@ -43,8 +43,8 @@ func NewTestClusterCacheTracker(log logr.Logger, cl client.Client, scheme *runti
 	testCacheTracker.clusterAccessors[objKey] = &clusterAccessor{
 
 		cache:   nil,
-		client:  delegatingClient,
-		watches: sets.NewString(watchObjects...),
+		client:  cl,
+		watches: sets.Set[string]{}.Insert(watchObjects...),
 	}
 	return testCacheTracker
 }

@@ -14,6 +14,9 @@ func (cli *Client) ContainerExecCreate(ctx context.Context, container string, co
 	if err := cli.NewVersionError("1.25", "env"); len(config.Env) != 0 && err != nil {
 		return response, err
 	}
+	if versions.LessThan(cli.ClientVersion(), "1.42") {
+		config.ConsoleSize = nil
+	}
 
 	resp, err := cli.post(ctx, "/containers/"+container+"/exec", nil, config, nil)
 	defer ensureReaderClosed(resp)
@@ -36,7 +39,12 @@ func (cli *Client) ContainerExecStart(ctx context.Context, execID string, config
 // and the a reader to get output. It's up to the called to close
 // the hijacked connection by calling types.HijackedResponse.Close.
 func (cli *Client) ContainerExecAttach(ctx context.Context, execID string, config types.ExecStartCheck) (types.HijackedResponse, error) {
-	headers := map[string][]string{"Content-Type": {"application/json"}}
+	if versions.LessThan(cli.ClientVersion(), "1.42") {
+		config.ConsoleSize = nil
+	}
+	headers := map[string][]string{
+		"Content-Type": {"application/json"},
+	}
 	return cli.postHijacked(ctx, "/exec/"+execID+"/start", nil, config, headers)
 }
 

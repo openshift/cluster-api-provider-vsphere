@@ -87,6 +87,145 @@ const (
 	IndexedCompletion CompletionMode = "Indexed"
 )
 
+// PodFailurePolicyAction specifies how a Pod failure is handled.
+// +enum
+type PodFailurePolicyAction string
+
+const (
+	// This is an action which might be taken on a pod failure - mark the
+	// pod's job as Failed and terminate all running pods.
+	PodFailurePolicyActionFailJob PodFailurePolicyAction = "FailJob"
+
+	// This is an action which might be taken on a pod failure - mark the
+	// Job's index as failed to avoid restarts within this index. This action
+	// can only be used when backoffLimitPerIndex is set.
+	PodFailurePolicyActionFailIndex PodFailurePolicyAction = "FailIndex"
+
+	// This is an action which might be taken on a pod failure - the counter towards
+	// .backoffLimit, represented by the job's .status.failed field, is not
+	// incremented and a replacement pod is created.
+	PodFailurePolicyActionIgnore PodFailurePolicyAction = "Ignore"
+
+	// This is an action which might be taken on a pod failure - the pod failure
+	// is handled in the default way - the counter towards .backoffLimit,
+	// represented by the job's .status.failed field, is incremented.
+	PodFailurePolicyActionCount PodFailurePolicyAction = "Count"
+)
+
+// +enum
+type PodFailurePolicyOnExitCodesOperator string
+
+const (
+	PodFailurePolicyOnExitCodesOpIn    PodFailurePolicyOnExitCodesOperator = "In"
+	PodFailurePolicyOnExitCodesOpNotIn PodFailurePolicyOnExitCodesOperator = "NotIn"
+)
+
+// PodReplacementPolicy specifies the policy for creating pod replacements.
+// +enum
+type PodReplacementPolicy string
+
+const (
+	// TerminatingOrFailed means that we recreate pods
+	// when they are terminating (has a metadata.deletionTimestamp) or failed.
+	TerminatingOrFailed PodReplacementPolicy = "TerminatingOrFailed"
+	// Failed means to wait until a previously created Pod is fully terminated (has phase
+	// Failed or Succeeded) before creating a replacement Pod.
+	Failed PodReplacementPolicy = "Failed"
+)
+
+// PodFailurePolicyOnExitCodesRequirement describes the requirement for handling
+// a failed pod based on its container exit codes. In particular, it lookups the
+// .state.terminated.exitCode for each app container and init container status,
+// represented by the .status.containerStatuses and .status.initContainerStatuses
+// fields in the Pod status, respectively. Containers completed with success
+// (exit code 0) are excluded from the requirement check.
+type PodFailurePolicyOnExitCodesRequirement struct {
+	// Restricts the check for exit codes to the container with the
+	// specified name. When null, the rule applies to all containers.
+	// When specified, it should match one the container or initContainer
+	// names in the pod template.
+	// +optional
+	ContainerName *string `json:"containerName" protobuf:"bytes,1,opt,name=containerName"`
+
+	// Represents the relationship between the container exit code(s) and the
+	// specified values. Containers completed with success (exit code 0) are
+	// excluded from the requirement check. Possible values are:
+	//
+	// - In: the requirement is satisfied if at least one container exit code
+	//   (might be multiple if there are multiple containers not restricted
+	//   by the 'containerName' field) is in the set of specified values.
+	// - NotIn: the requirement is satisfied if at least one container exit code
+	//   (might be multiple if there are multiple containers not restricted
+	//   by the 'containerName' field) is not in the set of specified values.
+	// Additional values are considered to be added in the future. Clients should
+	// react to an unknown operator by assuming the requirement is not satisfied.
+	Operator PodFailurePolicyOnExitCodesOperator `json:"operator" protobuf:"bytes,2,req,name=operator"`
+
+	// Specifies the set of values. Each returned container exit code (might be
+	// multiple in case of multiple containers) is checked against this set of
+	// values with respect to the operator. The list of values must be ordered
+	// and must not contain duplicates. Value '0' cannot be used for the In operator.
+	// At least one element is required. At most 255 elements are allowed.
+	// +listType=set
+	Values []int32 `json:"values" protobuf:"varint,3,rep,name=values"`
+}
+
+// PodFailurePolicyOnPodConditionsPattern describes a pattern for matching
+// an actual pod condition type.
+type PodFailurePolicyOnPodConditionsPattern struct {
+	// Specifies the required Pod condition type. To match a pod condition
+	// it is required that specified type equals the pod condition type.
+	Type corev1.PodConditionType `json:"type" protobuf:"bytes,1,req,name=type"`
+
+	// Specifies the required Pod condition status. To match a pod condition
+	// it is required that the specified status equals the pod condition status.
+	// Defaults to True.
+	Status corev1.ConditionStatus `json:"status" protobuf:"bytes,2,req,name=status"`
+}
+
+// PodFailurePolicyRule describes how a pod failure is handled when the requirements are met.
+// One of onExitCodes and onPodConditions, but not both, can be used in each rule.
+type PodFailurePolicyRule struct {
+	// Specifies the action taken on a pod failure when the requirements are satisfied.
+	// Possible values are:
+	//
+	// - FailJob: indicates that the pod's job is marked as Failed and all
+	//   running pods are terminated.
+	// - FailIndex: indicates that the pod's index is marked as Failed and will
+	//   not be restarted.
+	//   This value is alpha-level. It can be used when the
+	//   `JobBackoffLimitPerIndex` feature gate is enabled (disabled by default).
+	// - Ignore: indicates that the counter towards the .backoffLimit is not
+	//   incremented and a replacement pod is created.
+	// - Count: indicates that the pod is handled in the default way - the
+	//   counter towards the .backoffLimit is incremented.
+	// Additional values are considered to be added in the future. Clients should
+	// react to an unknown action by skipping the rule.
+	Action PodFailurePolicyAction `json:"action" protobuf:"bytes,1,req,name=action"`
+
+	// Represents the requirement on the container exit codes.
+	// +optional
+	OnExitCodes *PodFailurePolicyOnExitCodesRequirement `json:"onExitCodes" protobuf:"bytes,2,opt,name=onExitCodes"`
+
+	// Represents the requirement on the pod conditions. The requirement is represented
+	// as a list of pod condition patterns. The requirement is satisfied if at
+	// least one pattern matches an actual pod condition. At most 20 elements are allowed.
+	// +listType=atomic
+	// +optional
+	OnPodConditions []PodFailurePolicyOnPodConditionsPattern `json:"onPodConditions" protobuf:"bytes,3,opt,name=onPodConditions"`
+}
+
+// PodFailurePolicy describes how failed pods influence the backoffLimit.
+type PodFailurePolicy struct {
+	// A list of pod failure policy rules. The rules are evaluated in order.
+	// Once a rule matches a Pod failure, the remaining of the rules are ignored.
+	// When no rule matches the Pod failure, the default handling applies - the
+	// counter of pod failures is incremented and it is checked against
+	// the backoffLimit. At most 20 elements are allowed.
+	// +listType=atomic
+	Rules []PodFailurePolicyRule `json:"rules" protobuf:"bytes,1,opt,name=rules"`
+}
+
 // JobSpec describes how the job execution will look like.
 type JobSpec struct {
 
@@ -119,6 +258,30 @@ type JobSpec struct {
 	// Defaults to 6
 	// +optional
 	BackoffLimit *int32 `json:"backoffLimit,omitempty" protobuf:"varint,7,opt,name=backoffLimit"`
+
+	// Specifies the limit for the number of retries within an
+	// index before marking this index as failed. When enabled the number of
+	// failures per index is kept in the pod's
+	// batch.kubernetes.io/job-index-failure-count annotation. It can only
+	// be set when Job's completionMode=Indexed, and the Pod's restart
+	// policy is Never. The field is immutable.
+	// This field is alpha-level. It can be used when the `JobBackoffLimitPerIndex`
+	// feature gate is enabled (disabled by default).
+	// +optional
+	BackoffLimitPerIndex *int32 `json:"backoffLimitPerIndex,omitempty" protobuf:"varint,12,opt,name=backoffLimitPerIndex"`
+
+	// Specifies the maximal number of failed indexes before marking the Job as
+	// failed, when backoffLimitPerIndex is set. Once the number of failed
+	// indexes exceeds this number the entire Job is marked as Failed and its
+	// execution is terminated. When left as null the job continues execution of
+	// all of its indexes and is marked with the `Complete` Job condition.
+	// It can only be specified when backoffLimitPerIndex is set.
+	// It can be null or up to completions. It is required and must be
+	// less than or equal to 10^4 when is completions greater than 10^5.
+	// This field is alpha-level. It can be used when the `JobBackoffLimitPerIndex`
+	// feature gate is enabled (disabled by default).
+	// +optional
+	MaxFailedIndexes *int32 `json:"maxFailedIndexes,omitempty" protobuf:"varint,13,opt,name=maxFailedIndexes"`
 
 	// TODO enabled it when https://github.com/kubernetes/kubernetes/issues/28486 has been fixed
 	// Optional number of failed pods to retain.
@@ -195,6 +358,19 @@ type JobSpec struct {
 	//
 	// +optional
 	Suspend *bool `json:"suspend,omitempty" protobuf:"varint,10,opt,name=suspend"`
+
+	// podReplacementPolicy specifies when to create replacement Pods.
+	// Possible values are:
+	// - TerminatingOrFailed means that we recreate pods
+	//   when they are terminating (has a metadata.deletionTimestamp) or failed.
+	// - Failed means to wait until a previously created Pod is fully terminated (has phase
+	//   Failed or Succeeded) before creating a replacement Pod.
+	//
+	// When using podFailurePolicy, Failed is the the only allowed value.
+	// TerminatingOrFailed and Failed are allowed values when podFailurePolicy is not in use.
+	// This is an alpha field. Enable JobPodReplacementPolicy to be able to use this field.
+	// +optional
+	PodReplacementPolicy *PodReplacementPolicy `json:"podReplacementPolicy,omitempty" protobuf:"bytes,14,opt,name=podReplacementPolicy,casttype=podReplacementPolicy"`
 }
 
 // JobStatus represents the current state of a Job.
@@ -238,7 +414,15 @@ type JobStatus struct {
 	// +optional
 	Failed int32 `json:"failed,omitempty" protobuf:"varint,6,opt,name=failed"`
 
-	// CompletedIndexes holds the completed indexes when .spec.completionMode =
+	// The number of pods which are terminating (in phase Pending or Running
+	// and have a deletionTimestamp).
+	//
+	// This field is alpha-level. The job controller populates the field when
+	// the feature gate JobPodReplacementPolicy is enabled (disabled by default).
+	// +optional
+	Terminating *int32 `json:"terminating,omitempty" protobuf:"varint,11,opt,name=terminating"`
+
+	// completedIndexes holds the completed indexes when .spec.completionMode =
 	// "Indexed" in a text format. The indexes are represented as decimal integers
 	// separated by commas. The numbers are listed in increasing order. Three or
 	// more consecutive numbers are compressed and represented by the first and
@@ -248,7 +432,20 @@ type JobStatus struct {
 	// +optional
 	CompletedIndexes string `json:"completedIndexes,omitempty" protobuf:"bytes,7,opt,name=completedIndexes"`
 
-	// UncountedTerminatedPods holds the UIDs of Pods that have terminated but
+	// FailedIndexes holds the failed indexes when backoffLimitPerIndex=true.
+	// The indexes are represented in the text format analogous as for the
+	// `completedIndexes` field, ie. they are kept as decimal integers
+	// separated by commas. The numbers are listed in increasing order. Three or
+	// more consecutive numbers are compressed and represented by the first and
+	// last element of the series, separated by a hyphen.
+	// For example, if the failed indexes are 1, 3, 4, 5 and 7, they are
+	// represented as "1,3-5,7".
+	// This field is alpha-level. It can be used when the `JobBackoffLimitPerIndex`
+	// feature gate is enabled (disabled by default).
+	// +optional
+	FailedIndexes *string `json:"failedIndexes,omitempty" protobuf:"bytes,10,opt,name=failedIndexes"`
+
+	// uncountedTerminatedPods holds the UIDs of Pods that have terminated but
 	// the job controller hasn't yet accounted for in the status counters.
 	//
 	// The job controller creates pods with a finalizer. When a pod terminates
@@ -269,8 +466,8 @@ type JobStatus struct {
 
 	// The number of pods which have a Ready condition.
 	//
-	// This field is alpha-level. The job controller populates the field when
-	// the feature gate JobReadyPods is enabled (disabled by default).
+	// This field is beta-level. The job controller populates the field when
+	// the feature gate JobReadyPods is enabled (enabled by default).
 	// +optional
 	Ready *int32 `json:"ready,omitempty" protobuf:"varint,9,opt,name=ready"`
 }
@@ -300,6 +497,8 @@ const (
 	JobComplete JobConditionType = "Complete"
 	// JobFailed means the job has failed its execution.
 	JobFailed JobConditionType = "Failed"
+	// FailureTarget means the job is about to fail its execution.
+	JobFailureTarget JobConditionType = "FailureTarget"
 )
 
 // JobCondition describes current state of a job.

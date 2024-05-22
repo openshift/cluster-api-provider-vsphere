@@ -157,25 +157,26 @@ func (a *EventRecorderAdapter) Eventf(regarding, _ runtime.Object, eventtype, re
 
 // Creates a new event broadcaster.
 func NewBroadcaster() EventBroadcaster {
-	return &eventBroadcasterImpl{
-		Broadcaster:   watch.NewLongQueueBroadcaster(maxQueuedEvents, watch.DropIfChannelFull),
-		sleepDuration: defaultSleepDuration,
-	}
+	return newEventBroadcaster(watch.NewLongQueueBroadcaster(maxQueuedEvents, watch.DropIfChannelFull), defaultSleepDuration)
 }
 
 func NewBroadcasterForTests(sleepDuration time.Duration) EventBroadcaster {
-	return &eventBroadcasterImpl{
-		Broadcaster:   watch.NewLongQueueBroadcaster(maxQueuedEvents, watch.DropIfChannelFull),
-		sleepDuration: sleepDuration,
-	}
+	return newEventBroadcaster(watch.NewLongQueueBroadcaster(maxQueuedEvents, watch.DropIfChannelFull), sleepDuration)
 }
 
 func NewBroadcasterWithCorrelatorOptions(options CorrelatorOptions) EventBroadcaster {
-	return &eventBroadcasterImpl{
-		Broadcaster:   watch.NewLongQueueBroadcaster(maxQueuedEvents, watch.DropIfChannelFull),
-		sleepDuration: defaultSleepDuration,
-		options:       options,
+	eventBroadcaster := newEventBroadcaster(watch.NewLongQueueBroadcaster(maxQueuedEvents, watch.DropIfChannelFull), defaultSleepDuration)
+	eventBroadcaster.options = options
+	return eventBroadcaster
+}
+
+func newEventBroadcaster(broadcaster *watch.Broadcaster, sleepDuration time.Duration) *eventBroadcasterImpl {
+	eventBroadcaster := &eventBroadcasterImpl{
+		Broadcaster:   broadcaster,
+		sleepDuration: sleepDuration,
 	}
+	eventBroadcaster.cancelationCtx, eventBroadcaster.cancel = context.WithCancel(context.Background())
+	return eventBroadcaster
 }
 
 type eventBroadcasterImpl struct {
@@ -224,9 +225,13 @@ func recordToSink(sink EventSink, event *v1.Event, eventCorrelator *EventCorrela
 		// Randomize the first sleep so that various clients won't all be
 		// synced up if the master goes down.
 		if tries == 1 {
-			time.Sleep(time.Duration(float64(sleepDuration) * rand.Float64()))
-		} else {
-			time.Sleep(sleepDuration)
+			delay = time.Duration(float64(delay) * rand.Float64())
+		}
+		select {
+		case <-e.cancelationCtx.Done():
+			klog.Errorf("Unable to write event '%#v' (broadcaster is shut down)", event)
+			return
+		case <-time.After(delay):
 		}
 	}
 }
@@ -261,7 +266,7 @@ func recordEvent(sink EventSink, event *v1.Event, patch []byte, updateExistingEv
 		klog.Errorf("Unable to construct event '%#v': '%v' (will not retry!)", event, err)
 		return true
 	case *errors.StatusError:
-		if errors.IsAlreadyExists(err) {
+		if errors.IsAlreadyExists(err) || errors.HasStatusCause(err, v1.NamespaceTerminatingCause) {
 			klog.V(5).Infof("Server rejected event '%#v': '%v' (will not retry!)", event, err)
 		} else {
 			klog.Errorf("Server rejected event '%#v': '%v' (will not retry!)", event, err)
@@ -291,14 +296,17 @@ func (e *eventBroadcasterImpl) StartLogging(logf func(format string, args ...int
 func (e *eventBroadcasterImpl) StartStructuredLogging(verbosity klog.Level) watch.Interface {
 	return e.StartEventWatcher(
 		func(e *v1.Event) {
-			klog.V(verbosity).InfoS("Event occurred", "object", klog.KRef(e.InvolvedObject.Namespace, e.InvolvedObject.Name), "kind", e.InvolvedObject.Kind, "apiVersion", e.InvolvedObject.APIVersion, "type", e.Type, "reason", e.Reason, "message", e.Message)
+			klog.V(verbosity).InfoS("Event occurred", "object", klog.KRef(e.InvolvedObject.Namespace, e.InvolvedObject.Name), "fieldPath", e.InvolvedObject.FieldPath, "kind", e.InvolvedObject.Kind, "apiVersion", e.InvolvedObject.APIVersion, "type", e.Type, "reason", e.Reason, "message", e.Message)
 		})
 }
 
 // StartEventWatcher starts sending events received from this EventBroadcaster to the given event handler function.
 // The return value can be ignored or used to stop recording, if desired.
 func (e *eventBroadcasterImpl) StartEventWatcher(eventHandler func(*v1.Event)) watch.Interface {
-	watcher := e.Watch()
+	watcher, err := e.Watch()
+	if err != nil {
+		klog.Errorf("Unable start event watcher: '%v' (will not retry!)", err)
+	}
 	go func() {
 		defer utilruntime.HandleCrash()
 		for watchEvent := range watcher.ResultChan() {
@@ -346,7 +354,12 @@ func (recorder *recorderImpl) generateEvent(object runtime.Object, annotations m
 	// when we go to shut down this broadcaster.  Just drop events if we get overloaded,
 	// and log an error if that happens (we've configured the broadcaster to drop
 	// outgoing events anyway).
-	if sent := recorder.ActionOrDrop(watch.Added, event); !sent {
+	sent, err := recorder.ActionOrDrop(watch.Added, event)
+	if err != nil {
+		klog.Errorf("unable to record event: %v (will not retry!)", err)
+		return
+	}
+	if !sent {
 		klog.Errorf("unable to record event: too many queued events, dropped event %#v", event)
 	}
 }

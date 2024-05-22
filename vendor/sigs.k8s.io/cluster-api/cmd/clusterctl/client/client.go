@@ -90,7 +90,7 @@ type AlphaClient interface {
 	// RolloutUndo provides rollout rollback of cluster-api resources
 	RolloutUndo(options RolloutOptions) error
 	// TopologyPlan dry runs the topology reconciler
-	TopologyPlan(options TopologyPlanOptions) (*TopologyPlanOutput, error)
+	TopologyPlan(ctx context.Context, options TopologyPlanOptions) (*TopologyPlanOutput, error)
 }
 
 // YamlPrinter exposes methods that prints the processed template and

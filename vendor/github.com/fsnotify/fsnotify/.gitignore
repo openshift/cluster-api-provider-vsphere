@@ -2,5 +2,5 @@
 # https://help.github.com/articles/ignoring-files
 # git config --global core.excludesfile ~/.gitignore_global
 
-.vagrant
-*.sublime-project
+# Output of go build ./cmd/fsnotify
+/fsnotify

@@ -408,16 +408,20 @@ type flushSyncWriter interface {
 func init() {
 	logging.stderrThreshold = errorLog // Default stderrThreshold is ERROR.
 	logging.setVState(0, nil, false)
-	logging.logDir = ""
-	logging.logFile = ""
-	logging.logFileMaxSizeMB = 1800
-	logging.toStderr = true
-	logging.alsoToStderr = false
-	logging.skipHeaders = false
-	logging.addDirHeader = false
-	logging.skipLogHeaders = false
-	logging.oneOutput = false
-	go logging.flushDaemon()
+	commandLine.Var(&logging.verbosity, "v", "number for the log level verbosity")
+	commandLine.BoolVar(&logging.addDirHeader, "add_dir_header", false, "If true, adds the file directory to the header of the log messages")
+	commandLine.BoolVar(&logging.skipHeaders, "skip_headers", false, "If true, avoid header prefixes in the log messages")
+	commandLine.BoolVar(&logging.oneOutput, "one_output", false, "If true, only write logs to their native severity level (vs also writing to each lower severity level; no effect when -logtostderr=true)")
+	commandLine.BoolVar(&logging.skipLogHeaders, "skip_log_headers", false, "If true, avoid headers when opening log files (no effect when -logtostderr=true)")
+	logging.stderrThreshold = severityValue{
+		Severity: severity.ErrorLog, // Default stderrThreshold is ERROR.
+	}
+	commandLine.Var(&logging.stderrThreshold, "stderrthreshold", "logs at or above this threshold go to stderr when writing to files and stderr (no effect when -logtostderr=true or -alsologtostderr=false)")
+	commandLine.Var(&logging.vmodule, "vmodule", "comma-separated list of pattern=N settings for file-filtered logging")
+	commandLine.Var(&logging.traceLocation, "log_backtrace_at", "when logging hits line file:N, emit a stack trace")
+
+	logging.settings.contextualLoggingEnabled = true
+	logging.flushD = newFlushDaemon(logging.lockAndFlushAll, nil)
 }
 
 // InitFlags is for explicitly initializing the flags.
@@ -518,11 +522,22 @@ type loggingT struct {
 	filter LogFilter
 }
 
-// buffer holds a byte Buffer for reuse. The zero value is ready for use.
-type buffer struct {
-	bytes.Buffer
-	tmp  [64]byte // temporary byte array for creating headers.
-	next *buffer
+// deepCopy creates a copy that doesn't share anything with the original
+// instance.
+func (s settings) deepCopy() settings {
+	// vmodule is a slice and would be shared, so we have copy it.
+	filter := make([]modulePat, len(s.vmodule.filter))
+	for i := range s.vmodule.filter {
+		filter[i] = s.vmodule.filter[i]
+	}
+	s.vmodule.filter = filter
+
+	if s.logger != nil {
+		logger := *s.logger
+		s.logger = &logger
+	}
+
+	return s
 }
 
 var logging loggingT
@@ -615,45 +630,13 @@ func (l *loggingT) header(s severity, depth int) (*buffer, string, int) {
 }
 
 // formatHeader formats a log header using the provided file name and line number.
-func (l *loggingT) formatHeader(s severity, file string, line int) *buffer {
-	now := timeNow()
-	if line < 0 {
-		line = 0 // not a real line number, but acceptable to someDigits
-	}
-	if s > fatalLog {
-		s = infoLog // for safety.
-	}
-	buf := l.getBuffer()
+func (l *loggingT) formatHeader(s severity.Severity, file string, line int) *buffer.Buffer {
+	buf := buffer.GetBuffer()
 	if l.skipHeaders {
 		return buf
 	}
-
-	// Avoid Fprintf, for speed. The format is so simple that we can do it quickly by hand.
-	// It's worth about 3X. Fprintf is hard.
-	_, month, day := now.Date()
-	hour, minute, second := now.Clock()
-	// Lmmdd hh:mm:ss.uuuuuu threadid file:line]
-	buf.tmp[0] = severityChar[s]
-	buf.twoDigits(1, int(month))
-	buf.twoDigits(3, day)
-	buf.tmp[5] = ' '
-	buf.twoDigits(6, hour)
-	buf.tmp[8] = ':'
-	buf.twoDigits(9, minute)
-	buf.tmp[11] = ':'
-	buf.twoDigits(12, second)
-	buf.tmp[14] = '.'
-	buf.nDigits(6, 15, now.Nanosecond()/1000, '0')
-	buf.tmp[21] = ' '
-	buf.nDigits(7, 22, pid, ' ') // TODO: should be TID
-	buf.tmp[29] = ' '
-	buf.Write(buf.tmp[:30])
-	buf.WriteString(file)
-	buf.tmp[0] = ':'
-	n := buf.someDigits(1, line)
-	buf.tmp[n+1] = ']'
-	buf.tmp[n+2] = ' '
-	buf.Write(buf.tmp[:n+3])
+	now := timeNow()
+	buf.FormatHeader(s, file, line, now)
 	return buf
 }
 
@@ -668,43 +651,14 @@ func (buf *buffer) twoDigits(i, d int) {
 	buf.tmp[i] = digits[d%10]
 }
 
-// nDigits formats an n-digit integer at buf.tmp[i],
-// padding with pad on the left.
-// It assumes d >= 0.
-func (buf *buffer) nDigits(n, i, d int, pad byte) {
-	j := n - 1
-	for ; j >= 0 && d > 0; j-- {
-		buf.tmp[i+j] = digits[d%10]
-		d /= 10
-	}
-	for ; j >= 0; j-- {
-		buf.tmp[i+j] = pad
-	}
-}
-
-// someDigits formats a zero-prefixed variable-width integer at buf.tmp[i].
-func (buf *buffer) someDigits(i, d int) int {
-	// Print into the top, then copy down. We know there's space for at least
-	// a 10-digit number.
-	j := len(buf.tmp)
-	for {
-		j--
-		buf.tmp[j] = digits[d%10]
-		d /= 10
-		if d == 0 {
-			break
-		}
-	}
-	return copy(buf.tmp[i:], buf.tmp[j:])
-}
-
-func (l *loggingT) println(s severity, logger *logr.Logger, filter LogFilter, args ...interface{}) {
-	buf, file, line := l.header(s, 0)
-	// if logger is set, we clear the generated header as we rely on the backing
-	// logger implementation to print headers
-	if logger != nil {
-		l.putBuffer(buf)
-		buf = l.getBuffer()
+func (l *loggingT) printlnDepth(s severity.Severity, logger *logWriter, filter LogFilter, depth int, args ...interface{}) {
+	buf, file, line := l.header(s, depth)
+	// If a logger is set and doesn't support writing a formatted buffer,
+	// we clear the generated header as we rely on the backing
+	// logger implementation to print headers.
+	if logger != nil && logger.writeKlogBuffer == nil {
+		buffer.PutBuffer(buf)
+		buf = buffer.GetBuffer()
 	}
 	if filter != nil {
 		args = filter.Filter(args)
@@ -717,13 +671,14 @@ func (l *loggingT) print(s severity, logger *logr.Logger, filter LogFilter, args
 	l.printDepth(s, logger, filter, 1, args...)
 }
 
-func (l *loggingT) printDepth(s severity, logger *logr.Logger, filter LogFilter, depth int, args ...interface{}) {
+func (l *loggingT) printDepth(s severity.Severity, logger *logWriter, filter LogFilter, depth int, args ...interface{}) {
 	buf, file, line := l.header(s, depth)
-	// if logr is set, we clear the generated header as we rely on the backing
-	// logr implementation to print headers
-	if logger != nil {
-		l.putBuffer(buf)
-		buf = l.getBuffer()
+	// If a logger is set and doesn't support writing a formatted buffer,
+	// we clear the generated header as we rely on the backing
+	// logger implementation to print headers.
+	if logger != nil && logger.writeKlogBuffer == nil {
+		buffer.PutBuffer(buf)
+		buf = buffer.GetBuffer()
 	}
 	if filter != nil {
 		args = filter.Filter(args)
@@ -735,13 +690,18 @@ func (l *loggingT) printDepth(s severity, logger *logr.Logger, filter LogFilter,
 	l.output(s, logger, buf, depth, file, line, false)
 }
 
-func (l *loggingT) printf(s severity, logger *logr.Logger, filter LogFilter, format string, args ...interface{}) {
-	buf, file, line := l.header(s, 0)
-	// if logr is set, we clear the generated header as we rely on the backing
-	// logr implementation to print headers
-	if logger != nil {
-		l.putBuffer(buf)
-		buf = l.getBuffer()
+func (l *loggingT) printf(s severity.Severity, logger *logWriter, filter LogFilter, format string, args ...interface{}) {
+	l.printfDepth(s, logger, filter, 1, format, args...)
+}
+
+func (l *loggingT) printfDepth(s severity.Severity, logger *logWriter, filter LogFilter, depth int, format string, args ...interface{}) {
+	buf, file, line := l.header(s, depth)
+	// If a logger is set and doesn't support writing a formatted buffer,
+	// we clear the generated header as we rely on the backing
+	// logger implementation to print headers.
+	if logger != nil && logger.writeKlogBuffer == nil {
+		buffer.PutBuffer(buf)
+		buf = buffer.GetBuffer()
 	}
 	if filter != nil {
 		format, args = filter.FilterF(format, args)
@@ -756,13 +716,14 @@ func (l *loggingT) printf(s severity, logger *logr.Logger, filter LogFilter, for
 // printWithFileLine behaves like print but uses the provided file and line number.  If
 // alsoLogToStderr is true, the log message always appears on standard error; it
 // will also appear in the log file unless --logtostderr is set.
-func (l *loggingT) printWithFileLine(s severity, logger *logr.Logger, filter LogFilter, file string, line int, alsoToStderr bool, args ...interface{}) {
+func (l *loggingT) printWithFileLine(s severity.Severity, logger *logWriter, filter LogFilter, file string, line int, alsoToStderr bool, args ...interface{}) {
 	buf := l.formatHeader(s, file, line)
-	// if logr is set, we clear the generated header as we rely on the backing
-	// logr implementation to print headers
-	if logger != nil {
-		l.putBuffer(buf)
-		buf = l.getBuffer()
+	// If a logger is set and doesn't support writing a formatted buffer,
+	// we clear the generated header as we rely on the backing
+	// logger implementation to print headers.
+	if logger != nil && logger.writeKlogBuffer == nil {
+		buffer.PutBuffer(buf)
+		buf = buffer.GetBuffer()
 	}
 	if filter != nil {
 		args = filter.Filter(args)
@@ -775,7 +736,7 @@ func (l *loggingT) printWithFileLine(s severity, logger *logr.Logger, filter Log
 }
 
 // if loggr is specified, will call loggr.Error, otherwise output with logging module.
-func (l *loggingT) errorS(err error, logger *logr.Logger, filter LogFilter, depth int, msg string, keysAndValues ...interface{}) {
+func (l *loggingT) errorS(err error, logger *logWriter, filter LogFilter, depth int, msg string, keysAndValues ...interface{}) {
 	if filter != nil {
 		msg, keysAndValues = filter.FilterS(msg, keysAndValues)
 	}
@@ -787,7 +748,7 @@ func (l *loggingT) errorS(err error, logger *logr.Logger, filter LogFilter, dept
 }
 
 // if loggr is specified, will call loggr.Info, otherwise output with logging module.
-func (l *loggingT) infoS(logger *logr.Logger, filter LogFilter, depth int, msg string, keysAndValues ...interface{}) {
+func (l *loggingT) infoS(logger *logWriter, filter LogFilter, depth int, msg string, keysAndValues ...interface{}) {
 	if filter != nil {
 		msg, keysAndValues = filter.FilterS(msg, keysAndValues)
 	}
@@ -837,6 +798,10 @@ func kvListFormat(b *bytes.Buffer, keysAndValues ...interface{}) {
 			}
 		}
 	}
+	serialize.KVListFormat(&b.Buffer, keysAndValues...)
+	l.printDepth(s, logging.logger, nil, depth+1, &b.Buffer)
+	// Make the buffer available for reuse.
+	buffer.PutBuffer(b)
 }
 
 // redirectBuffer is used to set an alternate destination for the logs
@@ -930,7 +895,13 @@ func (l *loggingT) output(s severity, log *logr.Logger, buf *buffer, depth int, 
 		if s == errorLog {
 			l.logr.WithCallDepth(depth+3).Error(nil, string(data))
 		} else {
-			log.WithCallDepth(depth + 3).Info(string(data))
+			// TODO: set 'severity' and caller information as structured log info
+			// keysAndValues := []interface{}{"severity", severityName[s], "file", file, "line", line}
+			if s == severity.ErrorLog {
+				logger.WithCallDepth(depth+3).Error(nil, string(data))
+			} else {
+				logger.WithCallDepth(depth + 3).Info(string(data))
+			}
 		}
 	} else if l.toStderr {
 		os.Stderr.Write(data)
@@ -948,7 +919,7 @@ func (l *loggingT) output(s severity, log *logr.Logger, buf *buffer, depth int, 
 					l.exit(err)
 				}
 			}
-			l.file[infoLog].Write(data)
+			l.file[severity.InfoLog].Write(data)
 		} else {
 			if l.file[s] == nil {
 				if err := l.createFiles(s); err != nil {
@@ -961,17 +932,17 @@ func (l *loggingT) output(s severity, log *logr.Logger, buf *buffer, depth int, 
 				l.file[s].Write(data)
 			} else {
 				switch s {
-				case fatalLog:
-					l.file[fatalLog].Write(data)
+				case severity.FatalLog:
+					l.file[severity.FatalLog].Write(data)
 					fallthrough
-				case errorLog:
-					l.file[errorLog].Write(data)
+				case severity.ErrorLog:
+					l.file[severity.ErrorLog].Write(data)
 					fallthrough
-				case warningLog:
-					l.file[warningLog].Write(data)
+				case severity.WarningLog:
+					l.file[severity.WarningLog].Write(data)
 					fallthrough
-				case infoLog:
-					l.file[infoLog].Write(data)
+				case severity.InfoLog:
+					l.file[severity.InfoLog].Write(data)
 				}
 			}
 		}
@@ -1177,9 +1148,19 @@ func (l *loggingT) createFiles(sev severity) error {
 const flushInterval = 5 * time.Second
 
 // flushDaemon periodically flushes the log file buffers.
-func (l *loggingT) flushDaemon() {
-	for range time.NewTicker(flushInterval).C {
-		l.lockAndFlushAll()
+type flushDaemon struct {
+	mu       sync.Mutex
+	clock    clock.WithTicker
+	flush    func()
+	stopC    chan struct{}
+	stopDone chan struct{}
+}
+
+// newFlushDaemon returns a new flushDaemon. If the passed clock is nil, a
+// clock.RealClock is used.
+func newFlushDaemon(flush func(), tickClock clock.WithTicker) *flushDaemon {
+	if tickClock == nil {
+		tickClock = clock.RealClock{}
 	}
 }
 

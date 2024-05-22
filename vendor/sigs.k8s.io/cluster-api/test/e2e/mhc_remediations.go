@@ -52,7 +52,7 @@ type MachineRemediationSpecInput struct {
 	// configured to treat "e2e.remediation.condition" "False" as an unhealthy
 	// condition with a short timeout.
 	// If not specified, "md-remediation" is used.
-	MDFlavor *string
+	Flavor *string
 }
 
 // MachineRemediationSpec implements a test that verifies that Machines are remediated by MHC during unhealthy conditions.
@@ -88,13 +88,13 @@ func MachineRemediationSpec(ctx context.Context, inputGetter func() MachineRemed
 				LogFolder:                filepath.Join(input.ArtifactFolder, "clusters", input.BootstrapClusterProxy.GetName()),
 				ClusterctlConfigPath:     input.ClusterctlConfigPath,
 				KubeconfigPath:           input.BootstrapClusterProxy.GetKubeconfigPath(),
-				InfrastructureProvider:   clusterctl.DefaultInfrastructureProvider,
-				Flavor:                   pointer.StringDeref(input.MDFlavor, "md-remediation"),
+				InfrastructureProvider:   infrastructureProvider,
+				Flavor:                   pointer.StringDeref(input.Flavor, "md-remediation"),
 				Namespace:                namespace.Name,
 				ClusterName:              fmt.Sprintf("%s-%s", specName, util.RandomString(6)),
 				KubernetesVersion:        input.E2EConfig.GetVariable(KubernetesVersion),
-				ControlPlaneMachineCount: pointer.Int64Ptr(1),
-				WorkerMachineCount:       pointer.Int64Ptr(1),
+				ControlPlaneMachineCount: pointer.Int64(1),
+				WorkerMachineCount:       pointer.Int64(1),
 			},
 			WaitForClusterIntervals:      input.E2EConfig.GetIntervals(specName, "wait-cluster"),
 			WaitForControlPlaneIntervals: input.E2EConfig.GetIntervals(specName, "wait-control-plane"),

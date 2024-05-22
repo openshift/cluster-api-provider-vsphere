@@ -333,7 +333,85 @@ func NewWithOptions(opts ...Option) *Viper {
 func Reset() {
 	v = New()
 	SupportedExts = []string{"json", "toml", "yaml", "yml", "properties", "props", "prop", "hcl", "tfvars", "dotenv", "env", "ini"}
-	SupportedRemoteProviders = []string{"etcd", "consul", "firestore"}
+	SupportedRemoteProviders = []string{"etcd", "etcd3", "consul", "firestore", "nats"}
+}
+
+// TODO: make this lazy initialization instead
+func (v *Viper) resetEncoding() {
+	encoderRegistry := encoding.NewEncoderRegistry()
+	decoderRegistry := encoding.NewDecoderRegistry()
+
+	{
+		codec := yaml.Codec{}
+
+		encoderRegistry.RegisterEncoder("yaml", codec)
+		decoderRegistry.RegisterDecoder("yaml", codec)
+
+		encoderRegistry.RegisterEncoder("yml", codec)
+		decoderRegistry.RegisterDecoder("yml", codec)
+	}
+
+	{
+		codec := json.Codec{}
+
+		encoderRegistry.RegisterEncoder("json", codec)
+		decoderRegistry.RegisterDecoder("json", codec)
+	}
+
+	{
+		codec := toml.Codec{}
+
+		encoderRegistry.RegisterEncoder("toml", codec)
+		decoderRegistry.RegisterDecoder("toml", codec)
+	}
+
+	{
+		codec := hcl.Codec{}
+
+		encoderRegistry.RegisterEncoder("hcl", codec)
+		decoderRegistry.RegisterDecoder("hcl", codec)
+
+		encoderRegistry.RegisterEncoder("tfvars", codec)
+		decoderRegistry.RegisterDecoder("tfvars", codec)
+	}
+
+	{
+		codec := ini.Codec{
+			KeyDelimiter: v.keyDelim,
+			LoadOptions:  v.iniLoadOptions,
+		}
+
+		encoderRegistry.RegisterEncoder("ini", codec)
+		decoderRegistry.RegisterDecoder("ini", codec)
+	}
+
+	{
+		codec := &javaproperties.Codec{
+			KeyDelimiter: v.keyDelim,
+		}
+
+		encoderRegistry.RegisterEncoder("properties", codec)
+		decoderRegistry.RegisterDecoder("properties", codec)
+
+		encoderRegistry.RegisterEncoder("props", codec)
+		decoderRegistry.RegisterDecoder("props", codec)
+
+		encoderRegistry.RegisterEncoder("prop", codec)
+		decoderRegistry.RegisterDecoder("prop", codec)
+	}
+
+	{
+		codec := &dotenv.Codec{}
+
+		encoderRegistry.RegisterEncoder("dotenv", codec)
+		decoderRegistry.RegisterDecoder("dotenv", codec)
+
+		encoderRegistry.RegisterEncoder("env", codec)
+		decoderRegistry.RegisterDecoder("env", codec)
+	}
+
+	v.encoderRegistry = encoderRegistry
+	v.decoderRegistry = decoderRegistry
 }
 
 type defaultRemoteProvider struct {
@@ -765,7 +843,7 @@ func (v *Viper) isPathShadowedInDeepMap(path []string, m map[string]interface{})
 //       "foo.bar.baz" in a lower-priority map
 func (v *Viper) isPathShadowedInFlatMap(path []string, mi interface{}) string {
 	// unify input map
-	var m map[string]interface{}
+	var m map[string]any
 	switch mi.(type) {
 	case map[string]string, map[string]FlagValue:
 		m = cast.ToStringMap(mi)
@@ -892,6 +970,10 @@ func (v *Viper) Sub(key string) *Viper {
 	}
 
 	if reflect.TypeOf(data).Kind() == reflect.Map {
+		subv.parents = append(v.parents, strings.ToLower(key))
+		subv.automaticEnvApplied = v.automaticEnvApplied
+		subv.envPrefix = v.envPrefix
+		subv.envKeyReplacer = v.envKeyReplacer
 		subv.config = cast.ToStringMap(data)
 		return subv
 	}
@@ -1034,13 +1116,13 @@ func Unmarshal(rawVal interface{}, opts ...DecoderConfigOption) error {
 	return v.Unmarshal(rawVal, opts...)
 }
 
-func (v *Viper) Unmarshal(rawVal interface{}, opts ...DecoderConfigOption) error {
+func (v *Viper) Unmarshal(rawVal any, opts ...DecoderConfigOption) error {
 	return decode(v.AllSettings(), defaultDecoderConfig(rawVal, opts...))
 }
 
-// defaultDecoderConfig returns default mapsstructure.DecoderConfig with suppot
+// defaultDecoderConfig returns default mapstructure.DecoderConfig with support
 // of time.Duration values & string slices
-func defaultDecoderConfig(output interface{}, opts ...DecoderConfigOption) *mapstructure.DecoderConfig {
+func defaultDecoderConfig(output any, opts ...DecoderConfigOption) *mapstructure.DecoderConfig {
 	c := &mapstructure.DecoderConfig{
 		Metadata:         nil,
 		Result:           output,
@@ -1057,7 +1139,7 @@ func defaultDecoderConfig(output interface{}, opts ...DecoderConfigOption) *maps
 }
 
 // A wrapper around mapstructure.Decode that mimics the WeakDecode functionality
-func decode(input interface{}, config *mapstructure.DecoderConfig) error {
+func decode(input any, config *mapstructure.DecoderConfig) error {
 	decoder, err := mapstructure.NewDecoder(config)
 	if err != nil {
 		return err
@@ -1304,12 +1386,12 @@ func readAsCSV(val string) ([]string, error) {
 }
 
 // mostly copied from pflag's implementation of this operation here https://github.com/spf13/pflag/blob/master/string_to_string.go#L79
-// alterations are: errors are swallowed, map[string]interface{} is returned in order to enable cast.ToStringMap
-func stringToStringConv(val string) interface{} {
+// alterations are: errors are swallowed, map[string]any is returned in order to enable cast.ToStringMap
+func stringToStringConv(val string) any {
 	val = strings.Trim(val, "[]")
 	// An empty string would cause an empty map
 	if len(val) == 0 {
-		return map[string]interface{}{}
+		return map[string]any{}
 	}
 	r := csv.NewReader(strings.NewReader(val))
 	ss, err := r.Read()
@@ -1318,8 +1400,33 @@ func stringToStringConv(val string) interface{} {
 	}
 	out := make(map[string]interface{}, len(ss))
 	for _, pair := range ss {
-		kv := strings.SplitN(pair, "=", 2)
-		if len(kv) != 2 {
+		k, vv, found := strings.Cut(pair, "=")
+		if !found {
+			return nil
+		}
+		out[k] = vv
+	}
+	return out
+}
+
+// mostly copied from pflag's implementation of this operation here https://github.com/spf13/pflag/blob/d5e0c0615acee7028e1e2740a11102313be88de1/string_to_int.go#L68
+// alterations are: errors are swallowed, map[string]any is returned in order to enable cast.ToStringMap
+func stringToIntConv(val string) any {
+	val = strings.Trim(val, "[]")
+	// An empty string would cause an empty map
+	if len(val) == 0 {
+		return map[string]any{}
+	}
+	ss := strings.Split(val, ",")
+	out := make(map[string]any, len(ss))
+	for _, pair := range ss {
+		k, vv, found := strings.Cut(pair, "=")
+		if !found {
+			return nil
+		}
+		var err error
+		out[k], err = strconv.Atoi(vv)
+		if err != nil {
 			return nil
 		}
 		out[kv[0]] = kv[1]
@@ -2017,8 +2124,8 @@ outer:
 // AllSettings merges all settings and returns them as a map[string]interface{}.
 func AllSettings() map[string]interface{} { return v.AllSettings() }
 
-func (v *Viper) AllSettings() map[string]interface{} {
-	m := map[string]interface{}{}
+func (v *Viper) AllSettings() map[string]any {
+	m := map[string]any{}
 	// start from the list of keys, and construct the map one value at a time
 	for _, k := range v.AllKeys() {
 		value := v.Get(k)

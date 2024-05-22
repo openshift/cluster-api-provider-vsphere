@@ -58,6 +58,15 @@ const (
 	SessionCookieName = "vmware_soap_session"
 )
 
+// defaultUserAgent is the default user agent string, e.g.
+// "govmomi/0.28.0 (go1.18.3;linux;amd64)"
+var defaultUserAgent = fmt.Sprintf(
+	"%s/%s (%s)",
+	version.ClientName,
+	version.ClientVersion,
+	strings.Join([]string{runtime.Version(), runtime.GOOS, runtime.GOARCH}, ";"),
+)
+
 type Client struct {
 	http.Client
 
@@ -341,7 +350,10 @@ func ThumbprintSHA1(cert *x509.Certificate) string {
 	return strings.Join(hex, ":")
 }
 
-func (c *Client) dialTLS(network string, addr string) (net.Conn, error) {
+func (c *Client) dialTLSContext(
+	ctx context.Context,
+	network, addr string) (net.Conn, error) {
+
 	// Would be nice if there was a tls.Config.Verify func,
 	// see tls.clientHandshakeState.doFullHandshake
 

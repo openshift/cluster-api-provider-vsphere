@@ -22,11 +22,32 @@ import (
 
 	"k8s.io/apiextensions-apiserver/pkg/apis/apiextensions"
 	"k8s.io/apimachinery/pkg/util/validation/field"
+	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	openapierrors "k8s.io/kube-openapi/pkg/validation/errors"
 	"k8s.io/kube-openapi/pkg/validation/spec"
 	"k8s.io/kube-openapi/pkg/validation/strfmt"
 	"k8s.io/kube-openapi/pkg/validation/validate"
 )
+
+type SchemaValidator interface {
+	SchemaCreateValidator
+	ValidateUpdate(new, old interface{}) *validate.Result
+}
+
+type SchemaCreateValidator interface {
+	Validate(value interface{}) *validate.Result
+}
+
+// basicSchemaValidator wraps a kube-openapi SchemaCreateValidator to
+// support ValidateUpdate. It implements ValidateUpdate by simply validating
+// the new value via kube-openapi, ignoring the old value.
+type basicSchemaValidator struct {
+	*validate.SchemaValidator
+}
+
+func (s basicSchemaValidator) ValidateUpdate(new, old interface{}) *validate.Result {
+	return s.Validate(new)
+}
 
 // NewSchemaValidator creates an openapi schema validator for the given CRD validation.
 func NewSchemaValidator(customResourceValidation *apiextensions.CustomResourceValidation) (*validate.SchemaValidator, *spec.Schema, error) {
@@ -38,12 +59,38 @@ func NewSchemaValidator(customResourceValidation *apiextensions.CustomResourceVa
 			return nil, nil, err
 		}
 	}
-	return validate.NewSchemaValidator(openapiSchema, nil, "", strfmt.Default), openapiSchema, nil
+
+	if utilfeature.DefaultFeatureGate.Enabled(features.CRDValidationRatcheting) {
+		return NewRatchetingSchemaValidator(openapiSchema, nil, "", strfmt.Default), openapiSchema, nil
+	}
+	return basicSchemaValidator{validate.NewSchemaValidator(openapiSchema, nil, "", strfmt.Default)}, openapiSchema, nil
+}
+
+// ValidateCustomResourceUpdate validates the transition of Custom Resource from
+// `old` to `new` against the schema in the CustomResourceDefinition.
+// Both customResource and old represent a JSON data structures.
+//
+// If feature `CRDValidationRatcheting` is disabled, this behaves identically to
+// ValidateCustomResource(customResource).
+func ValidateCustomResourceUpdate(fldPath *field.Path, customResource, old interface{}, validator SchemaValidator) field.ErrorList {
+	// Additional feature gate check for sanity
+	if !utilfeature.DefaultFeatureGate.Enabled(features.CRDValidationRatcheting) {
+		return ValidateCustomResource(nil, customResource, validator)
+	} else if validator == nil {
+		return nil
+	}
+
+	result := validator.ValidateUpdate(customResource, old)
+	if result.IsValid() {
+		return nil
+	}
+
+	return kubeOpenAPIResultToFieldErrors(fldPath, result)
 }
 
 // ValidateCustomResource validates the Custom Resource against the schema in the CustomResourceDefinition.
 // CustomResource is a JSON data structure.
-func ValidateCustomResource(fldPath *field.Path, customResource interface{}, validator *validate.SchemaValidator) field.ErrorList {
+func ValidateCustomResource(fldPath *field.Path, customResource interface{}, validator SchemaCreateValidator) field.ErrorList {
 	if validator == nil {
 		return nil
 	}

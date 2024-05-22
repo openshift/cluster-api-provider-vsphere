@@ -50,6 +50,14 @@ func (cli *Client) postRaw(ctx context.Context, path string, query url.Values, b
 	return cli.sendRequest(ctx, http.MethodPost, path, query, body, headers)
 }
 
+func (cli *Client) put(ctx context.Context, path string, query url.Values, obj interface{}, headers map[string][]string) (serverResponse, error) {
+	body, headers, err := encodeBody(obj, headers)
+	if err != nil {
+		return serverResponse{}, err
+	}
+	return cli.sendRequest(ctx, http.MethodPut, path, query, body, headers)
+}
+
 // putRaw sends an http request to the docker API using the method PUT.
 func (cli *Client) putRaw(ctx context.Context, path string, query url.Values, body io.Reader, headers map[string][]string) (serverResponse, error) {
 	return cli.sendRequest(ctx, http.MethodPut, path, query, body, headers)
@@ -96,9 +104,6 @@ func (cli *Client) buildRequest(method, path string, body io.Reader, headers hea
 		req.Host = "docker"
 	}
 
-	req.URL.Host = cli.addr
-	req.URL.Scheme = cli.scheme
-
 	if expectedPayload && req.Header.Get("Content-Type") == "" {
 		req.Header.Set("Content-Type", "text/plain")
 	}
@@ -110,9 +115,15 @@ func (cli *Client) sendRequest(ctx context.Context, method, path string, query u
 	if err != nil {
 		return serverResponse{}, err
 	}
+
 	resp, err := cli.doRequest(ctx, req)
-	if err != nil {
-		return resp, errdefs.FromStatusCode(err, resp.statusCode)
+	switch {
+	case errors.Is(err, context.Canceled):
+		return serverResponse{}, errdefs.Cancelled(err)
+	case errors.Is(err, context.DeadlineExceeded):
+		return serverResponse{}, errdefs.Deadline(err)
+	case err == nil:
+		err = cli.checkResponseErr(resp)
 	}
 	err = cli.checkResponseErr(resp)
 	return resp, errdefs.FromStatusCode(err, resp.statusCode)
@@ -129,7 +140,7 @@ func (cli *Client) doRequest(ctx context.Context, req *http.Request) (serverResp
 		}
 
 		if cli.scheme == "https" && strings.Contains(err.Error(), "bad certificate") {
-			return serverResp, errors.Wrap(err, "The server probably has client authentication (--tlsverify) enabled. Please check your TLS client certification settings")
+			return serverResp, errors.Wrap(err, "the server probably has client authentication (--tlsverify) enabled; check your TLS client certification settings")
 		}
 
 		// Don't decorate context sentinel errors; users may be comparing to
@@ -141,7 +152,7 @@ func (cli *Client) doRequest(ctx context.Context, req *http.Request) (serverResp
 		if nErr, ok := err.(*url.Error); ok {
 			if nErr, ok := nErr.Err.(*net.OpError); ok {
 				if os.IsPermission(nErr.Err) {
-					return serverResp, errors.Wrapf(err, "Got permission denied while trying to connect to the Docker daemon socket at %v", cli.host)
+					return serverResp, errors.Wrapf(err, "permission denied while trying to connect to the Docker daemon socket at %v", cli.host)
 				}
 			}
 		}
@@ -150,10 +161,8 @@ func (cli *Client) doRequest(ctx context.Context, req *http.Request) (serverResp
 			if err.Timeout() {
 				return serverResp, ErrorConnectionFailed(cli.host)
 			}
-			if !err.Temporary() {
-				if strings.Contains(err.Error(), "connection refused") || strings.Contains(err.Error(), "dial unix") {
-					return serverResp, ErrorConnectionFailed(cli.host)
-				}
+			if strings.Contains(err.Error(), "connection refused") || strings.Contains(err.Error(), "dial unix") {
+				return serverResp, ErrorConnectionFailed(cli.host)
 			}
 		}
 
@@ -242,10 +251,8 @@ func (cli *Client) addHeaders(req *http.Request, headers headers) *http.Request 
 		req.Header.Set(k, v)
 	}
 
-	if headers != nil {
-		for k, v := range headers {
-			req.Header[k] = v
-		}
+	for k, v := range headers {
+		req.Header[http.CanonicalHeaderKey(k)] = v
 	}
 	return req
 }

@@ -149,8 +149,8 @@ func newClient(config *rest.Config, options Options) (*client, error) {
 
 var _ Client = &client{}
 
-// client is a client.Client that reads and writes directly from/to an API server.  It lazily initializes
-// new clients at the time they are used, and caches the client.
+// client is a client.Client that reads and writes directly from/to an API server.
+// It lazily initializes new clients at the time they are used.
 type client struct {
 	typedClient        typedClient
 	unstructuredClient unstructuredClient

@@ -227,6 +227,12 @@ func (p *astPruner) prune(node *exprpb.Expr) (*exprpb.Expr, bool) {
 			return newNode, true
 		}
 	}
+	if macro, found := p.macroCalls[node.GetId()]; found {
+		// prune the expression in terms of the macro call instead of the expanded form.
+		if newMacro, pruned := p.prune(macro); pruned {
+			p.macroCalls[node.GetId()] = newMacro
+		}
+	}
 
 	// We have either an unknown/error value, or something we dont want to
 	// transform, or expression was not evaluated. If possible, drill down
@@ -338,27 +344,6 @@ func (p *astPruner) prune(node *exprpb.Expr) (*exprpb.Expr, bool) {
 				},
 			}, true
 		}
-	case *exprpb.Expr_ComprehensionExpr:
-		compre := node.GetComprehensionExpr()
-		// Only the range of the comprehension is pruned since the state tracking only records
-		// the last iteration of the comprehension and not each step in the evaluation which
-		// means that the any residuals computed in between might be inaccurate.
-		if newRange, pruned := p.prune(compre.GetIterRange()); pruned {
-			return &exprpb.Expr{
-				Id: node.GetId(),
-				ExprKind: &exprpb.Expr_ComprehensionExpr{
-					ComprehensionExpr: &exprpb.Expr_Comprehension{
-						IterVar:       compre.GetIterVar(),
-						IterRange:     newRange,
-						AccuVar:       compre.GetAccuVar(),
-						AccuInit:      compre.GetAccuInit(),
-						LoopCondition: compre.GetLoopCondition(),
-						LoopStep:      compre.GetLoopStep(),
-						Result:        compre.GetResult(),
-					},
-				},
-			}, true
-		}
 	}
 	return node, false
 }
@@ -379,12 +364,73 @@ func (p *astPruner) existsWithKnownValue(id int64) bool {
 }
 
 func (p *astPruner) nextID() int64 {
-	for {
-		_, found := p.state.Value(p.nextExprID)
-		if !found {
-			next := p.nextExprID
-			p.nextExprID++
-			return next
+	next := p.nextExprID
+	p.nextExprID++
+	return next
+}
+
+type astVisitor struct {
+	// visitEntry is called on every expr node, including those within a map/struct entry.
+	visitExpr func(expr *exprpb.Expr)
+	// visitEntry is called before entering the key, value of a map/struct entry.
+	visitEntry func(entry *exprpb.Expr_CreateStruct_Entry)
+}
+
+func getMaxID(expr *exprpb.Expr) int64 {
+	maxID := int64(1)
+	visit(expr, maxIDVisitor(&maxID))
+	return maxID
+}
+
+func maxIDVisitor(maxID *int64) astVisitor {
+	return astVisitor{
+		visitExpr: func(e *exprpb.Expr) {
+			if e.GetId() >= *maxID {
+				*maxID = e.GetId() + 1
+			}
+		},
+		visitEntry: func(e *exprpb.Expr_CreateStruct_Entry) {
+			if e.GetId() >= *maxID {
+				*maxID = e.GetId() + 1
+			}
+		},
+	}
+}
+
+func visit(expr *exprpb.Expr, visitor astVisitor) {
+	exprs := []*exprpb.Expr{expr}
+	for len(exprs) != 0 {
+		e := exprs[0]
+		visitor.visitExpr(e)
+		exprs = exprs[1:]
+		switch e.GetExprKind().(type) {
+		case *exprpb.Expr_SelectExpr:
+			exprs = append(exprs, e.GetSelectExpr().GetOperand())
+		case *exprpb.Expr_CallExpr:
+			call := e.GetCallExpr()
+			if call.GetTarget() != nil {
+				exprs = append(exprs, call.GetTarget())
+			}
+			exprs = append(exprs, call.GetArgs()...)
+		case *exprpb.Expr_ComprehensionExpr:
+			compre := e.GetComprehensionExpr()
+			exprs = append(exprs,
+				compre.GetIterRange(),
+				compre.GetAccuInit(),
+				compre.GetLoopCondition(),
+				compre.GetLoopStep(),
+				compre.GetResult())
+		case *exprpb.Expr_ListExpr:
+			list := e.GetListExpr()
+			exprs = append(exprs, list.GetElements()...)
+		case *exprpb.Expr_StructExpr:
+			for _, entry := range e.GetStructExpr().GetEntries() {
+				visitor.visitEntry(entry)
+				if entry.GetMapKey() != nil {
+					exprs = append(exprs, entry.GetMapKey())
+				}
+				exprs = append(exprs, entry.GetValue())
+			}
 		}
 		p.nextExprID++
 	}

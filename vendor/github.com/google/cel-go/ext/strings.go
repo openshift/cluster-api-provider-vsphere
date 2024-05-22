@@ -100,7 +100,21 @@ import (
 //     'TacoCat'.lowerAscii()      // returns 'tacocat'
 //     'TacoCÆt Xii'.lowerAscii()  // returns 'tacocÆt xii'
 //
-// Replace
+// # Quote
+//
+// Introduced in version: 1
+//
+// Takes the given string and makes it safe to print (without any formatting due to escape sequences).
+// If any invalid UTF-8 characters are encountered, they are replaced with \uFFFD.
+//
+// strings.quote(<string>)
+//
+// Examples:
+//
+// strings.quote('single-quote with "double quote"') // returns '"single-quote with \"double quote\""'
+// strings.quote("two escape sequences \a\n") // returns '"two escape sequences \\a\\n"'
+//
+// # Replace
 //
 // Returns a new string based on the target, which replaces the occurrences of a search string
 // with a replacement string if present. The function accepts an optional limit on the number of
@@ -247,117 +261,195 @@ func (stringLib) CompileOptions() []cel.EnvOption {
 	}
 }
 
-func (stringLib) ProgramOptions() []cel.ProgramOption {
-	wrappedReplace := callInStrStrStrOutStr(replace)
-	wrappedReplaceN := callInStrStrStrIntOutStr(replaceN)
-	return []cel.ProgramOption{
-		cel.Functions(
-			&functions.Overload{
-				Operator: "charAt",
-				Binary:   callInStrIntOutStr(charAt),
-			},
-			&functions.Overload{
-				Operator: "string_char_at_int",
-				Binary:   callInStrIntOutStr(charAt),
-			},
-			&functions.Overload{
-				Operator: "indexOf",
-				Binary:   callInStrStrOutInt(indexOf),
-				Function: callInStrStrIntOutInt(indexOfOffset),
-			},
-			&functions.Overload{
-				Operator: "string_index_of_string",
-				Binary:   callInStrStrOutInt(indexOf),
-			},
-			&functions.Overload{
-				Operator: "string_index_of_string_int",
-				Function: callInStrStrIntOutInt(indexOfOffset),
-			},
-			&functions.Overload{
-				Operator: "lastIndexOf",
-				Binary:   callInStrStrOutInt(lastIndexOf),
-				Function: callInStrStrIntOutInt(lastIndexOfOffset),
-			},
-			&functions.Overload{
-				Operator: "string_last_index_of_string",
-				Binary:   callInStrStrOutInt(lastIndexOf),
-			},
-			&functions.Overload{
-				Operator: "string_last_index_of_string_int",
-				Function: callInStrStrIntOutInt(lastIndexOfOffset),
-			},
-			&functions.Overload{
-				Operator: "lowerAscii",
-				Unary:    callInStrOutStr(lowerASCII),
-			},
-			&functions.Overload{
-				Operator: "string_lower_ascii",
-				Unary:    callInStrOutStr(lowerASCII),
-			},
-			&functions.Overload{
-				Operator: "replace",
-				Function: func(values ...ref.Val) ref.Val {
-					if len(values) == 3 {
-						return wrappedReplace(values...)
-					}
-					if len(values) == 4 {
-						return wrappedReplaceN(values...)
-					}
-					return types.NoSuchOverloadErr()
-				},
-			},
-			&functions.Overload{
-				Operator: "string_replace_string_string",
-				Function: wrappedReplace,
-			},
-			&functions.Overload{
-				Operator: "string_replace_string_string_int",
-				Function: wrappedReplaceN,
-			},
-			&functions.Overload{
-				Operator: "split",
-				Binary:   callInStrStrOutListStr(split),
-				Function: callInStrStrIntOutListStr(splitN),
-			},
-			&functions.Overload{
-				Operator: "string_split_string",
-				Binary:   callInStrStrOutListStr(split),
-			},
-			&functions.Overload{
-				Operator: "string_split_string_int",
-				Function: callInStrStrIntOutListStr(splitN),
-			},
-			&functions.Overload{
-				Operator: "substring",
-				Binary:   callInStrIntOutStr(substr),
-				Function: callInStrIntIntOutStr(substrRange),
-			},
-			&functions.Overload{
-				Operator: "string_substring_int",
-				Binary:   callInStrIntOutStr(substr),
-			},
-			&functions.Overload{
-				Operator: "string_substring_int_int",
-				Function: callInStrIntIntOutStr(substrRange),
-			},
-			&functions.Overload{
-				Operator: "trim",
-				Unary:    callInStrOutStr(trimSpace),
-			},
-			&functions.Overload{
-				Operator: "string_trim",
-				Unary:    callInStrOutStr(trimSpace),
-			},
-			&functions.Overload{
-				Operator: "upperAscii",
-				Unary:    callInStrOutStr(upperASCII),
-			},
-			&functions.Overload{
-				Operator: "string_upper_ascii",
-				Unary:    callInStrOutStr(upperASCII),
-			},
-		),
+// StringsVersion configures the version of the string library. The version limits which
+// functions are available. Only functions introduced below or equal to the given
+// version included in the library. See the library documentation to determine
+// which version a function was introduced at. If the documentation does not
+// state which version a function was introduced at, it can be assumed to be
+// introduced at version 0, when the library was first created.
+// If this option is not set, all functions are available.
+func StringsVersion(version uint32) func(lib *stringLib) *stringLib {
+	return func(sl *stringLib) *stringLib {
+		sl.version = version
+		return sl
 	}
+}
+
+// CompileOptions implements the Library interface method.
+func (sl *stringLib) CompileOptions() []cel.EnvOption {
+	formatLocale := "en_US"
+	if sl.locale != "" {
+		// ensure locale is properly-formed if set
+		_, err := language.Parse(sl.locale)
+		if err != nil {
+			return []cel.EnvOption{
+				func(e *cel.Env) (*cel.Env, error) {
+					return nil, fmt.Errorf("failed to parse locale: %w", err)
+				},
+			}
+		}
+		formatLocale = sl.locale
+	}
+
+	opts := []cel.EnvOption{
+		cel.Function("charAt",
+			cel.MemberOverload("string_char_at_int", []*cel.Type{cel.StringType, cel.IntType}, cel.StringType,
+				cel.BinaryBinding(func(str, ind ref.Val) ref.Val {
+					s := str.(types.String)
+					i := ind.(types.Int)
+					return stringOrError(charAt(string(s), int64(i)))
+				}))),
+		cel.Function("indexOf",
+			cel.MemberOverload("string_index_of_string", []*cel.Type{cel.StringType, cel.StringType}, cel.IntType,
+				cel.BinaryBinding(func(str, substr ref.Val) ref.Val {
+					s := str.(types.String)
+					sub := substr.(types.String)
+					return intOrError(indexOf(string(s), string(sub)))
+				})),
+			cel.MemberOverload("string_index_of_string_int", []*cel.Type{cel.StringType, cel.StringType, cel.IntType}, cel.IntType,
+				cel.FunctionBinding(func(args ...ref.Val) ref.Val {
+					s := args[0].(types.String)
+					sub := args[1].(types.String)
+					offset := args[2].(types.Int)
+					return intOrError(indexOfOffset(string(s), string(sub), int64(offset)))
+				}))),
+		cel.Function("lastIndexOf",
+			cel.MemberOverload("string_last_index_of_string", []*cel.Type{cel.StringType, cel.StringType}, cel.IntType,
+				cel.BinaryBinding(func(str, substr ref.Val) ref.Val {
+					s := str.(types.String)
+					sub := substr.(types.String)
+					return intOrError(lastIndexOf(string(s), string(sub)))
+				})),
+			cel.MemberOverload("string_last_index_of_string_int", []*cel.Type{cel.StringType, cel.StringType, cel.IntType}, cel.IntType,
+				cel.FunctionBinding(func(args ...ref.Val) ref.Val {
+					s := args[0].(types.String)
+					sub := args[1].(types.String)
+					offset := args[2].(types.Int)
+					return intOrError(lastIndexOfOffset(string(s), string(sub), int64(offset)))
+				}))),
+		cel.Function("lowerAscii",
+			cel.MemberOverload("string_lower_ascii", []*cel.Type{cel.StringType}, cel.StringType,
+				cel.UnaryBinding(func(str ref.Val) ref.Val {
+					s := str.(types.String)
+					return stringOrError(lowerASCII(string(s)))
+				}))),
+		cel.Function("replace",
+			cel.MemberOverload(
+				"string_replace_string_string", []*cel.Type{cel.StringType, cel.StringType, cel.StringType}, cel.StringType,
+				cel.FunctionBinding(func(args ...ref.Val) ref.Val {
+					str := args[0].(types.String)
+					old := args[1].(types.String)
+					new := args[2].(types.String)
+					return stringOrError(replace(string(str), string(old), string(new)))
+				})),
+			cel.MemberOverload(
+				"string_replace_string_string_int", []*cel.Type{cel.StringType, cel.StringType, cel.StringType, cel.IntType}, cel.StringType,
+				cel.FunctionBinding(func(args ...ref.Val) ref.Val {
+					str := args[0].(types.String)
+					old := args[1].(types.String)
+					new := args[2].(types.String)
+					n := args[3].(types.Int)
+					return stringOrError(replaceN(string(str), string(old), string(new), int64(n)))
+				}))),
+		cel.Function("split",
+			cel.MemberOverload("string_split_string", []*cel.Type{cel.StringType, cel.StringType}, cel.ListType(cel.StringType),
+				cel.BinaryBinding(func(str, separator ref.Val) ref.Val {
+					s := str.(types.String)
+					sep := separator.(types.String)
+					return listStringOrError(split(string(s), string(sep)))
+				})),
+			cel.MemberOverload("string_split_string_int", []*cel.Type{cel.StringType, cel.StringType, cel.IntType}, cel.ListType(cel.StringType),
+				cel.FunctionBinding(func(args ...ref.Val) ref.Val {
+					s := args[0].(types.String)
+					sep := args[1].(types.String)
+					n := args[2].(types.Int)
+					return listStringOrError(splitN(string(s), string(sep), int64(n)))
+				}))),
+		cel.Function("substring",
+			cel.MemberOverload("string_substring_int", []*cel.Type{cel.StringType, cel.IntType}, cel.StringType,
+				cel.BinaryBinding(func(str, offset ref.Val) ref.Val {
+					s := str.(types.String)
+					off := offset.(types.Int)
+					return stringOrError(substr(string(s), int64(off)))
+				})),
+			cel.MemberOverload("string_substring_int_int", []*cel.Type{cel.StringType, cel.IntType, cel.IntType}, cel.StringType,
+				cel.FunctionBinding(func(args ...ref.Val) ref.Val {
+					s := args[0].(types.String)
+					start := args[1].(types.Int)
+					end := args[2].(types.Int)
+					return stringOrError(substrRange(string(s), int64(start), int64(end)))
+				}))),
+		cel.Function("trim",
+			cel.MemberOverload("string_trim", []*cel.Type{cel.StringType}, cel.StringType,
+				cel.UnaryBinding(func(str ref.Val) ref.Val {
+					s := str.(types.String)
+					return stringOrError(trimSpace(string(s)))
+				}))),
+		cel.Function("upperAscii",
+			cel.MemberOverload("string_upper_ascii", []*cel.Type{cel.StringType}, cel.StringType,
+				cel.UnaryBinding(func(str ref.Val) ref.Val {
+					s := str.(types.String)
+					return stringOrError(upperASCII(string(s)))
+				}))),
+	}
+	if sl.version >= 1 {
+		opts = append(opts, cel.Function("format",
+			cel.MemberOverload("string_format", []*cel.Type{cel.StringType, cel.ListType(cel.DynType)}, cel.StringType,
+				cel.FunctionBinding(func(args ...ref.Val) ref.Val {
+					s := string(args[0].(types.String))
+					formatArgs := args[1].(traits.Lister)
+					return stringOrError(interpreter.ParseFormatString(s, &stringFormatter{}, &stringArgList{formatArgs}, formatLocale))
+				}))),
+			cel.Function("strings.quote", cel.Overload("strings_quote", []*cel.Type{cel.StringType}, cel.StringType,
+				cel.UnaryBinding(func(str ref.Val) ref.Val {
+					s := str.(types.String)
+					return stringOrError(quote(string(s)))
+				}))))
+
+	}
+	if sl.version >= 2 {
+		opts = append(opts,
+			cel.Function("join",
+				cel.MemberOverload("list_join", []*cel.Type{cel.ListType(cel.StringType)}, cel.StringType,
+					cel.UnaryBinding(func(list ref.Val) ref.Val {
+						l := list.(traits.Lister)
+						return stringOrError(joinValSeparator(l, ""))
+					})),
+				cel.MemberOverload("list_join_string", []*cel.Type{cel.ListType(cel.StringType), cel.StringType}, cel.StringType,
+					cel.BinaryBinding(func(list, delim ref.Val) ref.Val {
+						l := list.(traits.Lister)
+						d := delim.(types.String)
+						return stringOrError(joinValSeparator(l, string(d)))
+					}))),
+		)
+	} else {
+		opts = append(opts,
+			cel.Function("join",
+				cel.MemberOverload("list_join", []*cel.Type{cel.ListType(cel.StringType)}, cel.StringType,
+					cel.UnaryBinding(func(list ref.Val) ref.Val {
+						l, err := list.ConvertToNative(stringListType)
+						if err != nil {
+							return types.NewErr(err.Error())
+						}
+						return stringOrError(join(l.([]string)))
+					})),
+				cel.MemberOverload("list_join_string", []*cel.Type{cel.ListType(cel.StringType), cel.StringType}, cel.StringType,
+					cel.BinaryBinding(func(list, delim ref.Val) ref.Val {
+						l, err := list.ConvertToNative(stringListType)
+						if err != nil {
+							return types.NewErr(err.Error())
+						}
+						d := delim.(types.String)
+						return stringOrError(joinSeparator(l.([]string), string(d)))
+					}))),
+		)
+	}
+	return opts
+}
+
+// ProgramOptions implements the Library interface method.
+func (*stringLib) ProgramOptions() []cel.ProgramOption {
+	return []cel.ProgramOption{}
 }
 
 func charAt(str string, ind int64) (string, error) {

@@ -29,8 +29,7 @@ import (
 type Interpreter interface {
 	// NewInterpretable creates an Interpretable from a checked expression and an
 	// optional list of InterpretableDecorator values.
-	NewInterpretable(checked *exprpb.CheckedExpr,
-		decorators ...InterpretableDecorator) (Interpretable, error)
+	NewInterpretable(checked *exprpb.CheckedExpr, decorators ...InterpretableDecorator) (Interpretable, error)
 
 	// NewUncheckedInterpretable returns an Interpretable from a parsed expression
 	// and an optional list of InterpretableDecorator values.

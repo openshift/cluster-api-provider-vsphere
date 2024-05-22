@@ -18,8 +18,10 @@ limitations under the License.
 package e2e
 
 import (
+	"fmt"
 	"path/filepath"
 
+	. "github.com/onsi/ginkgo/v2"
 	"github.com/vmware/govmomi"
 	"github.com/vmware/govmomi/find"
 	"github.com/vmware/govmomi/vapi/rest"
@@ -31,6 +33,10 @@ import (
 const (
 	KubernetesVersion = "KUBERNETES_VERSION"
 )
+
+func Byf(format string, a ...interface{}) {
+	By(fmt.Sprintf(format, a...))
+}
 
 type InfraClients struct {
 	Client     *govmomi.Client

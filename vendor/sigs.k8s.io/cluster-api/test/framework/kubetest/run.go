@@ -27,7 +27,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/onsi/ginkgo"
+	"github.com/onsi/ginkgo/v2"
 	"github.com/pkg/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/discovery"
@@ -188,6 +188,8 @@ func Run(ctx context.Context, input RunInput) error {
 		EnvironmentVars: env,
 		CommandArgs:     args,
 		Entrypoint:      []string{"/usr/local/bin/ginkgo"},
+		// We don't want the conformance test container to restart once ginkgo exits.
+		RestartPolicy: "no",
 	}, ginkgo.GinkgoWriter)
 	if err != nil {
 		return errors.Wrap(err, "Unable to run conformance tests")

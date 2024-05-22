@@ -1,4 +1,4 @@
-// Copyright (c) 2020 VMware, Inc. All Rights Reserved.
+// Copyright (c) 2020-2023 VMware, Inc. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 package v1alpha1
@@ -41,6 +41,62 @@ const (
 	// The Unknown phase indicates that the VirtualMachine status cannot be determined from the backing infrastructure
 	// provider.
 	Unknown VMStatusPhase = "Unknown"
+)
+
+const (
+	// PauseAnnotation is an annotation that can be applied to any VirtualMachine object to prevent VM Operator from
+	// reconciling the object with the vSphere infrastructure. VM Operator checks the presence of this annotation to
+	// skip the reconcile of a VirtualMachine.
+	//
+	// This can be used when a Virtual Machine needs to be modified out-of-band of VM Operator on the infrastructure
+	// directly (e.g., during a VADP based Restore operation).
+	PauseAnnotation = GroupName + "/pause-reconcile"
+
+	// NoDefaultNicAnnotation is an annotation that can be applied to prevent VM Operator from creating a default nic for
+	// a VirtualMachine object with empty VirtualMachineNetworkInterfaces list.
+	//
+	// This can be used when users want to opt out a default network device when creating new VirtualMachines.
+	//
+	// When a VM without any VirtualMachineNetworkInterfaces is being created, VM Operator webhook checks the presence of
+	// this annotation to skip adding a default nic. VM Operator won't add default NIC to any existing VMs or new VMs
+	// with VirtualMachineNetworkInterfaces specified. This annotation is not required for such VMs.
+	NoDefaultNicAnnotation = GroupName + "/no-default-nic"
+
+	// InstanceIDAnnotation is an annotation that can be applied to set Cloud-Init metadata Instance ID.
+	//
+	// This cannot be set by users. It is for VM Operator to handle corner cases.
+	//
+	// In a corner case where a VM first boot failed to bootstrap with Cloud-Init, VM Operator sets Instance ID
+	// the same with the first boot Instance ID to prevent Cloud-Init from treating this VM as first boot
+	// due to different Instance ID. This annotation is used in upgrade script.
+	InstanceIDAnnotation = GroupName + "/cloud-init-instance-id"
+
+	// FirstBootDoneAnnotation is an annotation that indicates the VM has been
+	// booted at least once. This annotation cannot be set by users and will not
+	// be removed once set until the VM is deleted.
+	FirstBootDoneAnnotation = "virtualmachine." + GroupName + "/first-boot-done"
+)
+
+// VirtualMachine backup/restore related constants.
+const (
+	// ManagedByExtensionKey and ManagedByExtensionType represent the ManagedBy
+	// field on the VM. They are used to differentiate VM Service managed VMs
+	// from traditional vSphere VMs.
+	ManagedByExtensionKey  = "com.vmware.vcenter.wcp"
+	ManagedByExtensionType = "VirtualMachine"
+
+	// VMBackupKubeDataExtraConfigKey is the ExtraConfig key to persist the VM's
+	// Kubernetes resource spec data, compressed using gzip and base64-encoded.
+	VMBackupKubeDataExtraConfigKey = "vmservice.virtualmachine.kubedata"
+	// VMBackupBootstrapDataExtraConfigKey is the ExtraConfig key to persist the
+	// VM's bootstrap data object, compressed using gzip and base64-encoded.
+	VMBackupBootstrapDataExtraConfigKey = "vmservice.virtualmachine.bootstrapdata"
+	// VMBackupDiskDataExtraConfigKey is the ExtraConfig key to persist the VM's
+	// attached disk info in JSON, compressed using gzip and base64-encoded.
+	VMBackupDiskDataExtraConfigKey = "vmservice.virtualmachine.diskdata"
+	// VMBackupCloudInitInstanceIDExtraConfigKey is the ExtraConfig key to persist
+	// the VM's Cloud-Init instance ID, compressed using gzip and base64-encoded.
+	VMBackupCloudInitInstanceIDExtraConfigKey = "vmservice.virtualmachine.cloudinit.instanceid"
 )
 
 // VirtualMachinePort is unused and can be considered deprecated.
@@ -316,6 +372,44 @@ type VirtualMachineSpec struct {
 
 	// AdvancedOptions describes a set of optional, advanced options for configuring a VirtualMachine
 	AdvancedOptions *VirtualMachineAdvancedOptions `json:"advancedOptions,omitempty"`
+
+	// MinHardwareVersion specifies the desired minimum hardware version
+	// for this VM.
+	//
+	// Usually the VM's hardware version is derived from:
+	// 1. the VirtualMachineClass used to deploy the VM provided by the ClassName field
+	// 2. the datacenter/cluster/host default hardware version
+	// Setting this field will ensure that the hardware version of the VM
+	// is at least set to the specified value. To enforce this, it will override
+	// the value from the VirtualMachineClass.
+	//
+	// This field is never updated to reflect the derived hardware version.
+	// Instead, VirtualMachineStatus.HardwareVersion surfaces
+	// the observed hardware version.
+	//
+	// Please note, setting this field's value to N ensures a VM's hardware
+	// version is equal to or greater than N. For example, if a VM's observed
+	// hardware version is 10 and this field's value is 13, then the VM will be
+	// upgraded to hardware version 13. However, if the observed hardware
+	// version is 17 and this field's value is 13, no change will occur.
+	//
+	// Several features are hardware version dependent, for example:
+	//
+	// * NVMe Controllers        		 >= 14
+	// * Dynamic Direct Path I/O devices >= 17
+	//
+	// Please refer to https://kb.vmware.com/s/article/1003746 for a list of VM
+	// hardware versions.
+	//
+	// It is important to remember that a VM's hardware version may not be
+	// downgraded and upgrading a VM deployed from an image based on an older
+	// hardware version to a more recent one may result in unpredictable
+	// behavior. In other words, please be careful when choosing to upgrade a
+	// VM to a newer hardware version.
+	//
+	// +optional
+	// +kubebuilder:validation:Minimum=13
+	MinHardwareVersion int32 `json:"minHardwareVersion,omitempty"`
 }
 
 // AdvancedOptions describes a set of optional, advanced options for configuring a VirtualMachine

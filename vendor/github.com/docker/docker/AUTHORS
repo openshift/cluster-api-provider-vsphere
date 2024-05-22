@@ -158,6 +158,7 @@ Andy Kipp <andy@rstudio.com>
 Andy Rothfusz <github@developersupport.net>
 Andy Smith <github@anarkystic.com>
 Andy Wilson <wilson.andrew.j+github@gmail.com>
+Andy Zhang <andy.zhangtao@hotmail.com>
 Anes Hasicic <anes.hasicic@gmail.com>
 Anil Belur <askb23@gmail.com>
 Anil Madhavapeddy <anil@recoil.org>
@@ -211,6 +212,7 @@ Ben Firshman <ben@firshman.co.uk>
 Ben Golub <ben.golub@dotcloud.com>
 Ben Gould <ben@bengould.co.uk>
 Ben Hall <ben@benhall.me.uk>
+Ben Langfeld <ben@langfeld.me>
 Ben Sargent <ben@brokendigits.com>
 Ben Severson <BenSeverson@users.noreply.github.com>
 Ben Toews <mastahyeti@gmail.com>
@@ -234,6 +236,7 @@ Bill Wang <ozbillwang@gmail.com>
 Bily Zhang <xcoder@tenxcloud.com>
 Bin Liu <liubin0329@gmail.com>
 Bingshen Wang <bingshen.wbs@alibaba-inc.com>
+Bjorn Neergaard <bneergaard@mirantis.com>
 Blake Geno <blakegeno@gmail.com>
 Boaz Shuster <ripcurld.github@gmail.com>
 bobby abbott <ttobbaybbob@gmail.com>
@@ -394,6 +397,8 @@ cristiano balducci <cristiano.balducci@gmail.com>
 Cristina Yenyxe Gonzalez Garcia <cristina.yenyxe@gmail.com>
 Cruceru Calin-Cristian <crucerucalincristian@gmail.com>
 CUI Wei <ghostplant@qq.com>
+cuishuang <imcusg@gmail.com>
+Cuong Manh Le <cuong.manhle.vn@gmail.com>
 Cyprian Gracz <cyprian.gracz@micro-jumbo.eu>
 Cyril F <cyrilf7x@gmail.com>
 Daan van Berkel <daan.v.berkel.1980@gmail.com>
@@ -681,7 +686,7 @@ Frank Groeneveld <frank@ivaldi.nl>
 Frank Herrmann <fgh@4gh.tv>
 Frank Macreery <frank@macreery.com>
 Frank Rosquin <frank.rosquin+github@gmail.com>
-frankyang <yyb196@gmail.com>
+Frank Yang <yyb196@gmail.com>
 Fred Lifton <fred.lifton@docker.com>
 Frederick F. Kautz IV <fkautz@redhat.com>
 Frederik Loeffert <frederik@zitrusmedia.de>
@@ -1096,6 +1101,7 @@ Kenjiro Nakayama <nakayamakenjiro@gmail.com>
 Kent Johnson <kentoj@gmail.com>
 Kenta Tada <Kenta.Tada@sony.com>
 Kevin "qwazerty" Houdebert <kevin.houdebert@gmail.com>
+Kevin Alvarez <crazy-max@users.noreply.github.com>
 Kevin Burke <kev@inburke.com>
 Kevin Clark <kevin.clark@gmail.com>
 Kevin Feyrer <kevin.feyrer@btinternet.com>
@@ -1125,6 +1131,7 @@ Konrad Kleine <konrad.wilhelm.kleine@gmail.com>
 Konstantin Gribov <grossws@gmail.com>
 Konstantin L <sw.double@gmail.com>
 Konstantin Pelykh <kpelykh@zettaset.com>
+Kostadin Plachkov <k.n.plachkov@gmail.com>
 Krasi Georgiev <krasi@vip-consult.solutions>
 Krasimir Georgiev <support@vip-consult.co.uk>
 Kris-Mikael Krister <krismikael@protonmail.com>
@@ -1340,6 +1347,7 @@ Michael Holzheu <holzheu@linux.vnet.ibm.com>
 Michael Hudson-Doyle <michael.hudson@canonical.com>
 Michael Huettermann <michael@huettermann.net>
 Michael Irwin <mikesir87@gmail.com>
+Michael Kuehn <micha@kuehn.io>
 Michael Käufl <docker@c.michael-kaeufl.de>
 Michael Neale <michael.neale@gmail.com>
 Michael Nussbaum <michael.nussbaum@getbraintree.com>
@@ -1384,6 +1392,7 @@ Mike Snitzer <snitzer@redhat.com>
 mikelinjie <294893458@qq.com>
 Mikhail Sobolev <mss@mawhrin.net>
 Miklos Szegedi <miklos.szegedi@cloudera.com>
+Milas Bowman <milasb@gmail.com>
 Milind Chawre <milindchawre@gmail.com>
 Miloslav Trmač <mitr@redhat.com>
 mingqing <limingqing@cyou-inc.com>
@@ -1530,6 +1539,7 @@ Pavel Tikhomirov <ptikhomirov@virtuozzo.com>
 Pavlos Ratis <dastergon@gentoo.org>
 Pavol Vargovcik <pallly.vargovcik@gmail.com>
 Pawel Konczalski <mail@konczalski.de>
+Paweł Gronowski <pawel.gronowski@docker.com>
 Peeyush Gupta <gpeeyush@linux.vnet.ibm.com>
 Peggy Li <peggyli.224@gmail.com>
 Pei Su <sillyousu@gmail.com>
@@ -1706,6 +1716,7 @@ Ryan Zhang <ryan.zhang@docker.com>
 ryancooper7 <ryan.cooper7@gmail.com>
 RyanDeng <sheldon.d1018@gmail.com>
 Ryo Nakao <nakabonne@gmail.com>
+Ryoga Saito <contact@proelbtn.com>
 Rémy Greinhofer <remy.greinhofer@livelovely.com>
 s. rannou <mxs@sbrk.org>
 s00318865 <sunyuan3@huawei.com>
@@ -1745,6 +1756,7 @@ Satoshi Tagomori <tagomoris@gmail.com>
 Scott Bessler <scottbessler@gmail.com>
 Scott Collier <emailscottcollier@gmail.com>
 Scott Johnston <scott@docker.com>
+Scott Percival <scottp@lastyard.com>
 Scott Stamp <scottstamp851@gmail.com>
 Scott Walls <sawalls@umich.edu>
 sdreyesg <sdreyesg@gmail.com>
@@ -1757,6 +1769,9 @@ Sean P. Kane <skane@newrelic.com>
 Sean Rodman <srodman7689@gmail.com>
 Sebastiaan van Steenis <mail@superseb.nl>
 Sebastiaan van Stijn <github@gone.nl>
+Sebastian Höffner <sebastian.hoeffner@mevis.fraunhofer.de>
+Sebastian Radloff <sradloff23@gmail.com>
+Sebastien Goasguen <runseb@gmail.com>
 Senthil Kumar Selvaraj <senthil.thecoder@gmail.com>
 Senthil Kumaran <senthil@uthcode.com>
 SeongJae Park <sj38.park@gmail.com>
@@ -1830,6 +1845,7 @@ Stefan S. <tronicum@user.github.com>
 Stefan Scherer <stefan.scherer@docker.com>
 Stefan Staudenmeyer <doerte@instana.com>
 Stefan Weil <sw@weilnetz.de>
+Steffen Butzer <steffen.butzer@outlook.com>
 Stephan Spindler <shutefan@gmail.com>
 Stephen Benjamin <stephen@redhat.com>
 Stephen Crosby <stevecrozz@gmail.com>

@@ -20,7 +20,6 @@ import (
 
 	"github.com/google/cel-go/common/containers"
 	"github.com/google/cel-go/common/operators"
-	"github.com/google/cel-go/common/types"
 	"github.com/google/cel-go/common/types/ref"
 	"github.com/google/cel-go/interpreter/functions"
 
@@ -146,10 +145,10 @@ func (p *planner) planIdent(expr *exprpb.Expr) (Interpretable, error) {
 
 func (p *planner) planCheckedIdent(id int64, identRef *exprpb.Reference) (Interpretable, error) {
 	// Plan a constant reference if this is the case for this simple identifier.
-	if identRef.Value != nil {
+	if identRef.GetValue() != nil {
 		return p.Plan(&exprpb.Expr{Id: id,
 			ExprKind: &exprpb.Expr_ConstExpr{
-				ConstExpr: identRef.Value,
+				ConstExpr: identRef.GetValue(),
 			}})
 	}
 
@@ -157,9 +156,9 @@ func (p *planner) planCheckedIdent(id int64, identRef *exprpb.Reference) (Interp
 	// registered with the provider.
 	cType := p.typeMap[id]
 	if cType.GetType() != nil {
-		cVal, found := p.provider.FindIdent(identRef.Name)
+		cVal, found := p.provider.FindIdent(identRef.GetName())
 		if !found {
-			return nil, fmt.Errorf("reference to undefined type: %s", identRef.Name)
+			return nil, fmt.Errorf("reference to undefined type: %s", identRef.GetName())
 		}
 		return NewConstValue(id, cVal), nil
 	}
@@ -167,7 +166,7 @@ func (p *planner) planCheckedIdent(id int64, identRef *exprpb.Reference) (Interp
 	// Otherwise, return the attribute for the resolved identifier name.
 	return &evalAttr{
 		adapter: p.adapter,
-		attr:    p.attrFactory.AbsoluteAttribute(id, identRef.Name),
+		attr:    p.attrFactory.AbsoluteAttribute(id, identRef.GetName()),
 	}, nil
 }
 
@@ -426,7 +425,7 @@ func (p *planner) planCallNotEqual(expr *exprpb.Expr,
 func (p *planner) planCallLogicalAnd(expr *exprpb.Expr,
 	args []Interpretable) (Interpretable, error) {
 	return &evalAnd{
-		id:  expr.Id,
+		id:  expr.GetId(),
 		lhs: args[0],
 		rhs: args[1],
 	}, nil
@@ -436,7 +435,7 @@ func (p *planner) planCallLogicalAnd(expr *exprpb.Expr,
 func (p *planner) planCallLogicalOr(expr *exprpb.Expr,
 	args []Interpretable) (Interpretable, error) {
 	return &evalOr{
-		id:  expr.Id,
+		id:  expr.GetId(),
 		lhs: args[0],
 		rhs: args[1],
 	}, nil
@@ -477,7 +476,28 @@ func (p *planner) planCallIndex(expr *exprpb.Expr,
 	args []Interpretable) (Interpretable, error) {
 	op := args[0]
 	ind := args[1]
-	opAttr, err := p.relativeAttr(op.ID(), op)
+	opType := p.typeMap[expr.GetCallExpr().GetTarget().GetId()]
+
+	// Establish the attribute reference.
+	var err error
+	attr, isAttr := op.(InterpretableAttribute)
+	if !isAttr {
+		attr, err = p.relativeAttr(op.ID(), op, false)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	// Construct the qualifier type.
+	var qual Qualifier
+	switch ind := ind.(type) {
+	case InterpretableConst:
+		qual, err = p.attrFactory.NewQualifier(opType, expr.GetId(), ind.Value(), optional)
+	case InterpretableAttribute:
+		qual, err = p.attrFactory.NewQualifier(opType, expr.GetId(), ind, optional)
+	default:
+		qual, err = p.relativeAttr(expr.GetId(), ind, optional)
+	}
 	if err != nil {
 		return nil, err
 	}

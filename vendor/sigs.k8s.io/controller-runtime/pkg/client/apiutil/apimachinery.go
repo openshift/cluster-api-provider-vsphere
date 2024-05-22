@@ -30,6 +30,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/runtime/serializer"
 	"k8s.io/client-go/discovery"
+	"k8s.io/client-go/dynamic"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/restmapper"
@@ -59,9 +60,27 @@ func AddToProtobufScheme(addToScheme func(*runtime.Scheme) error) error {
 
 // NewDiscoveryRESTMapper constructs a new RESTMapper based on discovery
 // information fetched by a new client with the given config.
-func NewDiscoveryRESTMapper(c *rest.Config) (meta.RESTMapper, error) {
+func NewDiscoveryRESTMapper(c *rest.Config, httpClient *http.Client) (meta.RESTMapper, error) {
+	if httpClient == nil {
+		return nil, fmt.Errorf("httpClient must not be nil, consider using rest.HTTPClientFor(c) to create a client")
+	}
+
 	// Get a mapper
-	dc, err := discovery.NewDiscoveryClientForConfig(c)
+	dc, err := discovery.NewDiscoveryClientForConfigAndClient(c, httpClient)
+	if err != nil {
+		return nil, err
+	}
+	gr, err := restmapper.GetAPIGroupResources(dc)
+	if err != nil {
+		return nil, err
+	}
+	return restmapper.NewDiscoveryRESTMapper(gr), nil
+}
+
+// IsObjectNamespaced returns true if the object is namespace scoped.
+// For unstructured objects the gvk is found from the object itself.
+func IsObjectNamespaced(obj runtime.Object, scheme *runtime.Scheme, restmapper meta.RESTMapper) (bool, error) {
+	gvk, err := GVKForObject(obj, scheme)
 	if err != nil {
 		return nil, err
 	}

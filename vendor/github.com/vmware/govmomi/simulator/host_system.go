@@ -172,7 +172,7 @@ func CreateDefaultESX(ctx *Context, f *Folder) {
 	cr.Name = host.Name
 	cr.Host = append(cr.Host, host.Reference())
 	host.Network = cr.Network
-	Map.PutEntity(cr, host)
+	ctx.Map.PutEntity(cr, host)
 
 	pool := NewResourcePool()
 	cr.ResourcePool = &pool.Self
@@ -204,7 +204,7 @@ func CreateStandaloneHost(ctx *Context, f *Folder, spec types.HostConnectSpec) (
 		EnvironmentBrowser: newEnvironmentBrowser(),
 	}
 
-	Map.PutEntity(cr, Map.NewEntity(host))
+	ctx.Map.PutEntity(cr, ctx.Map.NewEntity(host))
 	host.Summary.Host = &host.Self
 
 	Map.PutEntity(cr, Map.NewEntity(pool))

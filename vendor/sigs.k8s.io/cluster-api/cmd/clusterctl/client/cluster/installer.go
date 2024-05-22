@@ -142,9 +142,9 @@ func (i *providerInstaller) waitManagerDeploymentsReady(opts InstallOptions) err
 	return nil
 }
 
-func (i *providerInstaller) waitDeploymentReady(deployment unstructured.Unstructured, timeout time.Duration) error {
-	return wait.Poll(100*time.Millisecond, timeout, func() (bool, error) {
-		c, err := i.proxy.NewClient()
+func waitDeploymentReady(ctx context.Context, deployment unstructured.Unstructured, timeout time.Duration, proxy Proxy) error {
+	return wait.PollUntilContextTimeout(ctx, 100*time.Millisecond, timeout, false, func(ctx context.Context) (bool, error) {
+		c, err := proxy.NewClient()
 		if err != nil {
 			return false, err
 		}

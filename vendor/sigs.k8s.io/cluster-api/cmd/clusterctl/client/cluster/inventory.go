@@ -197,7 +197,7 @@ func (p *inventoryClient) EnsureCustomResourceDefinitions() error {
 		// If the object is a CRDs, waits for it being Established.
 		if apiextensionsv1.SchemeGroupVersion.WithKind("CustomResourceDefinition").GroupKind() == o.GroupVersionKind().GroupKind() {
 			crdKey := client.ObjectKeyFromObject(&o)
-			if err := p.pollImmediateWaiter(waitInventoryCRDInterval, waitInventoryCRDTimeout, func() (bool, error) {
+			if err := p.pollImmediateWaiter(ctx, waitInventoryCRDInterval, waitInventoryCRDTimeout, func(ctx context.Context) (bool, error) {
 				c, err := p.proxy.NewClient()
 				if err != nil {
 					return false, err
@@ -224,7 +224,7 @@ func (p *inventoryClient) EnsureCustomResourceDefinitions() error {
 }
 
 // checkInventoryCRDs checks if the inventory CRDs are installed in the cluster.
-func checkInventoryCRDs(proxy Proxy) (bool, error) {
+func checkInventoryCRDs(ctx context.Context, proxy Proxy) (bool, error) {
 	c, err := proxy.NewClient()
 	if err != nil {
 		return false, err
@@ -246,7 +246,7 @@ func checkInventoryCRDs(proxy Proxy) (bool, error) {
 	return true, errors.Errorf("clusterctl inventory CRD does not defines the %s version", clusterctlv1.GroupVersion.Version)
 }
 
-func (p *inventoryClient) createObj(o unstructured.Unstructured) error {
+func (p *inventoryClient) createObj(ctx context.Context, o unstructured.Unstructured) error {
 	c, err := p.proxy.NewClient()
 	if err != nil {
 		return err
@@ -271,7 +271,7 @@ func (p *inventoryClient) createObj(o unstructured.Unstructured) error {
 func (p *inventoryClient) Create(m clusterctlv1.Provider) error {
 	// Create the Kubernetes object.
 	createInventoryObjectBackoff := newWriteBackoff()
-	return retryWithExponentialBackoff(createInventoryObjectBackoff, func() error {
+	return retryWithExponentialBackoff(ctx, createInventoryObjectBackoff, func(ctx context.Context) error {
 		cl, err := p.proxy.NewClient()
 		if err != nil {
 			return err
@@ -319,7 +319,7 @@ func (p *inventoryClient) List() (*clusterctlv1.ProviderList, error) {
 }
 
 // listProviders retrieves the list of provider inventory objects.
-func listProviders(proxy Proxy, providerList *clusterctlv1.ProviderList) error {
+func listProviders(ctx context.Context, proxy Proxy, providerList *clusterctlv1.ProviderList) error {
 	cl, err := proxy.NewClient()
 	if err != nil {
 		return err

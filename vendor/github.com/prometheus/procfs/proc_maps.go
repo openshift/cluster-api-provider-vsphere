@@ -63,7 +63,7 @@ type ProcMap struct {
 func parseDevice(s string) (uint64, error) {
 	toks := strings.Split(s, ":")
 	if len(toks) < 2 {
-		return 0, fmt.Errorf("unexpected number of fields")
+		return 0, fmt.Errorf("%w: unexpected number of fields, expected: 2, got: %q", ErrFileParse, len(toks))
 	}
 
 	major, err := strconv.ParseUint(toks[0], 16, 0)
@@ -93,7 +93,7 @@ func parseAddress(s string) (uintptr, error) {
 func parseAddresses(s string) (uintptr, uintptr, error) {
 	toks := strings.Split(s, "-")
 	if len(toks) < 2 {
-		return 0, 0, fmt.Errorf("invalid address")
+		return 0, 0, fmt.Errorf("%w: invalid address", ErrFileParse)
 	}
 
 	saddr, err := parseAddress(toks[0])

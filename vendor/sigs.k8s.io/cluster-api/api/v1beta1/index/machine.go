@@ -81,7 +81,9 @@ func machineByProviderID(o client.Object) []string {
 		panic(fmt.Sprintf("Expected a Machine but got a %T", o))
 	}
 
-	if pointer.StringDeref(machine.Spec.ProviderID, "") == "" {
+	providerID := pointer.StringDeref(machine.Spec.ProviderID, "")
+
+	if providerID == "" {
 		return nil
 	}
 

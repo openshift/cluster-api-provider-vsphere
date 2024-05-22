@@ -127,6 +127,47 @@ func DumpAllResources(ctx context.Context, input DumpAllResourcesInput) {
 	}
 }
 
+// DumpNamespaceAndGVK specifies a GVK and namespace to be dumped.
+type DumpNamespaceAndGVK struct {
+	GVK       schema.GroupVersionKind
+	Namespace string
+}
+
+// DumpResourcesForClusterInput is the input for DumpResourcesForCluster.
+type DumpResourcesForClusterInput struct {
+	Lister    Lister
+	LogPath   string
+	Cluster   *clusterv1.Cluster
+	Resources []DumpNamespaceAndGVK
+}
+
+// DumpResourcesForCluster dumps specified resources to yaml.
+func DumpResourcesForCluster(ctx context.Context, input DumpResourcesForClusterInput) {
+	Expect(ctx).NotTo(BeNil(), "ctx is required for DumpResourcesForCluster")
+	Expect(input.Lister).NotTo(BeNil(), "input.Lister is required for DumpResourcesForCluster")
+	Expect(input.Cluster).NotTo(BeNil(), "input.Cluster is required for DumpResourcesForCluster")
+
+	for _, resource := range input.Resources {
+		resourceList := new(unstructured.UnstructuredList)
+		resourceList.SetGroupVersionKind(resource.GVK)
+		var listErr error
+		_ = wait.PollUntilContextTimeout(ctx, retryableOperationInterval, retryableOperationTimeout, true, func(ctx context.Context) (bool, error) {
+			if listErr = input.Lister.List(ctx, resourceList, client.InNamespace(resource.Namespace)); listErr != nil {
+				return false, nil //nolint:nilerr
+			}
+			return true, nil
+		})
+		if listErr != nil {
+			// NB. we are treating failures in collecting resources as a non-blocking operation (best effort)
+			fmt.Printf("Failed to list %s for Cluster %s: %v\n", resource.GVK.Kind, klog.KObj(input.Cluster), listErr)
+			continue
+		}
+		for i := range resourceList.Items {
+			dumpObject(&resourceList.Items[i], input.LogPath)
+		}
+	}
+}
+
 func dumpObject(resource runtime.Object, logPath string) {
 	resourceYAML, err := yaml.Marshal(resource)
 	Expect(err).ToNot(HaveOccurred(), "Failed to marshal %s", resource.GetObjectKind().GroupVersionKind().String())

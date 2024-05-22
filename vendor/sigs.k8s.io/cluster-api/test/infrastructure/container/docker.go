@@ -35,6 +35,8 @@ import (
 	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/docker/go-connections/nat"
 	"github.com/pkg/errors"
+	kerrors "k8s.io/apimachinery/pkg/util/errors"
+	"k8s.io/utils/pointer"
 
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 )
@@ -43,6 +45,10 @@ const (
 	httpProxy  = "HTTP_PROXY"
 	httpsProxy = "HTTPS_PROXY"
 	noProxy    = "NO_PROXY"
+
+	btrfsStorage = "btrfs"
+	zfsStorage   = "zfs"
+	xfsStorage   = "xfs"
 )
 
 type dockerRuntime struct {
@@ -389,7 +395,8 @@ func (d *dockerRuntime) RunContainer(ctx context.Context, runConfig *RunContaine
 		NetworkMode:   dockercontainer.NetworkMode(runConfig.Network),
 		Tmpfs:         runConfig.Tmpfs,
 		PortBindings:  nat.PortMap{},
-		RestartPolicy: dockercontainer.RestartPolicy{Name: "unless-stopped"},
+		RestartPolicy: dockercontainer.RestartPolicy{Name: restartPolicy, MaximumRetryCount: restartMaximumRetryCount},
+		Init:          pointer.Bool(false),
 	}
 	networkConfig := network.NetworkingConfig{}
 
@@ -422,6 +429,15 @@ func (d *dockerRuntime) RunContainer(ctx context.Context, runConfig *RunContaine
 		envVars = append(envVars, fmt.Sprintf("%s=%s", key, val))
 	}
 	containerConfig.Env = envVars
+
+	// handle Docker on Btrfs or ZFS
+	// https://github.com/kubernetes-sigs/kind/issues/1416#issuecomment-606514724
+	if d.mountDevMapper(info) {
+		runConfig.Mounts = append(runConfig.Mounts, Mount{
+			Source: "/dev/mapper",
+			Target: "/dev/mapper",
+		})
+	}
 
 	configureVolumes(runConfig, &containerConfig, &hostConfig)
 	configurePortMappings(runConfig.PortMappings, &containerConfig, &hostConfig)
@@ -469,7 +485,13 @@ func (d *dockerRuntime) RunContainer(ctx context.Context, runConfig *RunContaine
 
 	// Actually start the container
 	if err := d.dockerClient.ContainerStart(ctx, resp.ID, types.ContainerStartOptions{}); err != nil {
-		return errors.Wrapf(err, "error starting container %q", runConfig.Name)
+		err := errors.Wrapf(err, "error starting container %q", runConfig.Name)
+		// Delete the container and retry later on. This helps getting around the race
+		// condition where of hitting "port is already allocated" issues.
+		if reterr := d.dockerClient.ContainerRemove(ctx, resp.ID, types.ContainerRemoveOptions{Force: true, RemoveVolumes: true}); reterr != nil {
+			return kerrors.NewAggregate([]error{err, errors.Wrapf(reterr, "error deleting container")})
+		}
+		return err
 	}
 
 	if output != nil {
@@ -513,13 +535,8 @@ func (d *dockerRuntime) RunContainer(ctx context.Context, runConfig *RunContaine
 // needsDevMapper checks whether we need to mount /dev/mapper.
 // This is required when the docker storage driver is Btrfs or ZFS.
 // https://github.com/kubernetes-sigs/kind/pull/1464
-func (d *dockerRuntime) needsDevMapper(ctx context.Context) (bool, error) {
-	info, err := d.dockerClient.Info(ctx)
-	if err != nil {
-		return false, err
-	}
-
-	return info.Driver == "btrfs" || info.Driver == "zfs", nil
+func (d *dockerRuntime) needsDevMapper(info types.Info) bool {
+	return info.Driver == btrfsStorage || info.Driver == zfsStorage
 }
 
 // ownerAndGroup gets the user configuration for the container (user:group).
@@ -637,15 +654,53 @@ func (d *dockerRuntime) getProxyDetails(ctx context.Context, network string) (*p
 }
 
 // usernsRemap checks if userns-remap is enabled in dockerd.
-func (d *dockerRuntime) usernsRemap(ctx context.Context) bool {
-	info, err := d.dockerClient.Info(ctx)
-	if err != nil {
-		return false
-	}
-
+func (d *dockerRuntime) usernsRemap(info types.Info) bool {
 	for _, secOpt := range info.SecurityOptions {
 		if strings.Contains(secOpt, "name=userns") {
 			return true
+		}
+	}
+	return false
+}
+
+// mountDevMapper checks if the Docker storage driver is Btrfs or ZFS
+// or if the backing filesystem is Btrfs.
+func (d *dockerRuntime) mountDevMapper(info types.Info) bool {
+	storage := ""
+	storage = strings.ToLower(strings.TrimSpace(info.Driver))
+	if storage == btrfsStorage || storage == zfsStorage || storage == "devicemapper" {
+		return true
+	}
+
+	// check the backing file system
+	// docker info -f '{{json .DriverStatus  }}'
+	// [["Backing Filesystem","extfs"],["Supports d_type","true"],["Native Overlay Diff","true"]]
+	for _, item := range info.DriverStatus {
+		if item[0] == "Backing Filesystem" {
+			storage = strings.ToLower(item[1])
+			break
+		}
+	}
+
+	return storage == btrfsStorage || storage == zfsStorage || storage == xfsStorage
+}
+
+// rootless: use fuse-overlayfs by default
+// https://github.com/kubernetes-sigs/kind/issues/2275
+func (d *dockerRuntime) mountFuse(info types.Info) bool {
+	for _, o := range info.SecurityOptions {
+		// o is like "name=seccomp,profile=default", or "name=rootless",
+		csvReader := csv.NewReader(strings.NewReader(o))
+		sliceSlice, err := csvReader.ReadAll()
+		if err != nil {
+			return false
+		}
+		for _, f := range sliceSlice {
+			for _, ff := range f {
+				if ff == "name=rootless" {
+					return true
+				}
+			}
 		}
 	}
 	return false

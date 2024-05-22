@@ -122,10 +122,18 @@ func InitManagementClusterAndWatchControllerLogs(ctx context.Context, input Init
 
 // UpgradeManagementClusterAndWaitInput is the input type for UpgradeManagementClusterAndWait.
 type UpgradeManagementClusterAndWaitInput struct {
-	ClusterProxy         framework.ClusterProxy
-	ClusterctlConfigPath string
-	Contract             string
-	LogFolder            string
+	ClusterProxy              framework.ClusterProxy
+	ClusterctlConfigPath      string
+	ClusterctlVariables       map[string]string
+	Contract                  string
+	CoreProvider              string
+	BootstrapProviders        []string
+	ControlPlaneProviders     []string
+	InfrastructureProviders   []string
+	IPAMProviders             []string
+	RuntimeExtensionProviders []string
+	AddonProviders            []string
+	LogFolder                 string
 }
 
 // UpgradeManagementClusterAndWait upgrades provider a management cluster using clusterctl, and waits for the cluster to be ready.
@@ -137,10 +145,19 @@ func UpgradeManagementClusterAndWait(ctx context.Context, input UpgradeManagemen
 	Expect(os.MkdirAll(input.LogFolder, 0750)).To(Succeed(), "Invalid argument. input.LogFolder can't be created for UpgradeManagementClusterAndWait")
 
 	Upgrade(ctx, UpgradeInput{
-		ClusterctlConfigPath: input.ClusterctlConfigPath,
-		KubeconfigPath:       input.ClusterProxy.GetKubeconfigPath(),
-		Contract:             input.Contract,
-		LogFolder:            input.LogFolder,
+		ClusterctlConfigPath:      input.ClusterctlConfigPath,
+		ClusterctlVariables:       input.ClusterctlVariables,
+		ClusterName:               input.ClusterProxy.GetName(),
+		KubeconfigPath:            input.ClusterProxy.GetKubeconfigPath(),
+		Contract:                  input.Contract,
+		CoreProvider:              input.CoreProvider,
+		BootstrapProviders:        input.BootstrapProviders,
+		ControlPlaneProviders:     input.ControlPlaneProviders,
+		InfrastructureProviders:   input.InfrastructureProviders,
+		IPAMProviders:             input.IPAMProviders,
+		RuntimeExtensionProviders: input.RuntimeExtensionProviders,
+		AddonProviders:            input.AddonProviders,
+		LogFolder:                 input.LogFolder,
 	})
 
 	client := input.ClusterProxy.GetClient()

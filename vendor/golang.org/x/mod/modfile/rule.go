@@ -208,7 +208,12 @@ func parseToFile(file string, data []byte, fix VersionFixer, strict bool) (parse
 	return f, nil
 }
 
-var GoVersionRE = lazyregexp.New(`^([1-9][0-9]*)\.(0|[1-9][0-9]*)$`)
+var GoVersionRE = lazyregexp.New(`^([1-9][0-9]*)\.(0|[1-9][0-9]*)(\.(0|[1-9][0-9]*))?([a-z]+[0-9]+)?$`)
+var laxGoVersionRE = lazyregexp.New(`^v?(([1-9][0-9]*)\.(0|[1-9][0-9]*))([^0-9].*)$`)
+
+// Toolchains must be named beginning with `go1`,
+// like "go1.20.3" or "go1.20.3-gccgo". As a special case, "default" is also permitted.
+var ToolchainRE = lazyregexp.New(`^default$|^go1($|\.)`)
 
 func (f *File) add(errs *ErrorList, block *LineBlock, line *Line, verb string, args []string, fix VersionFixer, strict bool) {
 	// If strict is false, this module is a dependency.
@@ -265,6 +270,21 @@ func (f *File) add(errs *ErrorList, block *LineBlock, line *Line, verb string, a
 
 		f.Go = &Go{Syntax: line}
 		f.Go.Version = args[0]
+
+	case "toolchain":
+		if f.Toolchain != nil {
+			errorf("repeated toolchain statement")
+			return
+		}
+		if len(args) != 1 {
+			errorf("toolchain directive expects exactly one argument")
+			return
+		} else if strict && !ToolchainRE.MatchString(args[0]) {
+			errorf("invalid toolchain version '%s': must match format go1.23.0 or local", args[0])
+			return
+		}
+		f.Toolchain = &Toolchain{Syntax: line}
+		f.Toolchain.Name = args[0]
 
 	case "module":
 		if f.Module != nil {
@@ -454,13 +474,76 @@ func (f *File) fixRetract(fix VersionFixer, errs *ErrorList) {
 	}
 }
 
-// isIndirect reports whether line has a "// indirect" comment,
-// meaning it is in go.mod only for its effect on indirect dependencies,
-// so that it can be dropped entirely once the effective version of the
-// indirect dependency reaches the given minimum version.
-func isIndirect(line *Line) bool {
-	if len(line.Suffix) == 0 {
-		return false
+func (f *WorkFile) add(errs *ErrorList, line *Line, verb string, args []string, fix VersionFixer) {
+	wrapError := func(err error) {
+		*errs = append(*errs, Error{
+			Filename: f.Syntax.Name,
+			Pos:      line.Start,
+			Err:      err,
+		})
+	}
+	errorf := func(format string, args ...interface{}) {
+		wrapError(fmt.Errorf(format, args...))
+	}
+
+	switch verb {
+	default:
+		errorf("unknown directive: %s", verb)
+
+	case "go":
+		if f.Go != nil {
+			errorf("repeated go statement")
+			return
+		}
+		if len(args) != 1 {
+			errorf("go directive expects exactly one argument")
+			return
+		} else if !GoVersionRE.MatchString(args[0]) {
+			errorf("invalid go version '%s': must match format 1.23", args[0])
+			return
+		}
+
+		f.Go = &Go{Syntax: line}
+		f.Go.Version = args[0]
+
+	case "toolchain":
+		if f.Toolchain != nil {
+			errorf("repeated toolchain statement")
+			return
+		}
+		if len(args) != 1 {
+			errorf("toolchain directive expects exactly one argument")
+			return
+		} else if !ToolchainRE.MatchString(args[0]) {
+			errorf("invalid toolchain version '%s': must match format go1.23 or local", args[0])
+			return
+		}
+
+		f.Toolchain = &Toolchain{Syntax: line}
+		f.Toolchain.Name = args[0]
+
+	case "use":
+		if len(args) != 1 {
+			errorf("usage: %s local/dir", verb)
+			return
+		}
+		s, err := parseString(&args[0])
+		if err != nil {
+			errorf("invalid quoted string: %v", err)
+			return
+		}
+		f.Use = append(f.Use, &Use{
+			Path:   s,
+			Syntax: line,
+		})
+
+	case "replace":
+		replace, wrappederr := parseReplace(f.Syntax.Name, line, verb, args, fix)
+		if wrappederr != nil {
+			*errs = append(*errs, *wrappederr)
+			return
+		}
+		f.Replace = append(f.Replace, replace)
 	}
 	f := strings.Fields(strings.TrimPrefix(line.Suffix[0].Token, string(slashSlash)))
 	return (len(f) == 1 && f[0] == "indirect" || len(f) > 1 && f[0] == "indirect;")

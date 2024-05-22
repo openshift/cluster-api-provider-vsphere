@@ -30,7 +30,7 @@ import (
 )
 
 // NewDynamicMap returns a traits.Mapper value with dynamic key, value pairs.
-func NewDynamicMap(adapter ref.TypeAdapter, value interface{}) traits.Mapper {
+func NewDynamicMap(adapter ref.TypeAdapter, value any) traits.Mapper {
 	refValue := reflect.ValueOf(value)
 	return &baseMap{
 		TypeAdapter: adapter,
@@ -65,7 +65,7 @@ func NewRefValMap(adapter ref.TypeAdapter, value map[ref.Val]ref.Val) traits.Map
 }
 
 // NewStringInterfaceMap returns a specialized traits.Mapper with string keys and interface values.
-func NewStringInterfaceMap(adapter ref.TypeAdapter, value map[string]interface{}) traits.Mapper {
+func NewStringInterfaceMap(adapter ref.TypeAdapter, value map[string]any) traits.Mapper {
 	return &baseMap{
 		TypeAdapter: adapter,
 		mapAccessor: newStringIfaceMapAccessor(adapter, value),
@@ -403,9 +403,9 @@ func (a *reflectMapAccessor) Find(key ref.Val) (ref.Val, bool) {
 // Iterator creates a Golang reflection based traits.Iterator.
 func (a *reflectMapAccessor) Iterator() traits.Iterator {
 	return &mapIterator{
-		TypeAdapter: a.TypeAdapter,
-		mapKeys:     a.refValue.MapRange(),
-		len:         a.refValue.Len(),
+		TypeAdapter: m.TypeAdapter,
+		mapKeys:     m.refValue.MapRange(),
+		len:         m.refValue.Len(),
 	}
 }
 
@@ -489,7 +489,7 @@ func (a *stringMapAccessor) Iterator() traits.Iterator {
 	}
 }
 
-func newStringIfaceMapAccessor(adapter ref.TypeAdapter, mapVal map[string]interface{}) mapAccessor {
+func newStringIfaceMapAccessor(adapter ref.TypeAdapter, mapVal map[string]any) mapAccessor {
 	return &stringIfaceMapAccessor{
 		TypeAdapter: adapter,
 		mapVal:      mapVal,
@@ -498,7 +498,7 @@ func newStringIfaceMapAccessor(adapter ref.TypeAdapter, mapVal map[string]interf
 
 type stringIfaceMapAccessor struct {
 	ref.TypeAdapter
-	mapVal map[string]interface{}
+	mapVal map[string]any
 }
 
 // Find uses native map accesses to find the key, returning (value, true) if present.

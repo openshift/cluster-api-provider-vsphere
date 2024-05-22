@@ -138,6 +138,10 @@ func (b *EnvironmentBrowser) QueryConfigOptionDescriptor(ctx *Context, req *type
 		Res: new(types.QueryConfigOptionDescriptorResponse),
 	}
 
+	if body.Res.Returnval != nil {
+		return body
+	}
+
 	body.Res.Returnval = []types.VirtualMachineConfigOptionDescriptor{{
 		Key:                 esx.HardwareVersion,
 		Description:         esx.HardwareVersion,

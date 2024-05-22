@@ -227,6 +227,16 @@ message CSIPersistentVolumeSource {
   // secret object contains more than one secret, all secrets are passed.
   // +optional
   optional SecretReference controllerExpandSecretRef = 9;
+
+  // nodeExpandSecretRef is a reference to the secret object containing
+  // sensitive information to pass to the CSI driver to complete the CSI
+  // NodeExpandVolume call.
+  // This is a beta field which is enabled default by CSINodeExpandSecret feature gate.
+  // This field is optional, may be omitted if no secret is required. If the
+  // secret object contains more than one secret, all secrets are passed.
+  // +featureGate=CSINodeExpandSecret
+  // +optional
+  optional SecretReference nodeExpandSecretRef = 10;
 }
 
 // Represents a source location of a volume to mount, managed by an external CSI driver
@@ -1053,9 +1063,17 @@ message EndpointPort {
 
   // The application protocol for this port.
   // This field follows standard Kubernetes label syntax.
-  // Un-prefixed names are reserved for IANA standard service names (as per
-  // RFC-6335 and http://www.iana.org/assignments/service-names).
-  // Non-standard protocols should use prefixed names such as
+  // Valid values are either:
+  //
+  // * Un-prefixed protocol names - reserved for IANA standard service names (as per
+  // RFC-6335 and https://www.iana.org/assignments/service-names).
+  //
+  // * Kubernetes-defined prefixed names:
+  //   * 'kubernetes.io/h2c' - HTTP/2 over cleartext as described in https://www.rfc-editor.org/rfc/rfc7540
+  //   * 'kubernetes.io/ws'  - WebSocket over cleartext as described in https://www.rfc-editor.org/rfc/rfc6455
+  //   * 'kubernetes.io/wss' - WebSocket over TLS as described in https://www.rfc-editor.org/rfc/rfc6455
+  //
+  // * Other protocols should use implementation-defined prefixed names such as
   // mycompany.com/my-custom-protocol.
   // +optional
   optional string appProtocol = 4;
@@ -2727,7 +2745,7 @@ message PersistentVolumeClaimSpec {
   //   specified.
   // (Alpha) Using this field requires the AnyVolumeDataSource feature gate to be enabled.
   // +optional
-  optional TypedLocalObjectReference dataSourceRef = 8;
+  optional TypedObjectReference dataSourceRef = 8;
 }
 
 // PersistentVolumeClaimStatus is the current status of a persistent volume claim.
@@ -2770,7 +2788,7 @@ message PersistentVolumeClaimStatus {
   // This is an alpha field and requires enabling RecoverVolumeExpansionFailure feature.
   // +featureGate=RecoverVolumeExpansionFailure
   // +optional
-  optional string resizeStatus = 6;
+  map<string, string> allocatedResourceStatuses = 7;
 }
 
 // PersistentVolumeClaimTemplate is used to produce
@@ -2991,6 +3009,13 @@ message PersistentVolumeStatus {
   // for machine parsing and tidy display in the CLI.
   // +optional
   optional string reason = 3;
+
+  // lastPhaseTransitionTime is the time the phase transitioned from one to another
+  // and automatically resets to current time everytime a volume phase transitions.
+  // This is an alpha field and requires enabling PersistentVolumeLastPhaseTransitionTime feature.
+  // +featureGate=PersistentVolumeLastPhaseTransitionTime
+  // +optional
+  optional k8s.io.apimachinery.pkg.apis.meta.v1.Time lastPhaseTransitionTime = 4;
 }
 
 // Represents a Photon Controller persistent disk resource.
@@ -4920,9 +4945,17 @@ message ServicePort {
 
   // The application protocol for this port.
   // This field follows standard Kubernetes label syntax.
-  // Un-prefixed names are reserved for IANA standard service names (as per
-  // RFC-6335 and http://www.iana.org/assignments/service-names).
-  // Non-standard protocols should use prefixed names such as
+  // Valid values are either:
+  //
+  // * Un-prefixed protocol names - reserved for IANA standard service names (as per
+  // RFC-6335 and https://www.iana.org/assignments/service-names).
+  //
+  // * Kubernetes-defined prefixed names:
+  //   * 'kubernetes.io/h2c' - HTTP/2 over cleartext as described in https://www.rfc-editor.org/rfc/rfc7540
+  //   * 'kubernetes.io/ws'  - WebSocket over cleartext as described in https://www.rfc-editor.org/rfc/rfc6455
+  //   * 'kubernetes.io/wss' - WebSocket over TLS as described in https://www.rfc-editor.org/rfc/rfc6455
+  //
+  // * Other protocols should use implementation-defined prefixed names such as
   // mycompany.com/my-custom-protocol.
   // +optional
   optional string appProtocol = 6;

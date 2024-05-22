@@ -39,8 +39,6 @@ type TypeProvider interface {
 
 	// FieldFieldType returns the field type for a checked type value. Returns
 	// false if the field could not be found.
-	//
-	// Used during type-checking only.
 	FindFieldType(messageType string, fieldName string) (*FieldType, bool)
 
 	// NewValue creates a new type value from a qualified name and map of field

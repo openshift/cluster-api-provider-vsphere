@@ -35,8 +35,19 @@ import (
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	"sigs.k8s.io/cluster-api/api/v1beta1/index"
 	"sigs.k8s.io/cluster-api/controllers/external"
+	"sigs.k8s.io/cluster-api/controllers/remote"
+	expv1 "sigs.k8s.io/cluster-api/exp/api/v1beta1"
+	runtimecatalog "sigs.k8s.io/cluster-api/exp/runtime/catalog"
+	runtimehooksv1 "sigs.k8s.io/cluster-api/exp/runtime/hooks/api/v1alpha1"
+	"sigs.k8s.io/cluster-api/feature"
 	"sigs.k8s.io/cluster-api/internal/controllers/topology/cluster/patches"
 	"sigs.k8s.io/cluster-api/internal/controllers/topology/cluster/scope"
+	"sigs.k8s.io/cluster-api/internal/controllers/topology/cluster/structuredmerge"
+	"sigs.k8s.io/cluster-api/internal/hooks"
+	tlog "sigs.k8s.io/cluster-api/internal/log"
+	runtimeclient "sigs.k8s.io/cluster-api/internal/runtime/client"
+	"sigs.k8s.io/cluster-api/internal/util/ssa"
+	"sigs.k8s.io/cluster-api/internal/webhooks"
 	"sigs.k8s.io/cluster-api/util"
 	"sigs.k8s.io/cluster-api/util/annotations"
 	"sigs.k8s.io/cluster-api/util/patch"
@@ -70,6 +81,8 @@ type Reconciler struct {
 
 	// patchEngine is used to apply patches during computeDesiredState.
 	patchEngine patches.Engine
+
+	patchHelperFactory structuredmerge.PatchHelperFactoryFunc
 }
 
 func (r *Reconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manager, options controller.Options) error {
@@ -99,6 +112,12 @@ func (r *Reconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manager, opt
 
 	r.externalTracker = external.ObjectTracker{
 		Controller: c,
+		Cache:      mgr.GetCache(),
+	}
+	r.patchEngine = patches.NewEngine(r.RuntimeClient)
+	r.recorder = mgr.GetEventRecorderFor("topology/cluster")
+	if r.patchHelperFactory == nil {
+		r.patchHelperFactory = serverSideApplyPatchHelperFactory(r.Client, ssa.NewCache())
 	}
 	r.patchEngine = patches.NewEngine()
 	r.recorder = mgr.GetEventRecorderFor("topology/cluster")
@@ -107,7 +126,7 @@ func (r *Reconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manager, opt
 
 // SetupForDryRun prepares the Reconciler for a dry run execution.
 func (r *Reconciler) SetupForDryRun(recorder record.EventRecorder) {
-	r.patchEngine = patches.NewEngine()
+	r.patchEngine = patches.NewEngine(r.RuntimeClient)
 	r.recorder = recorder
 }
 
@@ -179,7 +198,16 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (_ ctrl.Re
 	}()
 
 	// Handle normal reconciliation loop.
-	return r.reconcile(ctx, s)
+	result, err := r.reconcile(ctx, s)
+	if err != nil {
+		// Requeue if the reconcile failed because the ClusterCacheTracker was locked for
+		// the current cluster because of concurrent access.
+		if errors.Is(err, remote.ErrClusterLocked) {
+			log.V(5).Info("Requeuing because another worker has the lock on the ClusterCacheTracker")
+			return ctrl.Result{Requeue: true}, nil
+		}
+	}
+	return result, err
 }
 
 // reconcile handles cluster reconciliation.
@@ -283,4 +311,64 @@ func (r *Reconciler) machineDeploymentToCluster(o client.Object) []ctrl.Request 
 			Name:      md.Spec.ClusterName,
 		},
 	}}
+}
+
+// machinePoolToCluster is a handler.ToRequestsFunc to be used to enqueue requests for reconciliation
+// for Cluster to update when one of its own MachinePools gets updated.
+func (r *Reconciler) machinePoolToCluster(_ context.Context, o client.Object) []ctrl.Request {
+	mp, ok := o.(*expv1.MachinePool)
+	if !ok {
+		panic(fmt.Sprintf("Expected a MachinePool but got a %T", o))
+	}
+	if mp.Spec.ClusterName == "" {
+		return nil
+	}
+
+	return []ctrl.Request{{
+		NamespacedName: types.NamespacedName{
+			Namespace: mp.Namespace,
+			Name:      mp.Spec.ClusterName,
+		},
+	}}
+}
+
+func (r *Reconciler) reconcileDelete(ctx context.Context, cluster *clusterv1.Cluster) (ctrl.Result, error) {
+	// Call the BeforeClusterDelete hook if the 'ok-to-delete' annotation is not set
+	// and add the annotation to the cluster after receiving a successful non-blocking response.
+	log := tlog.LoggerFrom(ctx)
+	if feature.Gates.Enabled(feature.RuntimeSDK) {
+		if !hooks.IsOkToDelete(cluster) {
+			hookRequest := &runtimehooksv1.BeforeClusterDeleteRequest{
+				Cluster: *cluster,
+			}
+			hookResponse := &runtimehooksv1.BeforeClusterDeleteResponse{}
+			if err := r.RuntimeClient.CallAllExtensions(ctx, runtimehooksv1.BeforeClusterDelete, cluster, hookRequest, hookResponse); err != nil {
+				return ctrl.Result{}, err
+			}
+			if hookResponse.RetryAfterSeconds != 0 {
+				log.Infof("Cluster deletion is blocked by %q hook", runtimecatalog.HookName(runtimehooksv1.BeforeClusterDelete))
+				return ctrl.Result{RequeueAfter: time.Duration(hookResponse.RetryAfterSeconds) * time.Second}, nil
+			}
+			// The BeforeClusterDelete hook returned a non-blocking response. Now the cluster is ready to be deleted.
+			// Lets mark the cluster as `ok-to-delete`
+			if err := hooks.MarkAsOkToDelete(ctx, r.Client, cluster); err != nil {
+				return ctrl.Result{}, err
+			}
+		}
+	}
+	return ctrl.Result{}, nil
+}
+
+// serverSideApplyPatchHelperFactory makes use of managed fields provided by server side apply and is used by the controller.
+func serverSideApplyPatchHelperFactory(c client.Client, ssaCache ssa.Cache) structuredmerge.PatchHelperFactoryFunc {
+	return func(ctx context.Context, original, modified client.Object, opts ...structuredmerge.HelperOption) (structuredmerge.PatchHelper, error) {
+		return structuredmerge.NewServerSidePatchHelper(ctx, original, modified, c, ssaCache, opts...)
+	}
+}
+
+// dryRunPatchHelperFactory makes use of a two-ways patch and is used in situations where we cannot rely on managed fields.
+func dryRunPatchHelperFactory(c client.Client) structuredmerge.PatchHelperFactoryFunc {
+	return func(ctx context.Context, original, modified client.Object, opts ...structuredmerge.HelperOption) (structuredmerge.PatchHelper, error) {
+		return structuredmerge.NewTwoWaysPatchHelper(original, modified, c, opts...)
+	}
 }

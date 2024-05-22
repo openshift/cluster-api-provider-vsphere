@@ -92,6 +92,7 @@ func (p *Parser) Parse(source common.Source) (*exprpb.ParsedExpr, *common.Errors
 		errorRecoveryLimit:               p.errorRecoveryLimit,
 		errorRecoveryLookaheadTokenLimit: p.errorRecoveryTokenLookaheadLimit,
 		populateMacroCalls:               p.populateMacroCalls,
+		enableOptionalSyntax:             p.enableOptionalSyntax,
 	}
 	buf, ok := source.(runes.Buffer)
 	if !ok {
@@ -281,6 +282,7 @@ type parser struct {
 	errorRecoveryLimit               int
 	errorRecoveryLookaheadTokenLimit int
 	populateMacroCalls               bool
+	enableOptionalSyntax             bool
 }
 
 var (
@@ -345,6 +347,8 @@ func (p *parser) parse(expr runes.Buffer, desc string) *exprpb.Expr {
 				p.errors.ReportError(common.NoLocation, err.Error())
 			case *recursionError:
 				p.errors.ReportError(common.NoLocation, err.Error())
+			case *tooManyErrors:
+				// do nothing
 			case *recoveryLimitError:
 				// do nothing, listeners already notified and error reported.
 			default:
@@ -428,9 +432,6 @@ func (p *parser) VisitExpr(ctx *gen.ExprContext) interface{} {
 // Visit a parse tree produced by CELParser#conditionalOr.
 func (p *parser) VisitConditionalOr(ctx *gen.ConditionalOrContext) interface{} {
 	result := p.Visit(ctx.GetE()).(*exprpb.Expr)
-	if ctx.GetOps() == nil {
-		return result
-	}
 	b := newBalancer(p.helper, operators.LogicalOr, result)
 	rest := ctx.GetE1()
 	for i, op := range ctx.GetOps() {
@@ -447,9 +448,6 @@ func (p *parser) VisitConditionalOr(ctx *gen.ConditionalOrContext) interface{} {
 // Visit a parse tree produced by CELParser#conditionalAnd.
 func (p *parser) VisitConditionalAnd(ctx *gen.ConditionalAndContext) interface{} {
 	result := p.Visit(ctx.GetE()).(*exprpb.Expr)
-	if ctx.GetOps() == nil {
-		return result
-	}
 	b := newBalancer(p.helper, operators.LogicalAnd, result)
 	rest := ctx.GetE1()
 	for i, op := range ctx.GetOps() {
@@ -829,7 +827,7 @@ func (p *parser) unquote(ctx interface{}, value string, isBytes bool) string {
 	return text
 }
 
-func (p *parser) reportError(ctx interface{}, format string, args ...interface{}) *exprpb.Expr {
+func (p *parser) reportError(ctx any, format string, args ...any) *exprpb.Expr {
 	var location common.Location
 	switch ctx.(type) {
 	case common.Location:

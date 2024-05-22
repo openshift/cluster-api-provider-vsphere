@@ -51,8 +51,8 @@ type Helper struct {
 // NewHelper returns an initialized Helper.
 func NewHelper(obj client.Object, crClient client.Client) (*Helper, error) {
 	// Return early if the object is nil.
-	if err := checkNilObject(obj); err != nil {
-		return nil, err
+	if util.IsNil(obj) {
+		return nil, errors.New("helper could not be created: object is nil")
 	}
 
 	// Get the GroupVersionKind of the object,
@@ -83,8 +83,8 @@ func NewHelper(obj client.Object, crClient client.Client) (*Helper, error) {
 // Patch will attempt to patch the given object, including its status.
 func (h *Helper) Patch(ctx context.Context, obj client.Object, opts ...Option) error {
 	// Return early if the object is nil.
-	if err := checkNilObject(obj); err != nil {
-		return err
+	if util.IsNil(obj) {
+		return errors.New("Patch could not be completed: object is nil")
 	}
 
 	// Get the GroupVersionKind of the object that we want to patch.

@@ -267,7 +267,8 @@ func (fd *FieldDescription) IsMap() bool {
 
 // IsMessage returns true if the field is of message type.
 func (fd *FieldDescription) IsMessage() bool {
-	return fd.desc.Kind() == protoreflect.MessageKind
+	kind := fd.desc.Kind()
+	return kind == protoreflect.MessageKind || kind == protoreflect.GroupKind
 }
 
 // IsOneof returns true if the field is declared within a oneof block.
@@ -316,7 +317,7 @@ func (fd *FieldDescription) Zero() proto.Message {
 }
 
 func (fd *FieldDescription) typeDefToType() *exprpb.Type {
-	if fd.desc.Kind() == protoreflect.MessageKind {
+	if fd.desc.Kind() == protoreflect.MessageKind || fd.desc.Kind() == protoreflect.GroupKind {
 		msgType := string(fd.desc.Message().FullName())
 		if wk, found := CheckedWellKnowns[msgType]; found {
 			return wk
@@ -432,12 +433,15 @@ func unwrapDynamic(desc description, refMsg protoreflect.Message) (interface{}, 
 		// unwrapped before being returned to the caller. Otherwise, the dynamic protobuf object
 		// represented by the Any will be returned.
 		unwrappedAny := &anypb.Any{}
-		proto.Merge(unwrappedAny, msg)
+		err := Merge(unwrappedAny, msg)
+		if err != nil {
+			return nil, false, err
+		}
 		dynMsg, err := unwrappedAny.UnmarshalNew()
 		if err != nil {
 			// Allow the error to move further up the stack as it should result in an type
 			// conversion error if the caller does not recover it somehow.
-			return unwrappedAny, true
+			return nil, false, err
 		}
 		// Attempt to unwrap the dynamic type, otherwise return the dynamic message.
 		if unwrapped, nested := unwrapDynamic(desc, dynMsg.ProtoReflect()); nested {

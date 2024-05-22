@@ -1,17 +1,15 @@
-// Copyright 2012 The Go Authors. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
-
 //go:build !plan9
 // +build !plan9
 
-// Package fsnotify provides a platform-independent interface for file system notifications.
+// Package fsnotify provides a cross-platform interface for file system
+// notifications.
 package fsnotify
 
 import (
 	"bytes"
 	"errors"
 	"fmt"
+	"strings"
 )
 
 // Event represents a single file system notification.
@@ -32,24 +30,28 @@ const (
 	Chmod
 )
 
-func (op Op) String() string {
-	// Use a buffer for efficient string concatenation
-	var buffer bytes.Buffer
+// Common errors that can be reported by a watcher
+var (
+	ErrNonExistentWatch = errors.New("can't remove non-existent watcher")
+	ErrEventOverflow    = errors.New("fsnotify queue overflow")
+)
 
-	if op&Create == Create {
-		buffer.WriteString("|CREATE")
+func (op Op) String() string {
+	var b strings.Builder
+	if op.Has(Create) {
+		b.WriteString("|CREATE")
 	}
-	if op&Remove == Remove {
-		buffer.WriteString("|REMOVE")
+	if op.Has(Remove) {
+		b.WriteString("|REMOVE")
 	}
-	if op&Write == Write {
-		buffer.WriteString("|WRITE")
+	if op.Has(Write) {
+		b.WriteString("|WRITE")
 	}
-	if op&Rename == Rename {
-		buffer.WriteString("|RENAME")
+	if op.Has(Rename) {
+		b.WriteString("|RENAME")
 	}
-	if op&Chmod == Chmod {
-		buffer.WriteString("|CHMOD")
+	if op.Has(Chmod) {
+		b.WriteString("|CHMOD")
 	}
 	if buffer.Len() == 0 {
 		return ""
@@ -57,13 +59,13 @@ func (op Op) String() string {
 	return buffer.String()[1:] // Strip leading pipe
 }
 
-// String returns a string representation of the event in the form
-// "file: REMOVE|WRITE|..."
+// Has reports if this operation has the given operation.
+func (o Op) Has(h Op) bool { return o&h == h }
+
+// Has reports if this event has the given operation.
+func (e Event) Has(op Op) bool { return e.Op.Has(op) }
+
+// String returns a string representation of the event with their path.
 func (e Event) String() string {
 	return fmt.Sprintf("%q: %s", e.Name, e.Op.String())
 }
-
-// Common errors that can be reported by a watcher
-var (
-	ErrEventOverflow = errors.New("fsnotify queue overflow")
-)

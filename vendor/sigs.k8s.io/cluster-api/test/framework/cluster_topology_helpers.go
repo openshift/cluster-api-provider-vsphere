@@ -56,17 +56,21 @@ func GetClusterClassByName(ctx context.Context, input GetClusterClassByNameInput
 
 // UpgradeClusterTopologyAndWaitForUpgradeInput is the input type for UpgradeClusterTopologyAndWaitForUpgrade.
 type UpgradeClusterTopologyAndWaitForUpgradeInput struct {
-	ClusterProxy                ClusterProxy
-	Cluster                     *clusterv1.Cluster
-	ControlPlane                *controlplanev1.KubeadmControlPlane
-	EtcdImageTag                string
-	DNSImageTag                 string
-	MachineDeployments          []*clusterv1.MachineDeployment
-	KubernetesUpgradeVersion    string
-	WaitForMachinesToBeUpgraded []interface{}
-	WaitForKubeProxyUpgrade     []interface{}
-	WaitForDNSUpgrade           []interface{}
-	WaitForEtcdUpgrade          []interface{}
+	ClusterProxy                       ClusterProxy
+	Cluster                            *clusterv1.Cluster
+	ControlPlane                       *controlplanev1.KubeadmControlPlane
+	EtcdImageTag                       string
+	DNSImageTag                        string
+	MachineDeployments                 []*clusterv1.MachineDeployment
+	MachinePools                       []*expv1.MachinePool
+	KubernetesUpgradeVersion           string
+	WaitForMachinesToBeUpgraded        []interface{}
+	WaitForMachinePoolToBeUpgraded     []interface{}
+	WaitForKubeProxyUpgrade            []interface{}
+	WaitForDNSUpgrade                  []interface{}
+	WaitForEtcdUpgrade                 []interface{}
+	PreWaitForControlPlaneToBeUpgraded func()
+	PreWaitForWorkersToBeUpgraded      func()
 }
 
 // UpgradeClusterTopologyAndWaitForUpgrade upgrades a Cluster topology and waits for it to be upgraded.
@@ -113,12 +117,6 @@ func UpgradeClusterTopologyAndWaitForUpgrade(ctx context.Context, input UpgradeC
 		Getter:            workloadClient,
 		KubernetesVersion: input.KubernetesUpgradeVersion,
 	}, input.WaitForKubeProxyUpgrade...)
-
-	log.Logf("Waiting for CoreDNS to have the upgraded image tag")
-	WaitForDNSUpgrade(ctx, WaitForDNSUpgradeInput{
-		Getter:     workloadClient,
-		DNSVersion: input.DNSImageTag,
-	}, input.WaitForDNSUpgrade...)
 
 	log.Logf("Waiting for etcd to have the upgraded image tag")
 	lblSelector, err := labels.Parse("component=etcd")

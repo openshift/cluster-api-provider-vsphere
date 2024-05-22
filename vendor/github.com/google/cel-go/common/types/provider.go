@@ -195,7 +195,7 @@ func (p *protoTypeRegistry) RegisterType(types ...ref.Type) error {
 // providing support for custom proto-based types.
 //
 // This method should be the inverse of ref.Val.ConvertToNative.
-func (p *protoTypeRegistry) NativeToValue(value interface{}) ref.Val {
+func (p *protoTypeRegistry) NativeToValue(value any) ref.Val {
 	if val, found := nativeToValue(p, value); found {
 		return val
 	}
@@ -255,7 +255,7 @@ func (a *defaultTypeAdapter) NativeToValue(value interface{}) ref.Val {
 
 // nativeToValue returns the converted (ref.Val, true) of a conversion is found,
 // otherwise (nil, false)
-func nativeToValue(a ref.TypeAdapter, value interface{}) (ref.Val, bool) {
+func nativeToValue(a ref.TypeAdapter, value any) (ref.Val, bool) {
 	switch v := value.(type) {
 	case nil:
 		return NullValue, true

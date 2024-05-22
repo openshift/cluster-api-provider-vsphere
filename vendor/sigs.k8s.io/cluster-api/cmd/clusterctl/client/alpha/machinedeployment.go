@@ -49,8 +49,14 @@ func getMachineDeployment(proxy cluster.Proxy, name, namespace string) (*cluster
 	return mdObj, nil
 }
 
-// patchMachineDeployemt applies a patch to a machinedeployment.
-func patchMachineDeployemt(proxy cluster.Proxy, name, namespace string, patch client.Patch) error {
+// setRolloutAfterOnMachineDeployment sets MachineDeployment.spec.rolloutAfter.
+func setRolloutAfterOnMachineDeployment(ctx context.Context, proxy cluster.Proxy, name, namespace string) error {
+	patch := client.RawPatch(types.MergePatchType, []byte(fmt.Sprintf(`{"spec":{"rolloutAfter":"%v"}}`, time.Now().Format(time.RFC3339))))
+	return patchMachineDeployment(ctx, proxy, name, namespace, patch)
+}
+
+// patchMachineDeployment applies a patch to a machinedeployment.
+func patchMachineDeployment(ctx context.Context, proxy cluster.Proxy, name, namespace string, patch client.Patch) error {
 	cFrom, err := proxy.NewClient()
 	if err != nil {
 		return err

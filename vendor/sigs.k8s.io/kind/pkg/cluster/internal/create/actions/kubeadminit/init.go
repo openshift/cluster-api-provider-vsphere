@@ -113,7 +113,7 @@ func (a *action) Execute(ctx *actions.ActionContext) error {
 			"kubectl", "--kubeconfig=/etc/kubernetes/admin.conf",
 			"taint", "nodes", "--all", "node-role.kubernetes.io/master-",
 		).Run(); err != nil {
-			return errors.Wrap(err, "failed to remove master taint")
+			return errors.Wrap(err, "failed to remove control plane taint")
 		}
 	}
 

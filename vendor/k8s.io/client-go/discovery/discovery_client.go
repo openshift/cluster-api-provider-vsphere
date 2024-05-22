@@ -247,13 +247,6 @@ func IsGroupDiscoveryFailedError(err error) bool {
 	return err != nil && ok
 }
 
-// ServerResources uses the provided discovery interface to look up supported resources for all groups and versions.
-// Deprecated: use ServerGroupsAndResources instead.
-func ServerResources(d DiscoveryInterface) ([]*metav1.APIResourceList, error) {
-	_, rs, err := ServerGroupsAndResources(d)
-	return rs, err
-}
-
 func ServerGroupsAndResources(d DiscoveryInterface) ([]*metav1.APIGroup, []*metav1.APIResourceList, error) {
 	sgs, err := d.ServerGroups()
 	if sgs == nil {

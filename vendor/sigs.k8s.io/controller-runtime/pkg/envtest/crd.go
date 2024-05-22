@@ -357,7 +357,7 @@ func modifyConversionWebhooks(crds []*apiextensionsv1.CustomResourceDefinition, 
 	if err != nil {
 		return err
 	}
-	url := pointer.StringPtr(fmt.Sprintf("https://%s/convert", hostPort))
+	url := pointer.String(fmt.Sprintf("https://%s/convert", hostPort))
 
 	for i := range crds {
 		// Continue if we're preserving unknown fields.

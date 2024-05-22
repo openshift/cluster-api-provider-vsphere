@@ -16,6 +16,7 @@ package cel
 
 import (
 	"errors"
+	"fmt"
 	"sync"
 
 	"github.com/google/cel-go/checker"
@@ -62,11 +63,23 @@ func (ast *Ast) SourceInfo() *exprpb.SourceInfo {
 
 // ResultType returns the output type of the expression if the Ast has been type-checked, else
 // returns decls.Dyn as the parse step cannot infer the type.
+//
+// Deprecated: use OutputType
 func (ast *Ast) ResultType() *exprpb.Type {
 	if !ast.IsChecked() {
 		return decls.Dyn
 	}
-	return ast.typeMap[ast.expr.Id]
+	return ast.typeMap[ast.expr.GetId()]
+}
+
+// OutputType returns the output type of the expression if the Ast has been type-checked, else
+// returns cel.DynType as the parse step cannot infer types.
+func (ast *Ast) OutputType() *Type {
+	t, err := ExprTypeToType(ast.ResultType())
+	if err != nil {
+		return DynType
+	}
+	return t
 }
 
 // Source returns a view of the input used to create the Ast. This source may be complete or
@@ -83,14 +96,19 @@ func FormatType(t *exprpb.Type) string {
 // Env encapsulates the context necessary to perform parsing, type checking, or generation of
 // evaluable programs for different expressions.
 type Env struct {
-	Container    *containers.Container
-	declarations []*exprpb.Decl
-	macros       []parser.Macro
-	adapter      ref.TypeAdapter
-	provider     ref.TypeProvider
-	features     map[int]bool
-	// program options tied to the environment.
-	progOpts []ProgramOption
+	Container       *containers.Container
+	functions       map[string]*functionDecl
+	declarations    []*exprpb.Decl
+	macros          []parser.Macro
+	adapter         ref.TypeAdapter
+	provider        ref.TypeProvider
+	features        map[int]bool
+	appliedFeatures map[int]bool
+	libraries       map[string]bool
+
+	// Internal parser representation
+	prsr     *parser.Parser
+	prsrOpts []parser.Option
 
 	// Internal checker representation
 	chk    *checker.Env
@@ -125,13 +143,16 @@ func NewCustomEnv(opts ...EnvOption) (*Env, error) {
 		return nil, err
 	}
 	return (&Env{
-		declarations: []*exprpb.Decl{},
-		macros:       []parser.Macro{},
-		Container:    containers.DefaultContainer,
-		adapter:      registry,
-		provider:     registry,
-		features:     map[int]bool{},
-		progOpts:     []ProgramOption{},
+		declarations:    []*exprpb.Decl{},
+		functions:       map[string]*functionDecl{},
+		macros:          []parser.Macro{},
+		Container:       containers.DefaultContainer,
+		adapter:         registry,
+		provider:        registry,
+		features:        map[int]bool{},
+		appliedFeatures: map[int]bool{},
+		libraries:       map[string]bool{},
+		progOpts:        []ProgramOption{},
 	}).configure(opts)
 }
 
@@ -163,7 +184,7 @@ func (e *Env) Check(ast *Ast) (*Ast, *Issues) {
 	// The once call will ensure that this value is set or nil for all invocations.
 	if e.chkErr != nil {
 		errs := common.NewErrors(ast.Source())
-		errs.ReportError(common.NoLocation, e.chkErr.Error())
+		errs.ReportError(common.NoLocation, err.Error())
 		return nil, NewIssues(errs)
 	}
 
@@ -225,8 +246,30 @@ func (e *Env) Extend(opts ...EnvOption) (*Env, error) {
 	if e.chkErr != nil {
 		return nil, e.chkErr
 	}
-	// Copy slices.
-	decsCopy := make([]*exprpb.Decl, len(e.declarations))
+
+	prsrOptsCopy := make([]parser.Option, len(e.prsrOpts))
+	copy(prsrOptsCopy, e.prsrOpts)
+
+	// The type-checker is configured with Declarations. The declarations may either be provided
+	// as options which have not yet been validated, or may come from a previous checker instance
+	// whose types have already been validated.
+	chkOptsCopy := make([]checker.Option, len(e.chkOpts))
+	copy(chkOptsCopy, e.chkOpts)
+
+	// Copy the declarations if needed.
+	decsCopy := []*exprpb.Decl{}
+	if chk != nil {
+		// If the type-checker has already been instantiated, then the e.declarations have been
+		// validated within the chk instance.
+		chkOptsCopy = append(chkOptsCopy, checker.ValidatedDeclarations(chk))
+	} else {
+		// If the type-checker has not been instantiated, ensure the unvalidated declarations are
+		// provided to the extended Env instance.
+		decsCopy = make([]*exprpb.Decl, len(e.declarations))
+		copy(decsCopy, e.declarations)
+	}
+
+	// Copy macros and program options
 	macsCopy := make([]parser.Macro, len(e.macros))
 	progOptsCopy := make([]ProgramOption, len(e.progOpts))
 	copy(decsCopy, e.declarations)
@@ -264,15 +307,32 @@ func (e *Env) Extend(opts ...EnvOption) (*Env, error) {
 	for k, v := range e.features {
 		featuresCopy[k] = v
 	}
+	appliedFeaturesCopy := make(map[int]bool, len(e.appliedFeatures))
+	for k, v := range e.appliedFeatures {
+		appliedFeaturesCopy[k] = v
+	}
+	funcsCopy := make(map[string]*functionDecl, len(e.functions))
+	for k, v := range e.functions {
+		funcsCopy[k] = v
+	}
+	libsCopy := make(map[string]bool, len(e.libraries))
+	for k, v := range e.libraries {
+		libsCopy[k] = v
+	}
 
 	ext := &Env{
-		Container:    e.Container,
-		declarations: decsCopy,
-		macros:       macsCopy,
-		progOpts:     progOptsCopy,
-		adapter:      adapter,
-		features:     featuresCopy,
-		provider:     provider,
+		Container:       e.Container,
+		declarations:    decsCopy,
+		functions:       funcsCopy,
+		macros:          macsCopy,
+		progOpts:        progOptsCopy,
+		adapter:         adapter,
+		features:        featuresCopy,
+		appliedFeatures: appliedFeaturesCopy,
+		libraries:       libsCopy,
+		provider:        provider,
+		chkOpts:         chkOptsCopy,
+		prsrOpts:        prsrOptsCopy,
 	}
 	return ext.configure(opts)
 }
@@ -280,8 +340,14 @@ func (e *Env) Extend(opts ...EnvOption) (*Env, error) {
 // HasFeature checks whether the environment enables the given feature
 // flag, as enumerated in options.go.
 func (e *Env) HasFeature(flag int) bool {
-	_, has := e.features[flag]
-	return has
+	enabled, has := e.features[flag]
+	return has && enabled
+}
+
+// HasLibrary returns whether a specific SingletonLibrary has been configured in the environment.
+func (e *Env) HasLibrary(libName string) bool {
+	configured, exists := e.libraries[libName]
+	return exists && configured
 }
 
 // Parse parses the input expression value `txt` to a Ast and/or a set of Issues.
@@ -323,11 +389,6 @@ func (e *Env) Program(ast *Ast, opts ...ProgramOption) (Program, error) {
 		optSet = mergedOpts
 	}
 	return newProgram(e, ast, optSet)
-}
-
-// SetFeature sets the given feature flag, as enumerated in options.go.
-func (e *Env) SetFeature(flag int) {
-	e.features[flag] = true
 }
 
 // TypeAdapter returns the `ref.TypeAdapter` configured for the environment.
@@ -402,6 +463,16 @@ func (e *Env) ResidualAst(a *Ast, details *EvalDetails) (*Ast, error) {
 	return checked, nil
 }
 
+// EstimateCost estimates the cost of a type checked CEL expression using the length estimates of input data and
+// extension functions provided by estimator.
+func (e *Env) EstimateCost(ast *Ast, estimator checker.CostEstimator, opts ...checker.CostOption) (checker.CostEstimate, error) {
+	checked, err := AstToCheckedExpr(ast)
+	if err != nil {
+		return checker.CostEstimate{}, fmt.Errorf("EsimateCost could not inspect Ast: %v", err)
+	}
+	return checker.Cost(checked, estimator, opts...)
+}
+
 // configure applies a series of EnvOptions to the current environment.
 func (e *Env) configure(opts []EnvOption) (*Env, error) {
 	// Customized the environment using the provided EnvOption values. If an error is
@@ -413,6 +484,118 @@ func (e *Env) configure(opts []EnvOption) (*Env, error) {
 			return nil, err
 		}
 	}
+
+	// If the default UTC timezone fix has been enabled, make sure the library is configured
+	e, err = e.maybeApplyFeature(featureDefaultUTCTimeZone, Lib(timeUTCLibrary{}))
+	if err != nil {
+		return nil, err
+	}
+
+	// Initialize all of the functions configured within the environment.
+	for _, fn := range e.functions {
+		err = fn.init()
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	// Configure the parser.
+	prsrOpts := []parser.Option{}
+	prsrOpts = append(prsrOpts, e.prsrOpts...)
+	prsrOpts = append(prsrOpts, parser.Macros(e.macros...))
+
+	if e.HasFeature(featureEnableMacroCallTracking) {
+		prsrOpts = append(prsrOpts, parser.PopulateMacroCalls(true))
+	}
+	e.prsr, err = parser.NewParser(prsrOpts...)
+	if err != nil {
+		return nil, err
+	}
+
+	// Ensure that the checker init happens eagerly rather than lazily.
+	if e.HasFeature(featureEagerlyValidateDeclarations) {
+		_, err := e.initChecker()
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return e, nil
+}
+
+func (e *Env) initChecker() (*checker.Env, error) {
+	e.chkOnce.Do(func() {
+		chkOpts := []checker.Option{}
+		chkOpts = append(chkOpts, e.chkOpts...)
+		chkOpts = append(chkOpts,
+			checker.HomogeneousAggregateLiterals(
+				e.HasFeature(featureDisableDynamicAggregateLiterals)),
+			checker.CrossTypeNumericComparisons(
+				e.HasFeature(featureCrossTypeNumericComparisons)))
+
+		ce, err := checker.NewEnv(e.Container, e.provider, chkOpts...)
+		if err != nil {
+			e.setCheckerOrError(nil, err)
+			return
+		}
+		// Add the statically configured declarations.
+		err = ce.Add(e.declarations...)
+		if err != nil {
+			e.setCheckerOrError(nil, err)
+			return
+		}
+		// Add the function declarations which are derived from the FunctionDecl instances.
+		for _, fn := range e.functions {
+			fnDecl, err := functionDeclToExprDecl(fn)
+			if err != nil {
+				e.setCheckerOrError(nil, err)
+				return
+			}
+			err = ce.Add(fnDecl)
+			if err != nil {
+				e.setCheckerOrError(nil, err)
+				return
+			}
+		}
+		// Add function declarations here separately.
+		e.setCheckerOrError(ce, nil)
+	})
+	return e.getCheckerOrError()
+}
+
+// setCheckerOrError sets the checker.Env or error state in a concurrency-safe manner
+func (e *Env) setCheckerOrError(chk *checker.Env, chkErr error) {
+	e.chkMutex.Lock()
+	e.chk = chk
+	e.chkErr = chkErr
+	e.chkMutex.Unlock()
+}
+
+// getCheckerOrError gets the checker.Env or error state in a concurrency-safe manner
+func (e *Env) getCheckerOrError() (*checker.Env, error) {
+	e.chkMutex.Lock()
+	defer e.chkMutex.Unlock()
+	return e.chk, e.chkErr
+}
+
+// maybeApplyFeature determines whether the feature-guarded option is enabled, and if so applies
+// the feature if it has not already been enabled.
+func (e *Env) maybeApplyFeature(feature int, option EnvOption) (*Env, error) {
+	if !e.HasFeature(feature) {
+		return e, nil
+	}
+	_, applied := e.appliedFeatures[feature]
+	if applied {
+		return e, nil
+	}
+	e, err := option(e)
+	if err != nil {
+		return nil, err
+	}
+	// record that the feature has been applied since it will generate declarations
+	// and functions which will be propagated on Extend() calls and which should only
+	// be registered once.
+	e.appliedFeatures[feature] = true
 	return e, nil
 }
 
@@ -464,3 +647,17 @@ func (i *Issues) String() string {
 	}
 	return i.errs.ToDisplayString()
 }
+
+// getStdEnv lazy initializes the CEL standard environment.
+func getStdEnv() (*Env, error) {
+	stdEnvInit.Do(func() {
+		stdEnv, stdEnvErr = NewCustomEnv(StdLib(), EagerlyValidateDeclarations(true))
+	})
+	return stdEnv, stdEnvErr
+}
+
+var (
+	stdEnvInit sync.Once
+	stdEnv     *Env
+	stdEnvErr  error
+)

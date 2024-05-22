@@ -55,7 +55,7 @@ func EmptyActivation() Activation {
 //
 // Values which are not represented as ref.Val types on input may be adapted to a ref.Val using
 // the ref.TypeAdapter configured in the environment.
-func NewActivation(bindings interface{}) (Activation, error) {
+func NewActivation(bindings any) (Activation, error) {
 	if bindings == nil {
 		return nil, errors.New("bindings must be non-nil")
 	}

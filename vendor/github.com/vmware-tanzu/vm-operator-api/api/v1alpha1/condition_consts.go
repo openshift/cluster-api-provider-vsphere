@@ -35,6 +35,10 @@ const (
 	// VirtualMachineImageNotFoundReason (Severity=Error) documents that the VirtualMachineImage specified in the VirtualMachineSpec
 	// is not available.
 	VirtualMachineImageNotFoundReason = "VirtualMachineImageNotFound"
+
+	// VirtualMachineImageNotReadyReason (Severity=Error) documents that the VirtualMachineImage specified in the VirtualMachineSpec
+	// is not ready.
+	VirtualMachineImageNotReadyReason = "VirtualMachineImageNotReady"
 )
 
 const (

@@ -19,6 +19,7 @@ package cache
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"time"
 
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -27,6 +28,8 @@ import (
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	toolscache "k8s.io/client-go/tools/cache"
+	"k8s.io/utils/pointer"
+
 	"sigs.k8s.io/controller-runtime/pkg/cache/internal"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
@@ -56,7 +59,7 @@ type Informers interface {
 
 	// GetInformerForKind is similar to GetInformer, except that it takes a group-version-kind, instead
 	// of the underlying object.
-	GetInformerForKind(ctx context.Context, gvk schema.GroupVersionKind) (Informer, error)
+	GetInformerForKind(ctx context.Context, gvk schema.GroupVersionKind, opts ...InformerGetOption) (Informer, error)
 
 	// Start runs all the informers known to this cache until the context is closed.
 	// It blocks.
@@ -123,7 +126,70 @@ type Options struct {
 	// that do not have a selector in SelectorsByObject defined.
 	DefaultSelector ObjectSelector
 
-	// UnsafeDisableDeepCopyByObject indicates not to deep copy objects during get or
+	// DefaultFieldSelector will be used as a field selector for all object types
+	// unless there is already one set in ByObject or DefaultNamespaces.
+	DefaultFieldSelector fields.Selector
+
+	// DefaultTransform will be used as transform for all object types
+	// unless there is already one set in ByObject or DefaultNamespaces.
+	DefaultTransform toolscache.TransformFunc
+
+	// DefaultUnsafeDisableDeepCopy is the default for UnsafeDisableDeepCopy
+	// for everything that doesn't specify this.
+	//
+	// Be very careful with this, when enabled you must DeepCopy any object before mutating it,
+	// otherwise you will mutate the object in the cache.
+	//
+	// This will be used for all object types, unless it is set in ByObject or
+	// DefaultNamespaces.
+	DefaultUnsafeDisableDeepCopy *bool
+
+	// ByObject restricts the cache's ListWatch to the desired fields per GVK at the specified object.
+	// object, this will fall through to Default* settings.
+	ByObject map[client.Object]ByObject
+
+	// newInformer allows overriding of NewSharedIndexInformer for testing.
+	newInformer *func(toolscache.ListerWatcher, runtime.Object, time.Duration, toolscache.Indexers) toolscache.SharedIndexInformer
+}
+
+// ByObject offers more fine-grained control over the cache's ListWatch by object.
+type ByObject struct {
+	// Namespaces maps a namespace name to cache configs. If set, only the
+	// namespaces in this map will be cached.
+	//
+	// Settings in the map value that are unset will be defaulted.
+	// Use an empty value for the specific setting to prevent that.
+	//
+	// It is possible to have specific Config for just some namespaces
+	// but cache all namespaces by using the AllNamespaces const as the map key.
+	// This will then include all namespaces that do not have a more specific
+	// setting.
+	//
+	// A nil map allows to default this to the cache's DefaultNamespaces setting.
+	// An empty map prevents this and means that all namespaces will be cached.
+	//
+	// The defaulting follows the following precedence order:
+	// 1. ByObject
+	// 2. DefaultNamespaces[namespace]
+	// 3. Default*
+	//
+	// This must be unset for cluster-scoped objects.
+	Namespaces map[string]Config
+
+	// Label represents a label selector for the object.
+	Label labels.Selector
+
+	// Field represents a field selector for the object.
+	Field fields.Selector
+
+	// Transform is a transformer function for the object which gets applied
+	// when objects of the transformation are about to be committed to the cache.
+	//
+	// This function is called both for new objects to enter the cache,
+	// and for updated objects.
+	Transform toolscache.TransformFunc
+
+	// UnsafeDisableDeepCopy indicates not to deep copy objects during get or
 	// list objects per GVK at the specified object.
 	// Be very careful with this, when enabled you must DeepCopy any object before mutating it,
 	// otherwise you will mutate the object in the cache.
@@ -150,17 +216,45 @@ func New(config *rest.Config, opts Options) (Cache, error) {
 	return &informerCache{InformersMap: im}, nil
 }
 
-// BuilderWithOptions returns a Cache constructor that will build the a cache
-// honoring the options argument, this is useful to specify options like
-// SelectorsByObject
-// WARNING: if SelectorsByObject is specified. filtered out resources are not
-//          returned.
-// WARNING: if UnsafeDisableDeepCopy is enabled, you must DeepCopy any object
-//          returned from cache get/list before mutating it.
-func BuilderWithOptions(options Options) NewCacheFunc {
-	return func(config *rest.Config, opts Options) (Cache, error) {
-		if options.Scheme == nil {
-			options.Scheme = opts.Scheme
+func optionDefaultsToConfig(opts *Options) Config {
+	return Config{
+		LabelSelector:         opts.DefaultLabelSelector,
+		FieldSelector:         opts.DefaultFieldSelector,
+		Transform:             opts.DefaultTransform,
+		UnsafeDisableDeepCopy: opts.DefaultUnsafeDisableDeepCopy,
+	}
+}
+
+func byObjectToConfig(byObject ByObject) Config {
+	return Config{
+		LabelSelector:         byObject.Label,
+		FieldSelector:         byObject.Field,
+		Transform:             byObject.Transform,
+		UnsafeDisableDeepCopy: byObject.UnsafeDisableDeepCopy,
+	}
+}
+
+type newCacheFunc func(config Config, namespace string) Cache
+
+func newCache(restConfig *rest.Config, opts Options) newCacheFunc {
+	return func(config Config, namespace string) Cache {
+		return &informerCache{
+			scheme: opts.Scheme,
+			Informers: internal.NewInformers(restConfig, &internal.InformersOpts{
+				HTTPClient:   opts.HTTPClient,
+				Scheme:       opts.Scheme,
+				Mapper:       opts.Mapper,
+				ResyncPeriod: *opts.SyncPeriod,
+				Namespace:    namespace,
+				Selector: internal.Selector{
+					Label: config.LabelSelector,
+					Field: config.FieldSelector,
+				},
+				Transform:             config.Transform,
+				UnsafeDisableDeepCopy: pointer.BoolDeref(config.UnsafeDisableDeepCopy, false),
+				NewInformer:           opts.newInformer,
+			}),
+			readerFailOnMissingInformer: opts.ReaderFailOnMissingInformer,
 		}
 		if options.Mapper == nil {
 			options.Mapper = opts.Mapper
@@ -188,11 +282,67 @@ func defaultOpts(config *rest.Config, opts Options) (Options, error) {
 	// Construct a new Mapper if unset
 	if opts.Mapper == nil {
 		var err error
-		opts.Mapper, err = apiutil.NewDiscoveryRESTMapper(config)
+		opts.Mapper, err = apiutil.NewDiscoveryRESTMapper(config, opts.HTTPClient)
 		if err != nil {
 			log.WithName("setup").Error(err, "Failed to get API Group-Resources")
 			return opts, fmt.Errorf("could not create RESTMapper from config")
 		}
+	}
+
+	for namespace, cfg := range opts.DefaultNamespaces {
+		cfg = defaultConfig(cfg, optionDefaultsToConfig(&opts))
+		if namespace == metav1.NamespaceAll {
+			cfg.FieldSelector = fields.AndSelectors(appendIfNotNil(namespaceAllSelector(maps.Keys(opts.DefaultNamespaces)), cfg.FieldSelector)...)
+		}
+		opts.DefaultNamespaces[namespace] = cfg
+	}
+
+	for obj, byObject := range opts.ByObject {
+		isNamespaced, err := apiutil.IsObjectNamespaced(obj, opts.Scheme, opts.Mapper)
+		if err != nil {
+			return opts, fmt.Errorf("failed to determine if %T is namespaced: %w", obj, err)
+		}
+		if !isNamespaced && byObject.Namespaces != nil {
+			return opts, fmt.Errorf("type %T is not namespaced, but its ByObject.Namespaces setting is not nil", obj)
+		}
+
+		// Default the namespace-level configs first, because they need to use the undefaulted type-level config.
+		for namespace, config := range byObject.Namespaces {
+			// 1. Default from the undefaulted type-level config
+			config = defaultConfig(config, byObjectToConfig(byObject))
+
+			// 2. Default from the namespace-level config. This was defaulted from the global default config earlier, but
+			//    might not have an entry for the current namespace.
+			if defaultNamespaceSettings, hasDefaultNamespace := opts.DefaultNamespaces[namespace]; hasDefaultNamespace {
+				config = defaultConfig(config, defaultNamespaceSettings)
+			}
+
+			// 3. Default from the global defaults
+			config = defaultConfig(config, optionDefaultsToConfig(&opts))
+
+			if namespace == metav1.NamespaceAll {
+				config.FieldSelector = fields.AndSelectors(
+					appendIfNotNil(
+						namespaceAllSelector(maps.Keys(byObject.Namespaces)),
+						config.FieldSelector,
+					)...,
+				)
+			}
+
+			byObject.Namespaces[namespace] = config
+		}
+
+		defaultedConfig := defaultConfig(byObjectToConfig(byObject), optionDefaultsToConfig(&opts))
+		byObject.Label = defaultedConfig.LabelSelector
+		byObject.Field = defaultedConfig.FieldSelector
+		byObject.Transform = defaultedConfig.Transform
+		byObject.UnsafeDisableDeepCopy = defaultedConfig.UnsafeDisableDeepCopy
+
+		if isNamespaced && byObject.Namespaces == nil {
+			byObject.Namespaces = opts.DefaultNamespaces
+		}
+
+		opts.ByObject[obj] = byObject
 	}
 
 	// Default the resync period to 10 hours if unset
@@ -215,29 +365,20 @@ func convertToSelectorsByGVK(selectorsByObject SelectorsByObject, defaultSelecto
 	return selectorsByGVK, nil
 }
 
-// DisableDeepCopyByObject associate a client.Object's GVK to disable DeepCopy during get or list from cache.
-type DisableDeepCopyByObject map[client.Object]bool
-
-var _ client.Object = &ObjectAll{}
-
-// ObjectAll is the argument to represent all objects' types.
-type ObjectAll struct {
-	client.Object
-}
-
-func convertToDisableDeepCopyByGVK(disableDeepCopyByObject DisableDeepCopyByObject, scheme *runtime.Scheme) (internal.DisableDeepCopyByGVK, error) {
-	disableDeepCopyByGVK := internal.DisableDeepCopyByGVK{}
-	for obj, disable := range disableDeepCopyByObject {
-		switch obj.(type) {
-		case ObjectAll, *ObjectAll:
-			disableDeepCopyByGVK[internal.GroupVersionKindAll] = disable
-		default:
-			gvk, err := apiutil.GVKForObject(obj, scheme)
-			if err != nil {
-				return nil, err
-			}
-			disableDeepCopyByGVK[gvk] = disable
+func namespaceAllSelector(namespaces []string) fields.Selector {
+	selectors := make([]fields.Selector, 0, len(namespaces)-1)
+	for _, namespace := range namespaces {
+		if namespace != metav1.NamespaceAll {
+			selectors = append(selectors, fields.OneTermNotEqualSelector("metadata.namespace", namespace))
 		}
 	}
-	return disableDeepCopyByGVK, nil
+
+	return fields.AndSelectors(selectors...)
+}
+
+func appendIfNotNil[T comparable](a, b T) []T {
+	if b != *new(T) {
+		return []T{a, b}
+	}
+	return []T{a}
 }

@@ -33,7 +33,7 @@ type PersistentVolumeClaimSpecApplyConfiguration struct {
 	StorageClassName *string                                      `json:"storageClassName,omitempty"`
 	VolumeMode       *v1.PersistentVolumeMode                     `json:"volumeMode,omitempty"`
 	DataSource       *TypedLocalObjectReferenceApplyConfiguration `json:"dataSource,omitempty"`
-	DataSourceRef    *TypedLocalObjectReferenceApplyConfiguration `json:"dataSourceRef,omitempty"`
+	DataSourceRef    *TypedObjectReferenceApplyConfiguration      `json:"dataSourceRef,omitempty"`
 }
 
 // PersistentVolumeClaimSpecApplyConfiguration constructs an declarative configuration of the PersistentVolumeClaimSpec type for use with

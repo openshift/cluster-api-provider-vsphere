@@ -119,8 +119,13 @@ func (e *Err) Type() ref.Type {
 }
 
 // Value implements ref.Val.Value.
-func (e *Err) Value() interface{} {
+func (e *Err) Value() any {
 	return e.error
+}
+
+// Is implements errors.Is.
+func (e *Err) Is(target error) bool {
+	return e.error.Error() == target.Error()
 }
 
 // IsError returns whether the input element ref.Type or ref.Val is equal to

@@ -49,8 +49,8 @@ func DisplayVersion() string {
 	return "kind v" + Version() + " " + runtime.Version() + " " + runtime.GOOS + "/" + runtime.GOARCH
 }
 
-// VersionCore is the core portion of the kind CLI version per Semantic Versioning 2.0.0
-const VersionCore = "0.11.1"
+// versionCore is the core portion of the kind CLI version per Semantic Versioning 2.0.0
+const versionCore = "0.20.0"
 
 // VersionPreRelease is the pre-release portion of the kind CLI version per
 // Semantic Versioning 2.0.0

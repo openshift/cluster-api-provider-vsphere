@@ -385,7 +385,7 @@ func getKindAPIString(typeMeta metav1.TypeMeta) string {
 	return fmt.Sprintf("%ss.%s", strings.ToLower(typeMeta.Kind), api)
 }
 
-func getCRDList(proxy Proxy, crdList *apiextensionsv1.CustomResourceDefinitionList) error {
+func getCRDList(ctx context.Context, proxy Proxy, crdList *apiextensionsv1.CustomResourceDefinitionList) error {
 	c, err := proxy.NewClient()
 	if err != nil {
 		return err
@@ -464,7 +464,7 @@ func (o *objectGraph) Discovery(namespace string) error {
 	return nil
 }
 
-func getObjList(proxy Proxy, typeMeta metav1.TypeMeta, selectors []client.ListOption, objList *unstructured.UnstructuredList) error {
+func getObjList(ctx context.Context, proxy Proxy, typeMeta metav1.TypeMeta, selectors []client.ListOption, objList *unstructured.UnstructuredList) error {
 	c, err := proxy.NewClient()
 	if err != nil {
 		return err

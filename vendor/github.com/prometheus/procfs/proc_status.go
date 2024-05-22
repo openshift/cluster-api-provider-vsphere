@@ -168,3 +168,28 @@ func (s *ProcStatus) fillStatus(k string, vString string, vUint uint64, vUintByt
 func (s ProcStatus) TotalCtxtSwitches() uint64 {
 	return s.VoluntaryCtxtSwitches + s.NonVoluntaryCtxtSwitches
 }
+
+func calcCpusAllowedList(cpuString string) []uint64 {
+	s := strings.Split(cpuString, ",")
+
+	var g []uint64
+
+	for _, cpu := range s {
+		// parse cpu ranges, example: 1-3=[1,2,3]
+		if l := strings.Split(strings.TrimSpace(cpu), "-"); len(l) > 1 {
+			startCPU, _ := strconv.ParseUint(l[0], 10, 64)
+			endCPU, _ := strconv.ParseUint(l[1], 10, 64)
+
+			for i := startCPU; i <= endCPU; i++ {
+				g = append(g, i)
+			}
+		} else if len(l) == 1 {
+			cpu, _ := strconv.ParseUint(l[0], 10, 64)
+			g = append(g, cpu)
+		}
+
+	}
+
+	sort.Slice(g, func(i, j int) bool { return g[i] < g[j] })
+	return g
+}

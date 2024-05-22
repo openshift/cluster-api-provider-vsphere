@@ -110,6 +110,12 @@ type NetworkInterfaceSpec struct {
 	// that specifies the network interface configuration.
 	// If unset, default configuration is assumed.
 	ProviderRef *NetworkInterfaceProviderReference `json:"providerRef,omitempty"`
+	// PortAllocation is a request to allocate a port for this network interface on the backing network.
+	// This feature is currently supported only if backing network type is NetworkTypeVDS. In all other
+	// cases this field is ignored. Typically this is done implicitly by vCenter Server at the time
+	// of attaching a network interface to a network and should be left unset. This is used primarily when
+	// attachment of network interface to the network is done without vCenter Server's knowledge.
+	PortAllocation *NetworkInterfacePortAllocation `json:"portAllocation,omitempty"`
 }
 
 // +genclient

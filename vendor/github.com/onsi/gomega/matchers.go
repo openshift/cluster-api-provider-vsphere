@@ -306,8 +306,8 @@ func ConsistOf(elements ...interface{}) types.GomegaMatcher {
 	}
 }
 
-//ContainElements succeeds if actual contains the passed in elements. The ordering of the elements does not matter.
-//By default ContainElements() uses Equal() to match the elements, however custom matchers can be passed in instead. Here are some examples:
+// HaveExactElemets succeeds if actual contains elements that precisely match the elemets passed into the matcher. The ordering of the elements does matter.
+// By default HaveExactElements() uses Equal() to match the elements, however custom matchers can be passed in instead.  Here are some examples:
 //
 //    Expect([]string{"Foo", "FooBar"}).Should(ContainElements("FooBar"))
 //    Expect([]string{"Foo", "FooBar"}).Should(ContainElements(ContainSubstring("Bar"), "Foo"))

@@ -146,7 +146,7 @@ func parseGcfgTag(field reflect.StructField) (string, bool, bool) {
 		lenTagParts := len(tagParts)
 		if lenTagParts > 0 {
 			tagName := tagParts[0]
-			if tagName != "" && tagName != "-" {
+			if len(tagName) > 0 && tagName != "-" {
 				name = tagName
 			}
 		}

@@ -131,6 +131,62 @@ func (n *Node) Validate() error {
 	return nil
 }
 
+func validatePortMappings(portMappings []PortMapping) error {
+	errMsg := "port mapping with same listen address, port and protocol already configured"
+
+	wildcardAddrIPv4 := net.ParseIP("0.0.0.0")
+	wildcardAddrIPv6 := net.ParseIP("::")
+
+	// bindMap has the following key-value structure
+	// PORT/PROTOCOL: [ IP ]
+	// { 80/TCP: [ 127.0.0.1, 192.168.2.3 ], 80/UDP: [ 0.0.0.0 ] }
+	bindMap := make(map[string]sets.String)
+
+	formatPortProtocol := func(port int32, protocol PortMappingProtocol) string {
+		return fmt.Sprintf("%d/%s", port, protocol)
+	}
+
+	for _, portMapping := range portMappings {
+		addr := net.ParseIP(portMapping.ListenAddress)
+		addrString := addr.String()
+
+		portProtocol := formatPortProtocol(portMapping.HostPort, portMapping.Protocol)
+		possibleErr := fmt.Errorf("%s: %s:%s", errMsg, addrString, portProtocol)
+
+		// in golang 0.0.0.0 and [::] are equivalent, convert [::] -> 0.0.0.0
+		// https://github.com/golang/go/issues/48723
+		if addr.Equal(wildcardAddrIPv6) {
+			addr = wildcardAddrIPv4
+			addrString = addr.String()
+		}
+
+		if _, ok := bindMap[portProtocol]; ok {
+
+			// wildcard address case:
+			// return error if there already exists any listen address for same port and protocol
+			if addr.Equal(wildcardAddrIPv4) {
+				if bindMap[portProtocol].Len() > 0 {
+					return possibleErr
+				}
+			}
+
+			// direct duplicate & wild card present check:
+			// return error if same combination of ip, port and protocol already exists in bindMap.
+			// return error if wildcard address is already present for same port & protocol
+			if bindMap[portProtocol].Has(addrString) || bindMap[portProtocol].Has(wildcardAddrIPv4.String()) {
+				return possibleErr
+			}
+		} else {
+			// initialize the set
+			bindMap[portProtocol] = sets.NewString()
+		}
+
+		// add the entry to bindMap
+		bindMap[portProtocol].Insert(addrString)
+	}
+	return nil
+}
+
 func validatePort(port int32) error {
 	// NOTE: -1 is a special value for auto-selecting the port in the container
 	// backend where possible as opposed to in kind itself.

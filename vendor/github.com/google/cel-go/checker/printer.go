@@ -47,7 +47,7 @@ func (a *semanticAdorner) GetMetadata(elem interface{}) string {
 			if len(ref.GetOverloadId()) == 0 {
 				result += "^" + ref.Name
 			} else {
-				for i, overload := range ref.OverloadId {
+				for i, overload := range ref.GetOverloadId() {
 					if i == 0 {
 						result += "^"
 					} else {

@@ -437,6 +437,65 @@ type LocalObjectTemplate struct {
 	Ref *corev1.ObjectReference `json:"ref"`
 }
 
+// ANCHOR: ClusterClassStatus
+
+// ClusterClassStatus defines the observed state of the ClusterClass.
+type ClusterClassStatus struct {
+	// Variables is a list of ClusterClassStatusVariable that are defined for the ClusterClass.
+	// +optional
+	Variables []ClusterClassStatusVariable `json:"variables,omitempty"`
+
+	// Conditions defines current observed state of the ClusterClass.
+	// +optional
+	Conditions Conditions `json:"conditions,omitempty"`
+
+	// ObservedGeneration is the latest generation observed by the controller.
+	// +optional
+	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
+}
+
+// ClusterClassStatusVariable defines a variable which appears in the status of a ClusterClass.
+type ClusterClassStatusVariable struct {
+	// Name is the name of the variable.
+	Name string `json:"name"`
+
+	// DefinitionsConflict specifies whether or not there are conflicting definitions for a single variable name.
+	// +optional
+	DefinitionsConflict bool `json:"definitionsConflict"`
+
+	// Definitions is a list of definitions for a variable.
+	Definitions []ClusterClassStatusVariableDefinition `json:"definitions"`
+}
+
+// ClusterClassStatusVariableDefinition defines a variable which appears in the status of a ClusterClass.
+type ClusterClassStatusVariableDefinition struct {
+	// From specifies the origin of the variable definition.
+	// This will be `inline` for variables defined in the ClusterClass or the name of a patch defined in the ClusterClass
+	// for variables discovered from a DiscoverVariables runtime extensions.
+	From string `json:"from"`
+
+	// Required specifies if the variable is required.
+	// Note: this applies to the variable as a whole and thus the
+	// top-level object defined in the schema. If nested fields are
+	// required, this will be specified inside the schema.
+	Required bool `json:"required"`
+
+	// Schema defines the schema of the variable.
+	Schema VariableSchema `json:"schema"`
+}
+
+// GetConditions returns the set of conditions for this object.
+func (c *ClusterClass) GetConditions() Conditions {
+	return c.Status.Conditions
+}
+
+// SetConditions sets the conditions on this object.
+func (c *ClusterClass) SetConditions(conditions Conditions) {
+	c.Status.Conditions = conditions
+}
+
+// ANCHOR_END: ClusterClassStatus
+
 // +kubebuilder:object:root=true
 
 // ClusterClassList contains a list of Cluster.

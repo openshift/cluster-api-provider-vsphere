@@ -231,8 +231,10 @@ func (t versionedTracker) Create(gvr schema.GroupVersionResource, obj runtime.Ob
 // tries to assign whatever it finds into a ListType it gets from schema.New() - Thus we have to ensure
 // we save as the very same type, otherwise subsequent List requests will fail.
 func convertFromUnstructuredIfNecessary(s *runtime.Scheme, o runtime.Object) (runtime.Object, error) {
-	u, isUnstructured := o.(*unstructured.Unstructured)
-	if !isUnstructured || !s.Recognizes(u.GroupVersionKind()) {
+	gvk := o.GetObjectKind().GroupVersionKind()
+
+	u, isUnstructured := o.(runtime.Unstructured)
+	if !isUnstructured || !s.Recognizes(gvk) {
 		return o, nil
 	}
 
@@ -410,6 +412,17 @@ func (c *fakeClient) List(ctx context.Context, obj client.ObjectList, opts ...cl
 		return err
 	}
 
+	if listOpts.LabelSelector == nil && listOpts.FieldSelector == nil {
+		return nil
+	}
+
+	// If we're here, either a label or field selector are specified (or both), so before we return
+	// the list we must filter it. If both selectors are set, they are ANDed.
+	objs, err := meta.ExtractList(obj)
+	if err != nil {
+		return err
+	}
+
 	if listOpts.LabelSelector != nil {
 		objs, err := meta.ExtractList(obj)
 		if err != nil {
@@ -419,12 +432,52 @@ func (c *fakeClient) List(ctx context.Context, obj client.ObjectList, opts ...cl
 		if err != nil {
 			return err
 		}
-		err = meta.SetList(obj, filteredObjs)
-		if err != nil {
-			return err
+		filteredList = objsFilteredByField
+	}
+
+	return filteredList, nil
+}
+
+func (c *fakeClient) filterWithFields(list []runtime.Object, gvk schema.GroupVersionKind, fs fields.Selector) ([]runtime.Object, error) {
+	// We only allow filtering on the basis of a single field to ensure consistency with the
+	// behavior of the cache reader (which we're faking here).
+	fieldKey, fieldVal, requiresExact := selector.RequiresExactMatch(fs)
+	if !requiresExact {
+		return nil, fmt.Errorf("field selector %s is not in one of the two supported forms \"key==val\" or \"key=val\"",
+			fs)
+	}
+
+	// Field selection is mimicked via indexes, so there's no sane answer this function can give
+	// if there are no indexes registered for the GroupVersionKind of the objects in the list.
+	indexes := c.indexes[gvk]
+	if len(indexes) == 0 || indexes[fieldKey] == nil {
+		return nil, fmt.Errorf("List on GroupVersionKind %v specifies selector on field %s, but no "+
+			"index with name %s has been registered for GroupVersionKind %v", gvk, fieldKey, fieldKey, gvk)
+	}
+
+	indexExtractor := indexes[fieldKey]
+	filteredList := make([]runtime.Object, 0, len(list))
+	for _, obj := range list {
+		if c.objMatchesFieldSelector(obj, indexExtractor, fieldVal) {
+			filteredList = append(filteredList, obj)
 		}
 	}
-	return nil
+	return filteredList, nil
+}
+
+func (c *fakeClient) objMatchesFieldSelector(o runtime.Object, extractIndex client.IndexerFunc, val string) bool {
+	obj, isClientObject := o.(client.Object)
+	if !isClientObject {
+		panic(fmt.Errorf("expected object %v to be of type client.Object, but it's not", o))
+	}
+
+	for _, extractedVal := range extractIndex(obj) {
+		if extractedVal == val {
+			return true
+		}
+	}
+
+	return false
 }
 
 func (c *fakeClient) Scheme() *runtime.Scheme {
@@ -590,11 +643,6 @@ func (c *fakeClient) Patch(ctx context.Context, obj client.Object, patch client.
 	if !handled {
 		panic("tracker could not handle patch method")
 	}
-
-	gvk, err := apiutil.GVKForObject(obj, c.scheme)
-	if err != nil {
-		return err
-	}
 	ta, err := meta.TypeAccessor(o)
 	if err != nil {
 		return err
@@ -612,8 +660,153 @@ func (c *fakeClient) Patch(ctx context.Context, obj client.Object, patch client.
 	return err
 }
 
-func (c *fakeClient) Status() client.StatusWriter {
-	return &fakeStatusWriter{client: c}
+// Applying a patch results in a deletionTimestamp that is truncated to the nearest second.
+// Check that the diff between a new and old deletion timestamp is within a reasonable threshold
+// to be considered unchanged.
+func deletionTimestampEqual(newObj metav1.Object, obj metav1.Object) bool {
+	newTime := newObj.GetDeletionTimestamp()
+	oldTime := obj.GetDeletionTimestamp()
+
+	if newTime == nil || oldTime == nil {
+		return newTime == oldTime
+	}
+	return newTime.Time.Sub(oldTime.Time).Abs() < time.Second
+}
+
+// The behavior of applying the patch is pulled out into dryPatch(),
+// which applies the patch and returns an object, but does not Update() the object.
+// This function returns a patched runtime object that may then be validated before a call to Update() is executed.
+// This results in some code duplication, but was found to be a cleaner alternative than unmarshalling and introspecting the patch data
+// and easier than refactoring the k8s client-go method upstream.
+// Duplicate of upstream: https://github.com/kubernetes/client-go/blob/783d0d33626e59d55d52bfd7696b775851f92107/testing/fixture.go#L146-L194
+func dryPatch(action testing.PatchActionImpl, tracker testing.ObjectTracker) (runtime.Object, error) {
+	ns := action.GetNamespace()
+	gvr := action.GetResource()
+
+	obj, err := tracker.Get(gvr, ns, action.GetName())
+	if err != nil {
+		return nil, err
+	}
+
+	old, err := json.Marshal(obj)
+	if err != nil {
+		return nil, err
+	}
+
+	// reset the object in preparation to unmarshal, since unmarshal does not guarantee that fields
+	// in obj that are removed by patch are cleared
+	value := reflect.ValueOf(obj)
+	value.Elem().Set(reflect.New(value.Type().Elem()).Elem())
+
+	switch action.GetPatchType() {
+	case types.JSONPatchType:
+		patch, err := jsonpatch.DecodePatch(action.GetPatch())
+		if err != nil {
+			return nil, err
+		}
+		modified, err := patch.Apply(old)
+		if err != nil {
+			return nil, err
+		}
+
+		if err = json.Unmarshal(modified, obj); err != nil {
+			return nil, err
+		}
+	case types.MergePatchType:
+		modified, err := jsonpatch.MergePatch(old, action.GetPatch())
+		if err != nil {
+			return nil, err
+		}
+
+		if err := json.Unmarshal(modified, obj); err != nil {
+			return nil, err
+		}
+	case types.StrategicMergePatchType, types.ApplyPatchType:
+		mergedByte, err := strategicpatch.StrategicMergePatch(old, action.GetPatch(), obj)
+		if err != nil {
+			return nil, err
+		}
+		if err = json.Unmarshal(mergedByte, obj); err != nil {
+			return nil, err
+		}
+	default:
+		return nil, fmt.Errorf("PatchType is not supported")
+	}
+	return obj, nil
+}
+
+// copyStatusFrom copies the status from old into new
+func copyStatusFrom(old, new runtime.Object) error {
+	oldMapStringAny, err := toMapStringAny(old)
+	if err != nil {
+		return fmt.Errorf("failed to convert old to *unstructured.Unstructured: %w", err)
+	}
+	newMapStringAny, err := toMapStringAny(new)
+	if err != nil {
+		return fmt.Errorf("failed to convert new to *unststructured.Unstructured: %w", err)
+	}
+
+	newMapStringAny["status"] = oldMapStringAny["status"]
+
+	if err := fromMapStringAny(newMapStringAny, new); err != nil {
+		return fmt.Errorf("failed to convert back from map[string]any: %w", err)
+	}
+
+	return nil
+}
+
+// copyFrom copies from old into new
+func copyFrom(old, new runtime.Object) error {
+	oldMapStringAny, err := toMapStringAny(old)
+	if err != nil {
+		return fmt.Errorf("failed to convert old to *unstructured.Unstructured: %w", err)
+	}
+	if err := fromMapStringAny(oldMapStringAny, new); err != nil {
+		return fmt.Errorf("failed to convert back from map[string]any: %w", err)
+	}
+
+	return nil
+}
+
+func toMapStringAny(obj runtime.Object) (map[string]any, error) {
+	if unstructured, isUnstructured := obj.(*unstructured.Unstructured); isUnstructured {
+		return unstructured.Object, nil
+	}
+
+	serialized, err := json.Marshal(obj)
+	if err != nil {
+		return nil, err
+	}
+
+	u := map[string]any{}
+	return u, json.Unmarshal(serialized, &u)
+}
+
+func fromMapStringAny(u map[string]any, target runtime.Object) error {
+	if targetUnstructured, isUnstructured := target.(*unstructured.Unstructured); isUnstructured {
+		targetUnstructured.Object = u
+		return nil
+	}
+
+	serialized, err := json.Marshal(u)
+	if err != nil {
+		return fmt.Errorf("failed to serialize: %w", err)
+	}
+
+	zero(target)
+	if err := json.Unmarshal(serialized, &target); err != nil {
+		return fmt.Errorf("failed to deserialize: %w", err)
+	}
+
+	return nil
+}
+
+func (c *fakeClient) Status() client.SubResourceWriter {
+	return c.SubResource("status")
+}
+
+func (c *fakeClient) SubResource(subResource string) client.SubResourceClient {
+	return &fakeSubResourceClient{client: c, subResource: subResource}
 }
 
 func (c *fakeClient) deleteObject(gvr schema.GroupVersionResource, accessor metav1.Object) error {
@@ -753,6 +946,42 @@ func allowsCreateOnUpdate(gvk schema.GroupVersionKind) bool {
 	}
 
 	return false
+}
+
+func inTreeResourcesWithStatus() []schema.GroupVersionKind {
+	return []schema.GroupVersionKind{
+		{Version: "v1", Kind: "Namespace"},
+		{Version: "v1", Kind: "Node"},
+		{Version: "v1", Kind: "PersistentVolumeClaim"},
+		{Version: "v1", Kind: "PersistentVolume"},
+		{Version: "v1", Kind: "Pod"},
+		{Version: "v1", Kind: "ReplicationController"},
+		{Version: "v1", Kind: "Service"},
+
+		{Group: "apps", Version: "v1", Kind: "Deployment"},
+		{Group: "apps", Version: "v1", Kind: "DaemonSet"},
+		{Group: "apps", Version: "v1", Kind: "ReplicaSet"},
+		{Group: "apps", Version: "v1", Kind: "StatefulSet"},
+
+		{Group: "autoscaling", Version: "v1", Kind: "HorizontalPodAutoscaler"},
+
+		{Group: "batch", Version: "v1", Kind: "CronJob"},
+		{Group: "batch", Version: "v1", Kind: "Job"},
+
+		{Group: "certificates.k8s.io", Version: "v1", Kind: "CertificateSigningRequest"},
+
+		{Group: "networking.k8s.io", Version: "v1", Kind: "Ingress"},
+		{Group: "networking.k8s.io", Version: "v1", Kind: "NetworkPolicy"},
+
+		{Group: "policy", Version: "v1", Kind: "PodDisruptionBudget"},
+
+		{Group: "storage.k8s.io", Version: "v1", Kind: "VolumeAttachment"},
+
+		{Group: "apiextensions.k8s.io", Version: "v1", Kind: "CustomResourceDefinition"},
+
+		{Group: "flowcontrol.apiserver.k8s.io", Version: "v1beta2", Kind: "FlowSchema"},
+		{Group: "flowcontrol.apiserver.k8s.io", Version: "v1beta2", Kind: "PriorityLevelConfiguration"},
+	}
 }
 
 // zero zeros the value of a pointer.

@@ -30,6 +30,14 @@ import (
 	"google.golang.org/protobuf/reflect/protoregistry"
 	"google.golang.org/protobuf/types/dynamicpb"
 
+	"github.com/google/cel-go/checker/decls"
+	"github.com/google/cel-go/common/containers"
+	"github.com/google/cel-go/common/types/pb"
+	"github.com/google/cel-go/common/types/ref"
+	"github.com/google/cel-go/interpreter"
+	"github.com/google/cel-go/interpreter/functions"
+	"github.com/google/cel-go/parser"
+
 	exprpb "google.golang.org/genproto/googleapis/api/expr/v1alpha1"
 	descpb "google.golang.org/protobuf/types/descriptorpb"
 )
@@ -45,7 +53,26 @@ const (
 	// provided as variables to the expression, as well as via conversion
 	// of well-known dynamic types, or with unchecked expressions.
 	// Affects checking.  Provides a subset of standard behavior.
-	FeatureDisableDynamicAggregateLiterals
+	featureDisableDynamicAggregateLiterals
+
+	// Enable the tracking of function call expressions replaced by macros.
+	featureEnableMacroCallTracking
+
+	// Enable the use of cross-type numeric comparisons at the type-checker.
+	featureCrossTypeNumericComparisons
+
+	// Enable eager validation of declarations to ensure that Env values created
+	// with `Extend` inherit a validated list of declarations from the parent Env.
+	featureEagerlyValidateDeclarations
+
+	// Enable the use of the default UTC timezone when a timezone is not specified
+	// on a CEL timestamp operation. This fixes the scenario where the input time
+	// is not already in UTC.
+	featureDefaultUTCTimeZone
+
+	// Enable the use of optional types in the syntax, type-system, type-checking,
+	// and runtime.
+	featureOptionalTypes
 )
 
 // EnvOption is a functional interface for configuring the environment.
@@ -88,22 +115,22 @@ func CustomTypeProvider(provider ref.TypeProvider) EnvOption {
 // for the environment. The NewEnv call builds on top of the standard CEL declarations. For a
 // purely custom set of declarations use NewCustomEnv.
 func Declarations(decls ...*exprpb.Decl) EnvOption {
-	// TODO: provide an alternative means of specifying declarations that doesn't refer
-	// to the underlying proto implementations.
 	return func(e *Env) (*Env, error) {
 		e.declarations = append(e.declarations, decls...)
 		return e, nil
 	}
 }
 
-// Features sets the given feature flags.  See list of Feature constants above.
-func Features(flags ...int) EnvOption {
-	return func(e *Env) (*Env, error) {
-		for _, flag := range flags {
-			e.SetFeature(flag)
-		}
-		return e, nil
-	}
+// EagerlyValidateDeclarations ensures that any collisions between configured declarations are caught
+// at the time of the `NewEnv` call.
+//
+// Eagerly validating declarations is also useful for bootstrapping a base `cel.Env` value.
+// Calls to base `Env.Extend()` will be significantly faster when declarations are eagerly validated
+// as declarations will be collision-checked at most once and only incrementally by way of `Extend`
+//
+// Disabled by default as not all environments are used for type-checking.
+func EagerlyValidateDeclarations(enabled bool) EnvOption {
+	return features(featureEagerlyValidateDeclarations, enabled)
 }
 
 // HomogeneousAggregateLiterals option ensures that list and map literal entry types must agree
@@ -113,7 +140,7 @@ func Features(flags ...int) EnvOption {
 // expression, as well as via conversion of well-known dynamic types, or with unchecked
 // expressions.
 func HomogeneousAggregateLiterals() EnvOption {
-	return Features(FeatureDisableDynamicAggregateLiterals)
+	return features(featureDisableDynamicAggregateLiterals, true)
 }
 
 // Macros option extends the macro set configured in the environment.
@@ -379,8 +406,38 @@ func EvalOptions(opts ...EvalOption) ProgramOption {
 	}
 }
 
+// InterruptCheckFrequency configures the number of iterations within a comprehension to evaluate
+// before checking whether the function evaluation has been interrupted.
+func InterruptCheckFrequency(checkFrequency uint) ProgramOption {
+	return func(p *prog) (*prog, error) {
+		p.interruptCheckFrequency = checkFrequency
+		return p, nil
+	}
+}
+
+// CostTracking enables cost tracking and registers a ActualCostEstimator that can optionally provide a runtime cost estimate for any function calls.
+func CostTracking(costEstimator interpreter.ActualCostEstimator) ProgramOption {
+	return func(p *prog) (*prog, error) {
+		p.callCostEstimator = costEstimator
+		p.evalOpts |= OptTrackCost
+		return p, nil
+	}
+}
+
+// CostLimit enables cost tracking and sets configures program evaluation to exit early with a
+// "runtime cost limit exceeded" error if the runtime cost exceeds the costLimit.
+// The CostLimit is a metric that corresponds to the number and estimated expense of operations
+// performed while evaluating an expression. It is indicative of CPU usage, not memory usage.
+func CostLimit(costLimit uint64) ProgramOption {
+	return func(p *prog) (*prog, error) {
+		p.costLimit = &costLimit
+		p.evalOpts |= OptTrackCost
+		return p, nil
+	}
+}
+
 func fieldToCELType(field protoreflect.FieldDescriptor) (*exprpb.Type, error) {
-	if field.Kind() == protoreflect.MessageKind {
+	if field.Kind() == protoreflect.MessageKind || field.Kind() == protoreflect.GroupKind {
 		msgName := (string)(field.Message().FullName())
 		wellKnownType, found := pb.CheckedWellKnowns[msgName]
 		if found {
@@ -411,19 +468,19 @@ func fieldToDecl(field protoreflect.FieldDescriptor) (*exprpb.Decl, error) {
 			return nil, err
 		}
 		return decls.NewVar(name, decls.NewMapType(keyType, valueType)), nil
-	} else if field.IsList() {
+	}
+	if field.IsList() {
 		elemType, err := fieldToCELType(field)
 		if err != nil {
 			return nil, err
 		}
 		return decls.NewVar(name, decls.NewListType(elemType)), nil
-	} else {
-		celType, err := fieldToCELType(field)
-		if err != nil {
-			return nil, err
-		}
-		return decls.NewVar(name, celType), nil
 	}
+	celType, err := fieldToCELType(field)
+	if err != nil {
+		return nil, err
+	}
+	return decls.NewVar(name, celType), nil
 }
 
 // DeclareContextProto returns an option to extend CEL environment with declarations from the given context proto.
@@ -447,5 +504,55 @@ func DeclareContextProto(descriptor protoreflect.MessageDescriptor) EnvOption {
 			return nil, err
 		}
 		return Types(dynamicpb.NewMessage(descriptor))(e)
+	}
+}
+
+// EnableMacroCallTracking ensures that call expressions which are replaced by macros
+// are tracked in the `SourceInfo` of parsed and checked expressions.
+func EnableMacroCallTracking() EnvOption {
+	return features(featureEnableMacroCallTracking, true)
+}
+
+// CrossTypeNumericComparisons makes it possible to compare across numeric types, e.g. double < int
+func CrossTypeNumericComparisons(enabled bool) EnvOption {
+	return features(featureCrossTypeNumericComparisons, enabled)
+}
+
+// DefaultUTCTimeZone ensures that time-based operations use the UTC timezone rather than the
+// input time's local timezone.
+func DefaultUTCTimeZone(enabled bool) EnvOption {
+	return features(featureDefaultUTCTimeZone, enabled)
+}
+
+// OptionalTypes enable support for optional syntax and types in CEL. The optional value type makes
+// it possible to express whether variables have been provided, whether a result has been computed,
+// and in the future whether an object field path, map key value, or list index has a value.
+func OptionalTypes() EnvOption {
+	return Lib(optionalLibrary{})
+}
+
+// features sets the given feature flags.  See list of Feature constants above.
+func features(flag int, enabled bool) EnvOption {
+	return func(e *Env) (*Env, error) {
+		e.features[flag] = enabled
+		return e, nil
+	}
+}
+
+// ParserRecursionLimit adjusts the AST depth the parser will tolerate.
+// Defaults defined in the parser package.
+func ParserRecursionLimit(limit int) EnvOption {
+	return func(e *Env) (*Env, error) {
+		e.prsrOpts = append(e.prsrOpts, parser.MaxRecursionDepth(limit))
+		return e, nil
+	}
+}
+
+// ParserExpressionSizeLimit adjusts the number of code points the expression parser is allowed to parse.
+// Defaults defined in the parser package.
+func ParserExpressionSizeLimit(limit int) EnvOption {
+	return func(e *Env) (*Env, error) {
+		e.prsrOpts = append(e.prsrOpts, parser.ExpressionSizeCodePointLimit(limit))
+		return e, nil
 	}
 }

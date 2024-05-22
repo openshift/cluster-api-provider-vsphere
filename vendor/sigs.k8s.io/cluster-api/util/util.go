@@ -45,6 +45,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
+	"sigs.k8s.io/cluster-api/util/annotations"
+	"sigs.k8s.io/cluster-api/util/contract"
 )
 
 const (
@@ -491,6 +493,17 @@ func ClusterToObjectsMapper(c client.Client, ro client.ObjectList, scheme *runti
 		return nil, err
 	}
 
+	// Note: we create the typed ObjectList once here, so we don't have to use
+	// reflection in every execution of the actual event handler.
+	obj, err := scheme.New(gvk)
+	if err != nil {
+		return nil, errors.Wrapf(err, "failed to construct object of type %s", gvk)
+	}
+	objectList, ok := obj.(client.ObjectList)
+	if !ok {
+		return nil, errors.Errorf("expected objject to be a client.ObjectList, is actually %T", obj)
+	}
+
 	isNamespaced, err := isAPINamespaced(gvk, c.RESTMapper())
 	if err != nil {
 		return nil, err
@@ -521,7 +534,7 @@ func ClusterToObjectsMapper(c client.Client, ro client.ObjectList, scheme *runti
 		results := []ctrl.Request{}
 		for _, obj := range list.Items {
 			results = append(results, ctrl.Request{
-				NamespacedName: client.ObjectKey{Namespace: obj.GetNamespace(), Name: obj.GetName()},
+				NamespacedName: client.ObjectKey{Namespace: o.GetNamespace(), Name: o.GetName()},
 			})
 		}
 		return results

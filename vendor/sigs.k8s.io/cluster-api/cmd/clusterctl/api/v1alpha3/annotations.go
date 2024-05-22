@@ -17,6 +17,9 @@ limitations under the License.
 package v1alpha3
 
 const (
-	// CertManagerVersionAnnotation reports the cert manager version installed by clusterctl.
-	CertManagerVersionAnnotation = "cert-manager.clusterctl.cluster.x-k8s.io/version"
+	// ClientName is the name of this SDK
+	ClientName = "govmomi"
+
+	// ClientVersion is the version of this SDK
+	ClientVersion = "0.34.2"
 )

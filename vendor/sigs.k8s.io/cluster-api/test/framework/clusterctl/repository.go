@@ -134,7 +134,71 @@ func CreateRepository(ctx context.Context, input CreateRepositoryInput) string {
 	}
 	clusterctlConfigFile.write()
 
+	// creates a clusterctl config file to be used for working with such repository with only the providers supported in clusterctl < v1.3
+	clusterctlConfigFileV1_2 := &clusterctlConfig{
+		Path: filepath.Join(input.RepositoryFolder, clusterctlConfigV1_2FileName),
+		Values: map[string]interface{}{
+			"providers":       providersV1_2,
+			"overridesFolder": overridePath,
+		},
+	}
+	for key := range input.E2EConfig.Variables {
+		clusterctlConfigFileV1_2.Values[key] = input.E2EConfig.GetVariable(key)
+	}
+	clusterctlConfigFileV1_2.write()
+
 	return clusterctlConfigFile.Path
+}
+
+// copyAndAmendClusterctlConfigInput is the input for copyAndAmendClusterctlConfig.
+type copyAndAmendClusterctlConfigInput struct {
+	ClusterctlConfigPath string
+	OutputPath           string
+	Variables            map[string]string
+}
+
+// copyAndAmendClusterctlConfig copies the clusterctl-config from ClusterctlConfigPath to
+// OutputPath and adds the given Variables.
+func copyAndAmendClusterctlConfig(_ context.Context, input copyAndAmendClusterctlConfigInput) {
+	// Read clusterctl config from ClusterctlConfigPath.
+	clusterctlConfigFile := &clusterctlConfig{
+		Path: input.ClusterctlConfigPath,
+	}
+	clusterctlConfigFile.read()
+
+	// Overwrite variables.
+	if clusterctlConfigFile.Values == nil {
+		clusterctlConfigFile.Values = map[string]interface{}{}
+	}
+	for key, value := range input.Variables {
+		clusterctlConfigFile.Values[key] = value
+	}
+
+	// Write clusterctl config to OutputPath.
+	clusterctlConfigFile.Path = input.OutputPath
+	clusterctlConfigFile.write()
+}
+
+// AdjustConfigPathForBinary adjusts the clusterctlConfigPath in case the clusterctl version v1.3.
+func AdjustConfigPathForBinary(clusterctPath, clusterctlConfigPath string) string {
+	clusterctl := exec.NewCommand(
+		exec.WithCommand(clusterctPath),
+		exec.WithArgs("version", "--output", "short"),
+	)
+	stdout, stderr, err := clusterctl.Run(context.Background())
+	if err != nil {
+		Expect(err).ToNot(HaveOccurred(), "failed to run clusterctl version:\nstdout:\n%s\nstderr:\n%s", string(stdout), string(stderr))
+	}
+	data := stdout
+	version, err := semver.ParseTolerant(string(data))
+	if err != nil {
+		Expect(err).ToNot(HaveOccurred(), "clusterctl version returned an invalid version: %s", string(data))
+	}
+
+	if version.LT(semver.MustParse("1.3.0")) {
+		return strings.Replace(clusterctlConfigPath, clusterctlConfigFileName, clusterctlConfigV1_2FileName, -1)
+	}
+	return clusterctlConfigPath
 }
 
 // YAMLForComponentSource returns the YAML for the provided component source.

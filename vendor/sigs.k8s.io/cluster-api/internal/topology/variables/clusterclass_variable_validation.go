@@ -100,7 +100,7 @@ func validateClusterClassVariableName(variableName string, fldPath *field.Path) 
 	return allErrs
 }
 
-var validVariableTypes = sets.NewString("object", "array", "string", "number", "integer", "boolean")
+var validVariableTypes = sets.Set[string]{}.Insert("object", "array", "string", "number", "integer", "boolean")
 
 // validateRootSchema validates the schema.
 func validateRootSchema(clusterClassVariable *clusterv1.ClusterClassVariable, fldPath *field.Path) field.ErrorList {

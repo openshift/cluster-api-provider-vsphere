@@ -121,13 +121,13 @@ func ClusterUpgradeConformanceSpec(ctx context.Context, inputGetter func() Clust
 				LogFolder:                filepath.Join(input.ArtifactFolder, "clusters", input.BootstrapClusterProxy.GetName()),
 				ClusterctlConfigPath:     input.ClusterctlConfigPath,
 				KubeconfigPath:           input.BootstrapClusterProxy.GetKubeconfigPath(),
-				InfrastructureProvider:   clusterctl.DefaultInfrastructureProvider,
+				InfrastructureProvider:   infrastructureProvider,
 				Flavor:                   pointer.StringDeref(input.Flavor, "upgrades"),
 				Namespace:                namespace.Name,
 				ClusterName:              fmt.Sprintf("%s-%s", specName, util.RandomString(6)),
 				KubernetesVersion:        input.E2EConfig.GetVariable(KubernetesVersionUpgradeFrom),
-				ControlPlaneMachineCount: pointer.Int64Ptr(controlPlaneMachineCount),
-				WorkerMachineCount:       pointer.Int64Ptr(workerMachineCount),
+				ControlPlaneMachineCount: pointer.Int64(controlPlaneMachineCount),
+				WorkerMachineCount:       pointer.Int64(workerMachineCount),
 			},
 			WaitForClusterIntervals:      input.E2EConfig.GetIntervals(specName, "wait-cluster"),
 			WaitForControlPlaneIntervals: input.E2EConfig.GetIntervals(specName, "wait-control-plane"),
@@ -154,6 +154,19 @@ func ClusterUpgradeConformanceSpec(ctx context.Context, inputGetter func() Clust
 		} else {
 			// Cluster is not using ClusterClass, upgrade via individual resources.
 			By("Upgrading the Kubernetes control-plane")
+			var (
+				upgradeCPMachineTemplateTo      *string
+				upgradeWorkersMachineTemplateTo *string
+			)
+
+			if input.E2EConfig.HasVariable(CPMachineTemplateUpgradeTo) {
+				upgradeCPMachineTemplateTo = pointer.String(input.E2EConfig.GetVariable(CPMachineTemplateUpgradeTo))
+			}
+
+			if input.E2EConfig.HasVariable(WorkersMachineTemplateUpgradeTo) {
+				upgradeWorkersMachineTemplateTo = pointer.String(input.E2EConfig.GetVariable(WorkersMachineTemplateUpgradeTo))
+			}
+
 			framework.UpgradeControlPlaneAndWaitForUpgrade(ctx, framework.UpgradeControlPlaneAndWaitForUpgradeInput{
 				ClusterProxy:                input.BootstrapClusterProxy,
 				Cluster:                     clusterResources.Cluster,

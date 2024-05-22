@@ -17,8 +17,11 @@ import (
 // meaning no timeout, i.e. no forceful termination is performed.
 func (cli *Client) ContainerStop(ctx context.Context, containerID string, timeout *time.Duration) error {
 	query := url.Values{}
-	if timeout != nil {
-		query.Set("t", timetypes.DurationToSecondsString(*timeout))
+	if options.Timeout != nil {
+		query.Set("t", strconv.Itoa(*options.Timeout))
+	}
+	if options.Signal != "" && versions.GreaterThanOrEqualTo(cli.version, "1.42") {
+		query.Set("signal", options.Signal)
 	}
 	resp, err := cli.post(ctx, "/containers/"+containerID+"/stop", query, nil, nil)
 	ensureReaderClosed(resp)

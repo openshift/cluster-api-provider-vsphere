@@ -33,6 +33,19 @@ func NewScopes() *Scopes {
 	}
 }
 
+// Copy creates a copy of the current Scopes values, including a copy of its parent if non-nil.
+func (s *Scopes) Copy() *Scopes {
+	cpy := NewScopes()
+	if s == nil {
+		return cpy
+	}
+	if s.parent != nil {
+		cpy.parent = s.parent.Copy()
+	}
+	cpy.scopes = s.scopes.copy()
+	return cpy
+}
+
 // Push creates a new Scopes value which references the current Scope as its parent.
 func (s *Scopes) Push() *Scopes {
 	return &Scopes{
@@ -82,7 +95,7 @@ func (s *Scopes) FindIdentInScope(name string) *exprpb.Decl {
 
 // AddFunction adds the function Decl to the current scope.
 // Note: Any previous entry for a function in the current scope with the same name is overwritten.
-func (s *Scopes) AddFunction(fn *exprpb.Decl) {
+func (s *Scopes) SetFunction(fn *exprpb.Decl) {
 	s.scopes.functions[fn.Name] = fn
 }
 
@@ -107,6 +120,23 @@ type Group struct {
 	functions map[string]*exprpb.Decl
 }
 
+// copy creates a new Group instance with a shallow copy of the variables and functions.
+// If callers need to mutate the exprpb.Decl definitions for a Function, they should copy-on-write.
+func (g *Group) copy() *Group {
+	cpy := &Group{
+		idents:    make(map[string]*exprpb.Decl, len(g.idents)),
+		functions: make(map[string]*exprpb.Decl, len(g.functions)),
+	}
+	for n, id := range g.idents {
+		cpy.idents[n] = id
+	}
+	for n, fn := range g.functions {
+		cpy.functions[n] = fn
+	}
+	return cpy
+}
+
+// newGroup creates a new Group with empty maps for identifiers and functions.
 func newGroup() *Group {
 	return &Group{
 		idents:    make(map[string]*exprpb.Decl),

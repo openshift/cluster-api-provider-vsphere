@@ -168,8 +168,18 @@ func (p *clusterProxy) GetScheme() *runtime.Scheme {
 func (p *clusterProxy) GetClient() client.Client {
 	config := p.GetRESTConfig()
 
-	c, err := client.New(config, client.Options{Scheme: p.scheme})
-	Expect(err).ToNot(HaveOccurred(), "Failed to get controller-runtime client")
+	var c client.Client
+	var newClientErr error
+	err := wait.PollUntilContextTimeout(context.TODO(), retryableOperationInterval, retryableOperationTimeout, true, func(ctx context.Context) (bool, error) {
+		c, newClientErr = client.New(config, client.Options{Scheme: p.scheme})
+		if newClientErr != nil {
+			return false, nil //nolint:nilerr
+		}
+		return true, nil
+	})
+	errorString := "Failed to get controller-runtime client"
+	Expect(newClientErr).ToNot(HaveOccurred(), errorString)
+	Expect(err).ToNot(HaveOccurred(), errorString)
 
 	return c
 }

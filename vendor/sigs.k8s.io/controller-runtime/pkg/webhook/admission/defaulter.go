@@ -31,7 +31,7 @@ type Defaulter interface {
 }
 
 // DefaultingWebhookFor creates a new Webhook for Defaulting the provided type.
-func DefaultingWebhookFor(defaulter Defaulter) *Webhook {
+func DefaultingWebhookFor(scheme *runtime.Scheme, defaulter Defaulter) *Webhook {
 	return &Webhook{
 		Handler: &mutatingHandler{defaulter: defaulter},
 	}

@@ -115,6 +115,20 @@ type VirtualMachineImageStatus struct {
 	// is supported or image is supported by VMService
 	// +optional
 	Conditions []Condition `json:"conditions,omitempty" patchStrategy:"merge" patchMergeKey:"type"`
+
+	// ContentLibraryRef is a reference to the source ContentLibrary/ClusterContentLibrary resource.
+	// +optional
+	ContentLibraryRef *corev1.TypedLocalObjectReference `json:"contentLibraryRef,omitempty"`
+
+	// ContentVersion describes the observed content version of this VirtualMachineImage that was last successfully
+	// synced with the vSphere content library item.
+	// +optional
+	ContentVersion string `json:"contentVersion,omitempty"`
+
+	// Firmware describe the firmware type used by this VirtualMachineImage.
+	// eg: bios, efi.
+	// +optional
+	Firmware string `json:"firmware,omitempty"`
 }
 
 func (vmImage *VirtualMachineImage) GetConditions() Conditions {
@@ -126,8 +140,8 @@ func (vmImage *VirtualMachineImage) SetConditions(conditions Conditions) {
 }
 
 // +kubebuilder:object:root=true
-// +kubebuilder:resource:scope=Cluster,shortName=vmimage
-// +kubebuilder:storageversion
+// +kubebuilder:resource:scope=Cluster,shortName=vmi;vmimage
+// +kubebuilder:storageversion:false
 // +kubebuilder:subresource:status
 // +kubebuilder:printcolumn:name="ContentSourceName",type="string",JSONPath=".spec.providerRef.name"
 // +kubebuilder:printcolumn:name="Version",type="string",JSONPath=".spec.productInfo.version"

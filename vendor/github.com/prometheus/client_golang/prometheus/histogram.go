@@ -154,6 +154,98 @@ type HistogramOpts struct {
 	// to add a highest bucket with +Inf bound, it will be added
 	// implicitly. The default value is DefBuckets.
 	Buckets []float64
+
+	// If NativeHistogramBucketFactor is greater than one, so-called sparse
+	// buckets are used (in addition to the regular buckets, if defined
+	// above). A Histogram with sparse buckets will be ingested as a Native
+	// Histogram by a Prometheus server with that feature enabled (requires
+	// Prometheus v2.40+). Sparse buckets are exponential buckets covering
+	// the whole float64 range (with the exception of the “zero” bucket, see
+	// NativeHistogramZeroThreshold below). From any one bucket to the next,
+	// the width of the bucket grows by a constant
+	// factor. NativeHistogramBucketFactor provides an upper bound for this
+	// factor (exception see below). The smaller
+	// NativeHistogramBucketFactor, the more buckets will be used and thus
+	// the more costly the histogram will become. A generally good trade-off
+	// between cost and accuracy is a value of 1.1 (each bucket is at most
+	// 10% wider than the previous one), which will result in each power of
+	// two divided into 8 buckets (e.g. there will be 8 buckets between 1
+	// and 2, same as between 2 and 4, and 4 and 8, etc.).
+	//
+	// Details about the actually used factor: The factor is calculated as
+	// 2^(2^-n), where n is an integer number between (and including) -4 and
+	// 8. n is chosen so that the resulting factor is the largest that is
+	// still smaller or equal to NativeHistogramBucketFactor. Note that the
+	// smallest possible factor is therefore approx. 1.00271 (i.e. 2^(2^-8)
+	// ). If NativeHistogramBucketFactor is greater than 1 but smaller than
+	// 2^(2^-8), then the actually used factor is still 2^(2^-8) even though
+	// it is larger than the provided NativeHistogramBucketFactor.
+	//
+	// NOTE: Native Histograms are still an experimental feature. Their
+	// behavior might still change without a major version
+	// bump. Subsequently, all NativeHistogram... options here might still
+	// change their behavior or name (or might completely disappear) without
+	// a major version bump.
+	NativeHistogramBucketFactor float64
+	// All observations with an absolute value of less or equal
+	// NativeHistogramZeroThreshold are accumulated into a “zero” bucket.
+	// For best results, this should be close to a bucket boundary. This is
+	// usually the case if picking a power of two. If
+	// NativeHistogramZeroThreshold is left at zero,
+	// DefNativeHistogramZeroThreshold is used as the threshold. To
+	// configure a zero bucket with an actual threshold of zero (i.e. only
+	// observations of precisely zero will go into the zero bucket), set
+	// NativeHistogramZeroThreshold to the NativeHistogramZeroThresholdZero
+	// constant (or any negative float value).
+	NativeHistogramZeroThreshold float64
+
+	// The remaining fields define a strategy to limit the number of
+	// populated sparse buckets. If NativeHistogramMaxBucketNumber is left
+	// at zero, the number of buckets is not limited. (Note that this might
+	// lead to unbounded memory consumption if the values observed by the
+	// Histogram are sufficiently wide-spread. In particular, this could be
+	// used as a DoS attack vector. Where the observed values depend on
+	// external inputs, it is highly recommended to set a
+	// NativeHistogramMaxBucketNumber.) Once the set
+	// NativeHistogramMaxBucketNumber is exceeded, the following strategy is
+	// enacted:
+	//  - First, if the last reset (or the creation) of the histogram is at
+	//    least NativeHistogramMinResetDuration ago, then the whole
+	//    histogram is reset to its initial state (including regular
+	//    buckets).
+	//  - If less time has passed, or if NativeHistogramMinResetDuration is
+	//    zero, no reset is performed. Instead, the zero threshold is
+	//    increased sufficiently to reduce the number of buckets to or below
+	//    NativeHistogramMaxBucketNumber, but not to more than
+	//    NativeHistogramMaxZeroThreshold. Thus, if
+	//    NativeHistogramMaxZeroThreshold is already at or below the current
+	//    zero threshold, nothing happens at this step.
+	//  - After that, if the number of buckets still exceeds
+	//    NativeHistogramMaxBucketNumber, the resolution of the histogram is
+	//    reduced by doubling the width of the sparse buckets (up to a
+	//    growth factor between one bucket to the next of 2^(2^4) = 65536,
+	//    see above).
+	//  - Any increased zero threshold or reduced resolution is reset back
+	//    to their original values once NativeHistogramMinResetDuration has
+	//    passed (since the last reset or the creation of the histogram).
+	NativeHistogramMaxBucketNumber  uint32
+	NativeHistogramMinResetDuration time.Duration
+	NativeHistogramMaxZeroThreshold float64
+
+	// now is for testing purposes, by default it's time.Now.
+	now func() time.Time
+}
+
+// HistogramVecOpts bundles the options to create a HistogramVec metric.
+// It is mandatory to set HistogramOpts, see there for mandatory fields. VariableLabels
+// is optional and can safely be left to its default value.
+type HistogramVecOpts struct {
+	HistogramOpts
+
+	// VariableLabels are used to partition the metric vector by the given set
+	// of labels. Each label value will be constrained with the optional Constraint
+	// function, if provided.
+	VariableLabels ConstrainableLabels
 }
 
 // NewHistogram creates a new Histogram based on the provided HistogramOpts. It
@@ -190,16 +282,33 @@ func newHistogram(desc *Desc, opts HistogramOpts, labelValues ...string) Histogr
 		}
 	}
 
-	if len(opts.Buckets) == 0 {
-		opts.Buckets = DefBuckets
+	if opts.now == nil {
+		opts.now = time.Now
 	}
 
 	h := &histogram{
-		desc:        desc,
-		upperBounds: opts.Buckets,
-		labelPairs:  MakeLabelPairs(desc, labelValues),
-		counts:      [2]*histogramCounts{{}, {}},
-		now:         time.Now,
+		desc:                            desc,
+		upperBounds:                     opts.Buckets,
+		labelPairs:                      MakeLabelPairs(desc, labelValues),
+		nativeHistogramMaxBuckets:       opts.NativeHistogramMaxBucketNumber,
+		nativeHistogramMaxZeroThreshold: opts.NativeHistogramMaxZeroThreshold,
+		nativeHistogramMinResetDuration: opts.NativeHistogramMinResetDuration,
+		lastResetTime:                   opts.now(),
+		now:                             opts.now,
+	}
+	if len(h.upperBounds) == 0 && opts.NativeHistogramBucketFactor <= 1 {
+		h.upperBounds = DefBuckets
+	}
+	if opts.NativeHistogramBucketFactor <= 1 {
+		h.nativeHistogramSchema = math.MinInt32 // To mark that there are no sparse buckets.
+	} else {
+		switch {
+		case opts.NativeHistogramZeroThreshold > 0:
+			h.nativeHistogramZeroThreshold = opts.NativeHistogramZeroThreshold
+		case opts.NativeHistogramZeroThreshold == 0:
+			h.nativeHistogramZeroThreshold = DefNativeHistogramZeroThreshold
+		} // Leave h.nativeHistogramZeroThreshold at 0 otherwise.
+		h.nativeHistogramSchema = pickSchema(opts.NativeHistogramBucketFactor)
 	}
 	for i, upperBound := range h.upperBounds {
 		if i < len(h.upperBounds)-1 {
@@ -265,11 +374,19 @@ type histogram struct {
 	// http://golang.org/pkg/sync/atomic/#pkg-note-BUG.
 	counts [2]*histogramCounts
 
-	upperBounds []float64
-	labelPairs  []*dto.LabelPair
-	exemplars   []atomic.Value // One more than buckets (to include +Inf), each a *dto.Exemplar.
+	upperBounds                     []float64
+	labelPairs                      []*dto.LabelPair
+	exemplars                       []atomic.Value // One more than buckets (to include +Inf), each a *dto.Exemplar.
+	nativeHistogramSchema           int32          // The initial schema. Set to math.MinInt32 if no sparse buckets are used.
+	nativeHistogramZeroThreshold    float64        // The initial zero threshold.
+	nativeHistogramMaxZeroThreshold float64
+	nativeHistogramMaxBuckets       uint32
+	nativeHistogramMinResetDuration time.Duration
+	// lastResetTime is protected by mtx. It is also used as created timestamp.
+	lastResetTime time.Time
 
-	now func() time.Time // To mock out time.Now() for testing.
+	// now is for testing purposes, by default it's time.Now.
+	now func() time.Time
 }
 
 func (h *histogram) Desc() *Desc {
@@ -383,11 +500,125 @@ func (h *histogram) observe(v float64, bucket int) {
 	if bucket < len(h.upperBounds) {
 		atomic.AddUint64(&hotCounts.buckets[bucket], 1)
 	}
-	for {
-		oldBits := atomic.LoadUint64(&hotCounts.sumBits)
-		newBits := math.Float64bits(math.Float64frombits(oldBits) + v)
-		if atomic.CompareAndSwapUint64(&hotCounts.sumBits, oldBits, newBits) {
-			break
+	if h.nativeHistogramMaxBuckets >= atomic.LoadUint32(&counts.nativeHistogramBucketsNumber) {
+		return // Bucket limit not exceeded yet.
+	}
+
+	h.mtx.Lock()
+	defer h.mtx.Unlock()
+
+	// The hot counts might have been swapped just before we acquired the
+	// lock. Re-fetch the hot counts first...
+	n := atomic.LoadUint64(&h.countAndHotIdx)
+	hotIdx := n >> 63
+	coldIdx := (^n) >> 63
+	hotCounts := h.counts[hotIdx]
+	coldCounts := h.counts[coldIdx]
+	// ...and then check again if we really have to reduce the bucket count.
+	if h.nativeHistogramMaxBuckets >= atomic.LoadUint32(&hotCounts.nativeHistogramBucketsNumber) {
+		return // Bucket limit not exceeded after all.
+	}
+	// Try the various strategies in order.
+	if h.maybeReset(hotCounts, coldCounts, coldIdx, value, bucket) {
+		return
+	}
+	if h.maybeWidenZeroBucket(hotCounts, coldCounts) {
+		return
+	}
+	h.doubleBucketWidth(hotCounts, coldCounts)
+}
+
+// maybeReset resets the whole histogram if at least h.nativeHistogramMinResetDuration
+// has been passed. It returns true if the histogram has been reset. The caller
+// must have locked h.mtx.
+func (h *histogram) maybeReset(
+	hot, cold *histogramCounts, coldIdx uint64, value float64, bucket int,
+) bool {
+	// We are using the possibly mocked h.now() rather than
+	// time.Since(h.lastResetTime) to enable testing.
+	if h.nativeHistogramMinResetDuration == 0 ||
+		h.now().Sub(h.lastResetTime) < h.nativeHistogramMinResetDuration {
+		return false
+	}
+	// Completely reset coldCounts.
+	h.resetCounts(cold)
+	// Repeat the latest observation to not lose it completely.
+	cold.observe(value, bucket, true)
+	// Make coldCounts the new hot counts while resetting countAndHotIdx.
+	n := atomic.SwapUint64(&h.countAndHotIdx, (coldIdx<<63)+1)
+	count := n & ((1 << 63) - 1)
+	waitForCooldown(count, hot)
+	// Finally, reset the formerly hot counts, too.
+	h.resetCounts(hot)
+	h.lastResetTime = h.now()
+	return true
+}
+
+// maybeWidenZeroBucket widens the zero bucket until it includes the existing
+// buckets closest to the zero bucket (which could be two, if an equidistant
+// negative and a positive bucket exists, but usually it's only one bucket to be
+// merged into the new wider zero bucket). h.nativeHistogramMaxZeroThreshold
+// limits how far the zero bucket can be extended, and if that's not enough to
+// include an existing bucket, the method returns false. The caller must have
+// locked h.mtx.
+func (h *histogram) maybeWidenZeroBucket(hot, cold *histogramCounts) bool {
+	currentZeroThreshold := math.Float64frombits(atomic.LoadUint64(&hot.nativeHistogramZeroThresholdBits))
+	if currentZeroThreshold >= h.nativeHistogramMaxZeroThreshold {
+		return false
+	}
+	// Find the key of the bucket closest to zero.
+	smallestKey := findSmallestKey(&hot.nativeHistogramBucketsPositive)
+	smallestNegativeKey := findSmallestKey(&hot.nativeHistogramBucketsNegative)
+	if smallestNegativeKey < smallestKey {
+		smallestKey = smallestNegativeKey
+	}
+	if smallestKey == math.MaxInt32 {
+		return false
+	}
+	newZeroThreshold := getLe(smallestKey, atomic.LoadInt32(&hot.nativeHistogramSchema))
+	if newZeroThreshold > h.nativeHistogramMaxZeroThreshold {
+		return false // New threshold would exceed the max threshold.
+	}
+	atomic.StoreUint64(&cold.nativeHistogramZeroThresholdBits, math.Float64bits(newZeroThreshold))
+	// Remove applicable buckets.
+	if _, loaded := cold.nativeHistogramBucketsNegative.LoadAndDelete(smallestKey); loaded {
+		atomicDecUint32(&cold.nativeHistogramBucketsNumber)
+	}
+	if _, loaded := cold.nativeHistogramBucketsPositive.LoadAndDelete(smallestKey); loaded {
+		atomicDecUint32(&cold.nativeHistogramBucketsNumber)
+	}
+	// Make cold counts the new hot counts.
+	n := atomic.AddUint64(&h.countAndHotIdx, 1<<63)
+	count := n & ((1 << 63) - 1)
+	// Swap the pointer names to represent the new roles and make
+	// the rest less confusing.
+	hot, cold = cold, hot
+	waitForCooldown(count, cold)
+	// Add all the now cold counts to the new hot counts...
+	addAndResetCounts(hot, cold)
+	// ...adjust the new zero threshold in the cold counts, too...
+	atomic.StoreUint64(&cold.nativeHistogramZeroThresholdBits, math.Float64bits(newZeroThreshold))
+	// ...and then merge the newly deleted buckets into the wider zero
+	// bucket.
+	mergeAndDeleteOrAddAndReset := func(hotBuckets, coldBuckets *sync.Map) func(k, v interface{}) bool {
+		return func(k, v interface{}) bool {
+			key := k.(int)
+			bucket := v.(*int64)
+			if key == smallestKey {
+				// Merge into hot zero bucket...
+				atomic.AddUint64(&hot.nativeHistogramZeroBucket, uint64(atomic.LoadInt64(bucket)))
+				// ...and delete from cold counts.
+				coldBuckets.Delete(key)
+				atomicDecUint32(&cold.nativeHistogramBucketsNumber)
+			} else {
+				// Add to corresponding hot bucket...
+				if addToBucket(hotBuckets, key, atomic.LoadInt64(bucket)) {
+					atomic.AddUint32(&hot.nativeHistogramBucketsNumber, 1)
+				}
+				// ...and reset cold bucket.
+				atomic.StoreInt64(bucket, 0)
+			}
+			return true
 		}
 	}
 	// Increment count last as we take it as a signal that the observation

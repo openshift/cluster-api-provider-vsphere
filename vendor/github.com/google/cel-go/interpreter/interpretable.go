@@ -221,12 +221,6 @@ func (or *evalOr) Eval(ctx Activation) ref.Val {
 	return types.ValOrErr(rVal, "no such overload")
 }
 
-// Cost implements the Coster interface method. The minimum possible cost incurs when the left-hand
-// side expr is sufficient in determining the evaluation result.
-func (or *evalOr) Cost() (min, max int64) {
-	return calShortCircuitBinaryOpsCost(or.lhs, or.rhs)
-}
-
 type evalAnd struct {
 	id  int64
 	lhs Interpretable
@@ -269,18 +263,6 @@ func (and *evalAnd) Eval(ctx Activation) ref.Val {
 		return lVal
 	}
 	return types.ValOrErr(rVal, "no such overload")
-}
-
-// Cost implements the Coster interface method. The minimum possible cost incurs when the left-hand
-// side expr is sufficient in determining the evaluation result.
-func (and *evalAnd) Cost() (min, max int64) {
-	return calShortCircuitBinaryOpsCost(and.lhs, and.rhs)
-}
-
-func calShortCircuitBinaryOpsCost(lhs, rhs Interpretable) (min, max int64) {
-	lMin, lMax := estimateCost(lhs)
-	_, rMax := estimateCost(rhs)
-	return lMin, lMax + rMax + 1
 }
 
 type evalEq struct {
@@ -579,9 +561,11 @@ func (fn *evalVarArgs) Args() []Interpretable {
 }
 
 type evalList struct {
-	id      int64
-	elems   []Interpretable
-	adapter ref.TypeAdapter
+	id           int64
+	elems        []Interpretable
+	optionals    []bool
+	hasOptionals bool
+	adapter      ref.TypeAdapter
 }
 
 // ID implements the Interpretable interface method.
@@ -609,10 +593,12 @@ func (l *evalList) Cost() (min, max int64) {
 }
 
 type evalMap struct {
-	id      int64
-	keys    []Interpretable
-	vals    []Interpretable
-	adapter ref.TypeAdapter
+	id           int64
+	keys         []Interpretable
+	vals         []Interpretable
+	optionals    []bool
+	hasOptionals bool
+	adapter      ref.TypeAdapter
 }
 
 // ID implements the Interpretable interface method.
@@ -646,11 +632,13 @@ func (m *evalMap) Cost() (min, max int64) {
 }
 
 type evalObj struct {
-	id       int64
-	typeName string
-	fields   []string
-	vals     []Interpretable
-	provider ref.TypeProvider
+	id           int64
+	typeName     string
+	fields       []string
+	vals         []Interpretable
+	optionals    []bool
+	hasOptionals bool
+	provider     ref.TypeProvider
 }
 
 // ID implements the Interpretable interface method.
@@ -688,14 +676,17 @@ func sumOfCost(interps []Interpretable) (min, max int64) {
 }
 
 type evalFold struct {
-	id        int64
-	accuVar   string
-	iterVar   string
-	iterRange Interpretable
-	accu      Interpretable
-	cond      Interpretable
-	step      Interpretable
-	result    Interpretable
+	id            int64
+	accuVar       string
+	iterVar       string
+	iterRange     Interpretable
+	accu          Interpretable
+	cond          Interpretable
+	step          Interpretable
+	result        Interpretable
+	adapter       ref.TypeAdapter
+	exhaustive    bool
+	interruptable bool
 }
 
 // ID implements the Interpretable interface method.
@@ -854,30 +845,42 @@ func (e *evalWatchAttr) AddQualifier(q Qualifier) (Attribute, error) {
 // string, or uint.
 type evalWatchConstQual struct {
 	ConstantQualifier
-	observer evalObserver
+	observer EvalObserver
 	adapter  ref.TypeAdapter
 }
 
-// Cost implements the Coster interface method.
-func (e *evalWatchConstQual) Cost() (min, max int64) {
-	return estimateCost(e.ConstantQualifier)
-}
-
 // Qualify observes the qualification of a object via a constant boolean, int, string, or uint.
-func (e *evalWatchConstQual) Qualify(vars Activation, obj interface{}) (interface{}, error) {
+func (e *evalWatchConstQual) Qualify(vars Activation, obj any) (any, error) {
 	out, err := e.ConstantQualifier.Qualify(vars, obj)
 	var val ref.Val
 	if err != nil {
-		val = types.NewErr(err.Error())
+		val = types.WrapErr(err)
 	} else {
 		val = e.adapter.NativeToValue(out)
 	}
-	e.observer(e.ID(), val)
+	e.observer(e.ID(), e.ConstantQualifier, val)
 	return out, err
 }
 
-// QualifierValueEquals tests whether the incoming value is equal to the qualificying constant.
-func (e *evalWatchConstQual) QualifierValueEquals(value interface{}) bool {
+// QualifyIfPresent conditionally qualifies the variable and only records a value if one is present.
+func (e *evalWatchConstQual) QualifyIfPresent(vars Activation, obj any, presenceOnly bool) (any, bool, error) {
+	out, present, err := e.ConstantQualifier.QualifyIfPresent(vars, obj, presenceOnly)
+	var val ref.Val
+	if err != nil {
+		val = types.WrapErr(err)
+	} else if out != nil {
+		val = e.adapter.NativeToValue(out)
+	} else if presenceOnly {
+		val = types.Bool(present)
+	}
+	if present || presenceOnly {
+		e.observer(e.ID(), e.ConstantQualifier, val)
+	}
+	return out, present, err
+}
+
+// QualifierValueEquals tests whether the incoming value is equal to the qualifying constant.
+func (e *evalWatchConstQual) QualifierValueEquals(value any) bool {
 	qve, ok := e.ConstantQualifier.(qualifierValueEquator)
 	return ok && qve.QualifierValueEquals(value)
 }
@@ -885,13 +888,8 @@ func (e *evalWatchConstQual) QualifierValueEquals(value interface{}) bool {
 // evalWatchQual observes the qualification of an object by a value computed at runtime.
 type evalWatchQual struct {
 	Qualifier
-	observer evalObserver
+	observer EvalObserver
 	adapter  ref.TypeAdapter
-}
-
-// Cost implements the Coster interface method.
-func (e *evalWatchQual) Cost() (min, max int64) {
-	return estimateCost(e.Qualifier)
 }
 
 // Qualify observes the qualification of a object via a value computed at runtime.
@@ -975,12 +973,7 @@ func (or *evalExhaustiveOr) Eval(ctx Activation) ref.Val {
 	if types.IsError(lVal) {
 		return lVal
 	}
-	return types.ValOrErr(rVal, "no such overload")
-}
-
-// Cost implements the Coster interface method.
-func (or *evalExhaustiveOr) Cost() (min, max int64) {
-	return calExhaustiveBinaryOpsCost(or.lhs, or.rhs)
+	return types.MaybeNoSuchOverloadErr(rVal)
 }
 
 // evalExhaustiveAnd is just like evalAnd, but does not short-circuit argument evaluation.
@@ -1021,18 +1014,7 @@ func (and *evalExhaustiveAnd) Eval(ctx Activation) ref.Val {
 	if types.IsError(lVal) {
 		return lVal
 	}
-	return types.ValOrErr(rVal, "no such overload")
-}
-
-// Cost implements the Coster interface method.
-func (and *evalExhaustiveAnd) Cost() (min, max int64) {
-	return calExhaustiveBinaryOpsCost(and.lhs, and.rhs)
-}
-
-func calExhaustiveBinaryOpsCost(lhs, rhs Interpretable) (min, max int64) {
-	lMin, lMax := estimateCost(lhs)
-	rMin, rMax := estimateCost(rhs)
-	return lMin + rMin + 1, lMax + rMax + 1
+	return types.MaybeNoSuchOverloadErr(rVal)
 }
 
 // evalExhaustiveConditional is like evalConditional, but does not short-circuit argument
@@ -1069,9 +1051,11 @@ func (cond *evalExhaustiveConditional) Eval(ctx Activation) ref.Val {
 	return cond.adapter.NativeToValue(fVal)
 }
 
-// Cost implements the Coster interface method.
-func (cond *evalExhaustiveConditional) Cost() (min, max int64) {
-	return cond.attr.Cost()
+// evalAttr evaluates an Attribute value.
+type evalAttr struct {
+	adapter  ref.TypeAdapter
+	attr     Attribute
+	optional bool
 }
 
 // evalExhaustiveFold is like evalFold, but does not short-circuit argument evaluation.
@@ -1174,7 +1158,7 @@ func (a *evalAttr) Attr() Attribute {
 	return a.attr
 }
 
-// Adapter implements the instAttr interface method.
+// Adapter implements the InterpretableAttribute interface method.
 func (a *evalAttr) Adapter() ref.TypeAdapter {
 	return a.adapter
 }

@@ -167,6 +167,44 @@ func ClusterUnpaused(logger logr.Logger) predicate.Funcs {
 	return Any(log, ClusterCreateNotPaused(log), ClusterUpdateUnpaused(log))
 }
 
+// ClusterControlPlaneInitialized returns a Predicate that returns true on Update events
+// when ControlPlaneInitializedCondition on a Cluster changes to true.
+// Example use:
+//
+//	err := controller.Watch(
+//	    source.Kind(cache, &clusterv1.Cluster{}),
+//	    handler.EnqueueRequestsFromMapFunc(clusterToMachines)
+//	    predicates.ClusterControlPlaneInitialized(r.Log),
+//	)
+func ClusterControlPlaneInitialized(logger logr.Logger) predicate.Funcs {
+	return predicate.Funcs{
+		UpdateFunc: func(e event.UpdateEvent) bool {
+			log := logger.WithValues("predicate", "ClusterControlPlaneInitialized", "eventType", "update")
+
+			oldCluster, ok := e.ObjectOld.(*clusterv1.Cluster)
+			if !ok {
+				log.V(4).Info("Expected Cluster", "type", fmt.Sprintf("%T", e.ObjectOld))
+				return false
+			}
+			log = log.WithValues("Cluster", klog.KObj(oldCluster))
+
+			newCluster := e.ObjectNew.(*clusterv1.Cluster)
+
+			if !conditions.IsTrue(oldCluster, clusterv1.ControlPlaneInitializedCondition) &&
+				conditions.IsTrue(newCluster, clusterv1.ControlPlaneInitializedCondition) {
+				log.V(6).Info("Cluster ControlPlaneInitialized was set, allow further processing")
+				return true
+			}
+
+			log.V(6).Info("Cluster ControlPlaneInitialized hasn't changed, blocking further processing")
+			return false
+		},
+		CreateFunc:  func(e event.CreateEvent) bool { return false },
+		DeleteFunc:  func(e event.DeleteEvent) bool { return false },
+		GenericFunc: func(e event.GenericEvent) bool { return false },
+	}
+}
+
 // ClusterUnpausedAndInfrastructureReady returns a Predicate that returns true on Cluster creation events where
 // both Cluster.Spec.Paused is false and Cluster.Status.InfrastructureReady is true and Update events when
 // either Cluster.Spec.Paused transitions to false or Cluster.Status.InfrastructureReady transitions to true.

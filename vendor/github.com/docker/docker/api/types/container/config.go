@@ -34,6 +34,16 @@ type HealthConfig struct {
 	Retries int `json:",omitempty"`
 }
 
+	// Zero means to inherit. Durations are expressed as integer nanoseconds.
+	Interval    time.Duration `json:",omitempty"` // Interval is the time to wait between checks.
+	Timeout     time.Duration `json:",omitempty"` // Timeout is the time to wait before considering the check to have hung.
+	StartPeriod time.Duration `json:",omitempty"` // The start period for the container to initialize before the retries starts to count down.
+
+	// Retries is the number of consecutive failures needed to consider a container as unhealthy.
+	// Zero means inherit.
+	Retries int `json:",omitempty"`
+}
+
 // Config contains the configuration data about a container.
 // It should hold only portable information about the container.
 // Here, "portable" means "independent from the host we are running on".

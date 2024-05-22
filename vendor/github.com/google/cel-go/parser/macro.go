@@ -285,49 +285,6 @@ func makeExistsOne(eh ExprHelper, target *exprpb.Expr, args []*exprpb.Expr) (*ex
 func makeQuantifier(kind quantifierKind, eh ExprHelper, target *exprpb.Expr, args []*exprpb.Expr) (*exprpb.Expr, *common.Error) {
 	v, found := extractIdent(args[0])
 	if !found {
-		location := eh.OffsetLocation(args[0].GetId())
-		return nil, &common.Error{
-			Message:  "argument must be a simple name",
-			Location: location}
-	}
-	accuIdent := func() *exprpb.Expr {
-		return eh.Ident(AccumulatorName)
-	}
-
-	var init *exprpb.Expr
-	var condition *exprpb.Expr
-	var step *exprpb.Expr
-	var result *exprpb.Expr
-	switch kind {
-	case quantifierAll:
-		init = eh.LiteralBool(true)
-		condition = eh.GlobalCall(operators.NotStrictlyFalse, accuIdent())
-		step = eh.GlobalCall(operators.LogicalAnd, accuIdent(), args[1])
-		result = accuIdent()
-	case quantifierExists:
-		init = eh.LiteralBool(false)
-		condition = eh.GlobalCall(
-			operators.NotStrictlyFalse,
-			eh.GlobalCall(operators.LogicalNot, accuIdent()))
-		step = eh.GlobalCall(operators.LogicalOr, accuIdent(), args[1])
-		result = accuIdent()
-	case quantifierExistsOne:
-		zeroExpr := eh.LiteralInt(0)
-		oneExpr := eh.LiteralInt(1)
-		init = zeroExpr
-		condition = eh.LiteralBool(true)
-		step = eh.GlobalCall(operators.Conditional, args[1],
-			eh.GlobalCall(operators.Add, accuIdent(), oneExpr), accuIdent())
-		result = eh.GlobalCall(operators.Equals, accuIdent(), oneExpr)
-	default:
-		return nil, &common.Error{Message: fmt.Sprintf("unrecognized quantifier '%v'", kind)}
-	}
-	return eh.Fold(v, target, AccumulatorName, init, condition, step, result), nil
-}
-
-func makeMap(eh ExprHelper, target *exprpb.Expr, args []*exprpb.Expr) (*exprpb.Expr, *common.Error) {
-	v, found := extractIdent(args[0])
-	if !found {
 		return nil, &common.Error{Message: "argument is not an identifier"}
 	}
 
@@ -368,6 +325,55 @@ func makeFilter(eh ExprHelper, target *exprpb.Expr, args []*exprpb.Expr) (*exprp
 	step := eh.GlobalCall(operators.Add, accuExpr, eh.NewList(args[0]))
 	step = eh.GlobalCall(operators.Conditional, filter, step, accuExpr)
 	return eh.Fold(v, target, AccumulatorName, init, condition, step, accuExpr), nil
+}
+
+// MakeHas expands the input call arguments into a presence test, e.g. has(<operand>.field)
+func MakeHas(eh ExprHelper, target *exprpb.Expr, args []*exprpb.Expr) (*exprpb.Expr, *common.Error) {
+	if s, ok := args[0].ExprKind.(*exprpb.Expr_SelectExpr); ok {
+		return eh.PresenceTest(s.SelectExpr.GetOperand(), s.SelectExpr.GetField()), nil
+	}
+	return nil, &common.Error{Message: "invalid argument to has() macro"}
+}
+
+func makeQuantifier(kind quantifierKind, eh ExprHelper, target *exprpb.Expr, args []*exprpb.Expr) (*exprpb.Expr, *common.Error) {
+	v, found := extractIdent(args[0])
+	if !found {
+		location := eh.OffsetLocation(args[0].GetId())
+		return nil, &common.Error{
+			Message:  "argument must be a simple name",
+			Location: location,
+		}
+	}
+
+	var init *exprpb.Expr
+	var condition *exprpb.Expr
+	var step *exprpb.Expr
+	var result *exprpb.Expr
+	switch kind {
+	case quantifierAll:
+		init = eh.LiteralBool(true)
+		condition = eh.GlobalCall(operators.NotStrictlyFalse, eh.AccuIdent())
+		step = eh.GlobalCall(operators.LogicalAnd, eh.AccuIdent(), args[1])
+		result = eh.AccuIdent()
+	case quantifierExists:
+		init = eh.LiteralBool(false)
+		condition = eh.GlobalCall(
+			operators.NotStrictlyFalse,
+			eh.GlobalCall(operators.LogicalNot, eh.AccuIdent()))
+		step = eh.GlobalCall(operators.LogicalOr, eh.AccuIdent(), args[1])
+		result = eh.AccuIdent()
+	case quantifierExistsOne:
+		zeroExpr := eh.LiteralInt(0)
+		oneExpr := eh.LiteralInt(1)
+		init = zeroExpr
+		condition = eh.LiteralBool(true)
+		step = eh.GlobalCall(operators.Conditional, args[1],
+			eh.GlobalCall(operators.Add, eh.AccuIdent(), oneExpr), eh.AccuIdent())
+		result = eh.GlobalCall(operators.Equals, eh.AccuIdent(), oneExpr)
+	default:
+		return nil, &common.Error{Message: fmt.Sprintf("unrecognized quantifier '%v'", kind)}
+	}
+	return eh.Fold(v, target, AccumulatorName, init, condition, step, result), nil
 }
 
 func extractIdent(e *exprpb.Expr) (string, bool) {

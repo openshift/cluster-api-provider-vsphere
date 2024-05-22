@@ -27,6 +27,8 @@ import (
 )
 
 // Validator defines functions for validating an operation.
+// The custom resource kind which implements this interface can validate itself.
+// To validate the custom resource with another specific struct, use CustomValidator instead.
 type Validator interface {
 	runtime.Object
 	ValidateCreate() error
@@ -35,7 +37,7 @@ type Validator interface {
 }
 
 // ValidatingWebhookFor creates a new Webhook for validating the provided type.
-func ValidatingWebhookFor(validator Validator) *Webhook {
+func ValidatingWebhookFor(scheme *runtime.Scheme, validator Validator) *Webhook {
 	return &Webhook{
 		Handler: &validatingHandler{validator: validator},
 	}

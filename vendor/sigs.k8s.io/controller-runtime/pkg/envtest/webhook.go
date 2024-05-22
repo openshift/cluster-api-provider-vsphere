@@ -174,7 +174,7 @@ func WaitForWebhooks(config *rest.Config,
 	mutatingWebhooks []*admissionv1.MutatingWebhookConfiguration,
 	validatingWebhooks []*admissionv1.ValidatingWebhookConfiguration,
 	options WebhookInstallOptions) error {
-	waitingFor := map[schema.GroupVersionKind]*sets.String{}
+	waitingFor := map[schema.GroupVersionKind]*sets.Set[string]{}
 
 	for _, hook := range mutatingWebhooks {
 		h := hook
@@ -230,7 +230,7 @@ func (p *webhookPoller) poll() (done bool, err error) {
 			delete(p.waitingFor, gvk)
 			continue
 		}
-		for _, name := range names.List() {
+		for _, name := range names.UnsortedList() {
 			var obj = &unstructured.Unstructured{}
 			obj.SetGroupVersionKind(gvk)
 			err := c.Get(context.Background(), client.ObjectKey{

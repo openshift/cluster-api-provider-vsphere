@@ -344,6 +344,95 @@ func (e *exprHelper) nextMacroID() int64 {
 	return e.parserHelper.id(e.parserHelper.getLocation(e.id))
 }
 
+// Copy implements the ExprHelper interface method by producing a copy of the input Expr value
+// with a fresh set of numeric identifiers the Expr and all its descendents.
+func (e *exprHelper) Copy(expr *exprpb.Expr) *exprpb.Expr {
+	copy := e.parserHelper.newExpr(e.parserHelper.getLocation(expr.GetId()))
+	switch expr.GetExprKind().(type) {
+	case *exprpb.Expr_ConstExpr:
+		copy.ExprKind = &exprpb.Expr_ConstExpr{ConstExpr: expr.GetConstExpr()}
+	case *exprpb.Expr_IdentExpr:
+		copy.ExprKind = &exprpb.Expr_IdentExpr{IdentExpr: expr.GetIdentExpr()}
+	case *exprpb.Expr_SelectExpr:
+		op := expr.GetSelectExpr().GetOperand()
+		copy.ExprKind = &exprpb.Expr_SelectExpr{SelectExpr: &exprpb.Expr_Select{
+			Operand:  e.Copy(op),
+			Field:    expr.GetSelectExpr().GetField(),
+			TestOnly: expr.GetSelectExpr().GetTestOnly(),
+		}}
+	case *exprpb.Expr_CallExpr:
+		call := expr.GetCallExpr()
+		target := call.GetTarget()
+		if target != nil {
+			target = e.Copy(target)
+		}
+		args := call.GetArgs()
+		argsCopy := make([]*exprpb.Expr, len(args))
+		for i, arg := range args {
+			argsCopy[i] = e.Copy(arg)
+		}
+		copy.ExprKind = &exprpb.Expr_CallExpr{
+			CallExpr: &exprpb.Expr_Call{
+				Function: call.GetFunction(),
+				Target:   target,
+				Args:     argsCopy,
+			},
+		}
+	case *exprpb.Expr_ListExpr:
+		elems := expr.GetListExpr().GetElements()
+		elemsCopy := make([]*exprpb.Expr, len(elems))
+		for i, elem := range elems {
+			elemsCopy[i] = e.Copy(elem)
+		}
+		copy.ExprKind = &exprpb.Expr_ListExpr{
+			ListExpr: &exprpb.Expr_CreateList{Elements: elemsCopy},
+		}
+	case *exprpb.Expr_StructExpr:
+		entries := expr.GetStructExpr().GetEntries()
+		entriesCopy := make([]*exprpb.Expr_CreateStruct_Entry, len(entries))
+		for i, entry := range entries {
+			entryCopy := &exprpb.Expr_CreateStruct_Entry{}
+			entryCopy.Id = e.nextMacroID()
+			switch entry.GetKeyKind().(type) {
+			case *exprpb.Expr_CreateStruct_Entry_FieldKey:
+				entryCopy.KeyKind = &exprpb.Expr_CreateStruct_Entry_FieldKey{
+					FieldKey: entry.GetFieldKey(),
+				}
+			case *exprpb.Expr_CreateStruct_Entry_MapKey:
+				entryCopy.KeyKind = &exprpb.Expr_CreateStruct_Entry_MapKey{
+					MapKey: e.Copy(entry.GetMapKey()),
+				}
+			}
+			entryCopy.Value = e.Copy(entry.GetValue())
+			entriesCopy[i] = entryCopy
+		}
+		copy.ExprKind = &exprpb.Expr_StructExpr{
+			StructExpr: &exprpb.Expr_CreateStruct{
+				MessageName: expr.GetStructExpr().GetMessageName(),
+				Entries:     entriesCopy,
+			},
+		}
+	case *exprpb.Expr_ComprehensionExpr:
+		iterRange := e.Copy(expr.GetComprehensionExpr().GetIterRange())
+		accuInit := e.Copy(expr.GetComprehensionExpr().GetAccuInit())
+		cond := e.Copy(expr.GetComprehensionExpr().GetLoopCondition())
+		step := e.Copy(expr.GetComprehensionExpr().GetLoopStep())
+		result := e.Copy(expr.GetComprehensionExpr().GetResult())
+		copy.ExprKind = &exprpb.Expr_ComprehensionExpr{
+			ComprehensionExpr: &exprpb.Expr_Comprehension{
+				IterRange:     iterRange,
+				IterVar:       expr.GetComprehensionExpr().GetIterVar(),
+				AccuInit:      accuInit,
+				AccuVar:       expr.GetComprehensionExpr().GetAccuVar(),
+				LoopCondition: cond,
+				LoopStep:      step,
+				Result:        result,
+			},
+		}
+	}
+	return copy
+}
+
 // LiteralBool implements the ExprHelper interface method.
 func (e *exprHelper) LiteralBool(value bool) *exprpb.Expr {
 	return e.parserHelper.newLiteralBool(e.nextMacroID(), value)

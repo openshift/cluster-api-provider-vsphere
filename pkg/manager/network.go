@@ -27,8 +27,6 @@ import (
 )
 
 const (
-	// NSXVPCNetworkProvider identifies the nsx-vpc network provider.
-	NSXVPCNetworkProvider = "NSX-VPC"
 	// NSXNetworkProvider identifies the NSX network provider.
 	NSXNetworkProvider = "NSX"
 	// VDSNetworkProvider identifies the VDS network provider.
@@ -43,9 +41,6 @@ func GetNetworkProvider(ctx context.Context, client client.Client, networkProvid
 	log := ctrl.LoggerFrom(ctx)
 
 	switch networkProvider {
-	case NSXVPCNetworkProvider:
-		log.Info("Pick NSX-VPC network provider")
-		return network.NSXTVpcNetworkProvider(client), nil
 	case NSXNetworkProvider:
 		// TODO: disableFirewall not configurable
 		log.Info("Pick NSX-T network provider")

@@ -120,7 +120,7 @@ func (t *topologyClient) Plan(in *TopologyPlanInput) (*TopologyPlanOutput, error
 	// only has a Cluster object.
 	var c client.Client
 	if err := t.proxy.CheckClusterAvailable(); err == nil {
-		if initialized, err := t.inventoryClient.CheckCAPIInstalled(); err == nil && initialized {
+		if initialized, err := t.inventoryClient.CheckCAPIInstalled(ctx); err == nil && initialized {
 			c, err = t.proxy.NewClient()
 			if err != nil {
 				return nil, errors.Wrap(err, "failed to create a client to the cluster")
@@ -415,6 +415,108 @@ func (t *topologyClient) runDefaultAndValidationWebhooks(ctx context.Context, in
 	}
 
 	return nil
+}
+
+func (t *topologyClient) reconcileClusterClasses(ctx context.Context, inputObjects []*unstructured.Unstructured, apiReader client.Reader) ([]client.Object, error) {
+	reconciliationObjects := []client.Object{}
+	// From the inputs gather all the objects that are not ClusterClasses.
+	// These objects will be used when initializing a dryrun client to use in the reconciler.
+	for _, o := range filterObjects(inputObjects, clusterv1.GroupVersion.WithKind("ClusterClass")) {
+		reconciliationObjects = append(reconciliationObjects, o)
+	}
+	// Add mock CRDs of all the provider objects in the input to the list used when initializing the client.
+	// Adding these CRDs makes sure that UpdateReferenceAPIContract calls in the reconciler can work.
+	for _, o := range t.generateCRDs(inputObjects) {
+		reconciliationObjects = append(reconciliationObjects, o)
+	}
+
+	// Create a list of all ClusterClasses, including those in the dry run input and those in the management Cluster
+	// API Server.
+	allClusterClasses := []client.Object{}
+	ccList := &clusterv1.ClusterClassList{}
+	// If an APIReader is available add the ClusterClasses from the management cluster
+	if apiReader != nil {
+		if err := apiReader.List(ctx, ccList); err != nil {
+			return nil, errors.Wrap(err, "failed to find ClusterClasses to default and validate Clusters")
+		}
+		for i := range ccList.Items {
+			allClusterClasses = append(allClusterClasses, &ccList.Items[i])
+		}
+	}
+
+	// Add ClusterClasses from the input
+	inClusterClasses := getClusterClasses(inputObjects)
+	cc := clusterv1.ClusterClass{}
+	for _, class := range inClusterClasses {
+		if err := scheme.Scheme.Convert(class, &cc, ctx); err != nil {
+			return nil, errors.Wrapf(err, "failed to convert object %s/%s to ClusterClass", class.GetNamespace(), class.GetName())
+		}
+		allClusterClasses = append(allClusterClasses, &cc)
+	}
+
+	// Each ClusterClass should be reconciled in order to ensure variables are correctly added to `status.variables`.
+	// This is required as Clusters are validated based of variable definitions in the ClusterClass `.status.variables`.
+	reconciledClusterClasses := []client.Object{}
+	for _, class := range allClusterClasses {
+		reconciledClusterClass, err := reconcileClusterClass(ctx, apiReader, class, reconciliationObjects)
+		if err != nil {
+			return nil, errors.Wrapf(err, "ClusterClass %s could not be reconciled for dry run", class.GetName())
+		}
+		reconciledClusterClasses = append(reconciledClusterClasses, reconciledClusterClass)
+	}
+
+	// Remove the ClusterClasses from the input objects and replace them with the reconciled version.
+	for i, obj := range inputObjects {
+		if obj.GroupVersionKind() == clusterv1.GroupVersion.WithKind("ClusterClass") {
+			// remove the clusterclass from the list of reconciled clusterclasses if it was not in the input.
+			inputObjects = append(inputObjects[:i], inputObjects[i+1:]...)
+		}
+	}
+	for _, class := range reconciledClusterClasses {
+		obj := &unstructured.Unstructured{}
+		if err := localScheme.Convert(class, obj, nil); err != nil {
+			return nil, errors.Wrapf(err, "failed to convert %s to object", obj.GetKind())
+		}
+		inputObjects = append(inputObjects, obj)
+	}
+
+	// Return a list of successfully reconciled ClusterClasses.
+	return reconciledClusterClasses, nil
+}
+
+func reconcileClusterClass(ctx context.Context, apiReader client.Reader, class client.Object, reconciliationObjects []client.Object) (*unstructured.Unstructured, error) {
+	targetClusterClass := client.ObjectKey{Namespace: class.GetNamespace(), Name: class.GetName()}
+	reconciliationObjects = append(reconciliationObjects, class)
+
+	// Create a reconcilerClient that has access to all of the necessary templates to complete a successful reconcile
+	// of the ClusterClass.
+	reconcilerClient := dryrun.NewClient(apiReader, reconciliationObjects)
+
+	clusterClassReconciler := &clusterclasscontroller.Reconciler{
+		Client:                    reconcilerClient,
+		APIReader:                 reconcilerClient,
+		UnstructuredCachingClient: reconcilerClient,
+	}
+
+	if _, err := clusterClassReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: targetClusterClass}); err != nil {
+		return nil, errors.Wrap(err, "failed to dry run the ClusterClass controller")
+	}
+
+	// Pull the reconciled ClusterClass using the reconcilerClient, and return the version with the updated status.
+	reconciledClusterClass := &clusterv1.ClusterClass{}
+	if err := reconcilerClient.Get(ctx, targetClusterClass, reconciledClusterClass); err != nil {
+		return nil, fmt.Errorf("could not retrieve ClusterClass")
+	}
+
+	obj := &unstructured.Unstructured{}
+	// Converted the defaulted and validated object back into unstructured.
+	// Note: This step also makes sure that modified object is updated into the
+	// original unstructured object.
+	if err := localScheme.Convert(reconciledClusterClass, obj, nil); err != nil {
+		return nil, errors.Wrapf(err, "failed to convert %s to object", obj.GetKind())
+	}
+
+	return obj, nil
 }
 
 func (t *topologyClient) defaultAndValidateObjs(ctx context.Context, objs []*unstructured.Unstructured, o client.Object, defaulter crwebhook.CustomDefaulter, validator crwebhook.CustomValidator, apiReader client.Reader) error {

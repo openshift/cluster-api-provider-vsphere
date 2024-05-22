@@ -62,7 +62,7 @@ type AttributeFactory interface {
 	// The qualifier may consider the object type being qualified, if present. If absent, the
 	// qualification should be considered dynamic and the qualification should still work, though
 	// it may be sub-optimal.
-	NewQualifier(objType *exprpb.Type, qualID int64, val interface{}) (Qualifier, error)
+	NewQualifier(objType *exprpb.Type, qualID int64, val any, opt bool) (Qualifier, error)
 }
 
 // Qualifier marker interface for designating different qualifier values and where they appear
@@ -121,9 +121,7 @@ type NamespacedAttribute interface {
 // NewAttributeFactory returns a default AttributeFactory which is produces Attribute values
 // capable of resolving types by simple names and qualify the values using the supported qualifier
 // types: bool, int, string, and uint.
-func NewAttributeFactory(cont *containers.Container,
-	a ref.TypeAdapter,
-	p ref.TypeProvider) AttributeFactory {
+func NewAttributeFactory(cont *containers.Container, a ref.TypeAdapter, p ref.TypeProvider) AttributeFactory {
 	return &attrFactory{
 		container: cont,
 		adapter:   a,
@@ -191,9 +189,7 @@ func (r *attrFactory) RelativeAttribute(id int64, operand Interpretable) Attribu
 }
 
 // NewQualifier is an implementation of the AttributeFactory interface.
-func (r *attrFactory) NewQualifier(objType *exprpb.Type,
-	qualID int64,
-	val interface{}) (Qualifier, error) {
+func (r *attrFactory) NewQualifier(objType *exprpb.Type, qualID int64, val any, opt bool) (Qualifier, error) {
 	// Before creating a new qualifier check to see if this is a protobuf message field access.
 	// If so, use the precomputed GetFrom qualification method rather than the standard
 	// stringQualifier.
@@ -607,7 +603,7 @@ func (a *relativeAttribute) String() string {
 	return fmt.Sprintf("id: %v, operand: %v", a.id, a.operand)
 }
 
-func newQualifier(adapter ref.TypeAdapter, id int64, v interface{}) (Qualifier, error) {
+func newQualifier(adapter ref.TypeAdapter, id int64, v any, opt bool) (Qualifier, error) {
 	var qual Qualifier
 	switch val := v.(type) {
 	case Attribute:
@@ -635,7 +631,15 @@ func newQualifier(adapter ref.TypeAdapter, id int64, v interface{}) (Qualifier, 
 	case types.Uint:
 		qual = &uintQualifier{id: id, value: uint64(val), celValue: val, adapter: adapter}
 	case types.Bool:
-		qual = &boolQualifier{id: id, value: bool(val), celValue: val, adapter: adapter}
+		qual = &boolQualifier{
+			id: id, value: bool(val), celValue: val, adapter: adapter, optional: opt,
+		}
+	case types.Double:
+		qual = &doubleQualifier{
+			id: id, value: float64(val), celValue: val, adapter: adapter, optional: opt,
+		}
+	case types.Unknown:
+		qual = &unknownQualifier{id: id, value: val}
 	default:
 		return nil, fmt.Errorf("invalid qualifier type: %T", v)
 	}
@@ -661,6 +665,7 @@ type stringQualifier struct {
 	value    string
 	celValue ref.Val
 	adapter  ref.TypeAdapter
+	optional bool
 }
 
 // ID is an implementation of the Qualifier interface method.
@@ -740,6 +745,7 @@ type intQualifier struct {
 	value    int64
 	celValue ref.Val
 	adapter  ref.TypeAdapter
+	optional bool
 }
 
 // ID is an implementation of the Qualifier interface method.
@@ -858,6 +864,7 @@ type uintQualifier struct {
 	value    uint64
 	celValue ref.Val
 	adapter  ref.TypeAdapter
+	optional bool
 }
 
 // ID is an implementation of the Qualifier interface method.
@@ -917,6 +924,7 @@ type boolQualifier struct {
 	value    bool
 	celValue ref.Val
 	adapter  ref.TypeAdapter
+	optional bool
 }
 
 // ID is an implementation of the Qualifier interface method.
@@ -971,6 +979,7 @@ type fieldQualifier struct {
 	Name      string
 	FieldType *ref.FieldType
 	adapter   ref.TypeAdapter
+	optional  bool
 }
 
 // ID is an implementation of the Qualifier interface method.
@@ -991,20 +1000,159 @@ func (q *fieldQualifier) Value() ref.Val {
 	return types.String(q.Name)
 }
 
-// Cost returns zero for constant field qualifiers
-func (q *fieldQualifier) Cost() (min, max int64) {
-	return 0, 0
+// doubleQualifier qualifies a CEL object, map, or list using a double value.
+//
+// This qualifier is used for working with dynamic data like JSON or protobuf.Any where the value
+// type may not be known ahead of time and may not conform to the standard types supported as valid
+// protobuf map key types.
+type doubleQualifier struct {
+	id       int64
+	value    float64
+	celValue ref.Val
+	adapter  ref.TypeAdapter
+	optional bool
 }
 
-// refResolve attempts to convert the value to a CEL value and then uses reflection methods
-// to try and resolve the qualifier.
-func refResolve(adapter ref.TypeAdapter, idx ref.Val, obj interface{}) (ref.Val, error) {
+// ID is an implementation of the Qualifier interface method.
+func (q *doubleQualifier) ID() int64 {
+	return q.id
+}
+
+// IsOptional implements the Qualifier interface method.
+func (q *doubleQualifier) IsOptional() bool {
+	return q.optional
+}
+
+// Qualify implements the Qualifier interface method.
+func (q *doubleQualifier) Qualify(vars Activation, obj any) (any, error) {
+	val, _, err := q.qualifyInternal(vars, obj, false, false)
+	return val, err
+}
+
+func (q *doubleQualifier) QualifyIfPresent(vars Activation, obj any, presenceOnly bool) (any, bool, error) {
+	return q.qualifyInternal(vars, obj, true, presenceOnly)
+}
+
+func (q *doubleQualifier) qualifyInternal(vars Activation, obj any, presenceTest, presenceOnly bool) (any, bool, error) {
+	return refQualify(q.adapter, obj, q.celValue, presenceTest, presenceOnly)
+}
+
+// Value implements the ConstantQualifier interface
+func (q *doubleQualifier) Value() ref.Val {
+	return q.celValue
+}
+
+// unknownQualifier is a simple qualifier which always returns a preconfigured set of unknown values
+// for any value subject to qualification. This is consistent with CEL's unknown handling elsewhere.
+type unknownQualifier struct {
+	id    int64
+	value types.Unknown
+}
+
+// ID is an implementation of the Qualifier interface method.
+func (q *unknownQualifier) ID() int64 {
+	return q.id
+}
+
+// IsOptional returns trivially false as an the unknown value is always returned.
+func (q *unknownQualifier) IsOptional() bool {
+	return false
+}
+
+// Qualify returns the unknown value associated with this qualifier.
+func (q *unknownQualifier) Qualify(vars Activation, obj any) (any, error) {
+	return q.value, nil
+}
+
+// QualifyIfPresent is an implementation of the Qualifier interface method.
+func (q *unknownQualifier) QualifyIfPresent(vars Activation, obj any, presenceOnly bool) (any, bool, error) {
+	return q.value, true, nil
+}
+
+// Value implements the ConstantQualifier interface
+func (q *unknownQualifier) Value() ref.Val {
+	return q.value
+}
+
+func applyQualifiers(vars Activation, obj any, qualifiers []Qualifier) (any, bool, error) {
+	optObj, isOpt := obj.(*types.Optional)
+	if isOpt {
+		if !optObj.HasValue() {
+			return optObj, false, nil
+		}
+		obj = optObj.GetValue().Value()
+	}
+
+	var err error
+	for _, qual := range qualifiers {
+		var qualObj any
+		isOpt = isOpt || qual.IsOptional()
+		if isOpt {
+			var present bool
+			qualObj, present, err = qual.QualifyIfPresent(vars, obj, false)
+			if err != nil {
+				return nil, false, err
+			}
+			if !present {
+				// We return optional none here with a presence of 'false' as the layers
+				// above will attempt to call types.OptionalOf() on a present value if any
+				// of the qualifiers is optional.
+				return types.OptionalNone, false, nil
+			}
+		} else {
+			qualObj, err = qual.Qualify(vars, obj)
+			if err != nil {
+				return nil, false, err
+			}
+		}
+		obj = qualObj
+	}
+	return obj, isOpt, nil
+}
+
+// attrQualify performs a qualification using the result of an attribute evaluation.
+func attrQualify(fac AttributeFactory, vars Activation, obj any, qualAttr Attribute) (any, error) {
+	val, err := qualAttr.Resolve(vars)
+	if err != nil {
+		return nil, err
+	}
+	qual, err := fac.NewQualifier(nil, qualAttr.ID(), val, qualAttr.IsOptional())
+	if err != nil {
+		return nil, err
+	}
+	return qual.Qualify(vars, obj)
+}
+
+// attrQualifyIfPresent conditionally performs the qualification of the result of attribute is present
+// on the target object.
+func attrQualifyIfPresent(fac AttributeFactory, vars Activation, obj any, qualAttr Attribute,
+	presenceOnly bool) (any, bool, error) {
+	val, err := qualAttr.Resolve(vars)
+	if err != nil {
+		return nil, false, err
+	}
+	qual, err := fac.NewQualifier(nil, qualAttr.ID(), val, qualAttr.IsOptional())
+	if err != nil {
+		return nil, false, err
+	}
+	return qual.QualifyIfPresent(vars, obj, presenceOnly)
+}
+
+// refQualify attempts to convert the value to a CEL value and then uses reflection methods to try and
+// apply the qualifier with the option to presence test field accesses before retrieving field values.
+func refQualify(adapter ref.TypeAdapter, obj any, idx ref.Val, presenceTest, presenceOnly bool) (ref.Val, bool, error) {
 	celVal := adapter.NativeToValue(obj)
-	mapper, isMapper := celVal.(traits.Mapper)
-	if isMapper {
-		elem, found := mapper.Find(idx)
-		if !found {
-			return nil, fmt.Errorf("no such key: %v", idx)
+	switch v := celVal.(type) {
+	case types.Unknown:
+		return v, true, nil
+	case *types.Err:
+		return nil, false, v
+	case traits.Mapper:
+		val, found := v.Find(idx)
+		// If the index is of the wrong type for the map, then it is possible
+		// for the Find call to produce an error.
+		if types.IsError(val) {
+			return nil, false, val.(*types.Err)
 		}
 		if types.IsError(elem) {
 			return nil, elem.(*types.Err)

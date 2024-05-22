@@ -23,7 +23,7 @@ func (cli *Client) DistributionInspect(ctx context.Context, image, encodedRegist
 
 	if encodedRegistryAuth != "" {
 		headers = map[string][]string{
-			"X-Registry-Auth": {encodedRegistryAuth},
+			registry.AuthHeader: {encodedRegistryAuth},
 		}
 	}
 

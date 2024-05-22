@@ -25,6 +25,8 @@ import (
 	"github.com/pkg/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/util/sets"
+	"k8s.io/klog/v2"
 	"k8s.io/utils/pointer"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -364,6 +366,13 @@ func controlPlaneMachineOptions() []client.ListOption {
 	}
 }
 
+// controlPlaneMachineOptions returns a set of ListOptions that allows to get all machine objects belonging to control plane.
+func controlPlaneMachineOptions() []client.ListOption {
+	return []client.ListOption{
+		client.HasLabels{clusterv1.MachineControlPlaneLabel},
+	}
+}
+
 type ScaleAndWaitControlPlaneInput struct {
 	ClusterProxy        ClusterProxy
 	Cluster             *clusterv1.Cluster
@@ -380,9 +389,12 @@ func ScaleAndWaitControlPlane(ctx context.Context, input ScaleAndWaitControlPlan
 
 	patchHelper, err := patch.NewHelper(input.ControlPlane, input.ClusterProxy.GetClient())
 	Expect(err).ToNot(HaveOccurred())
-	input.ControlPlane.Spec.Replicas = pointer.Int32Ptr(input.Replicas)
-	log.Logf("Scaling controlplane %s/%s from %v to %v replicas", input.ControlPlane.Namespace, input.ControlPlane.Name, input.ControlPlane.Spec.Replicas, input.Replicas)
-	Expect(patchHelper.Patch(ctx, input.ControlPlane)).To(Succeed())
+	scaleBefore := pointer.Int32Deref(input.ControlPlane.Spec.Replicas, 0)
+	input.ControlPlane.Spec.Replicas = pointer.Int32(input.Replicas)
+	log.Logf("Scaling controlplane %s from %v to %v replicas", klog.KObj(input.ControlPlane), scaleBefore, input.Replicas)
+	Eventually(func() error {
+		return patchHelper.Patch(ctx, input.ControlPlane)
+	}, retryableOperationTimeout, retryableOperationInterval).Should(Succeed(), "Failed to scale controlplane %s from %v to %v replicas", klog.KObj(input.ControlPlane), scaleBefore, input.Replicas)
 
 	log.Logf("Waiting for correct number of replicas to exist")
 	Eventually(func() (int, error) {

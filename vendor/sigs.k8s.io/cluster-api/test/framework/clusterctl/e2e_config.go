@@ -49,7 +49,7 @@ type LoadE2EConfigInput struct {
 }
 
 // LoadE2EConfig loads the configuration for the e2e test environment.
-func LoadE2EConfig(ctx context.Context, input LoadE2EConfigInput) *E2EConfig {
+func LoadE2EConfig(_ context.Context, input LoadE2EConfigInput) *E2EConfig {
 	configData, err := os.ReadFile(input.ConfigPath)
 	Expect(err).ToNot(HaveOccurred(), "Failed to read the e2e test config file")
 	Expect(configData).ToNot(BeEmpty(), "The e2e test config file should not be empty")
@@ -243,6 +243,27 @@ type Files struct {
 	// TargetName name of the file copied into the local repository. if empty, the source name
 	// Will be preserved
 	TargetName string `json:"targetName,omitempty"`
+}
+
+func (c *E2EConfig) DeepCopy() *E2EConfig {
+	if c == nil {
+		return nil
+	}
+	out := new(E2EConfig)
+	out.ManagementClusterName = c.ManagementClusterName
+	out.Images = make([]ContainerImage, len(c.Images))
+	copy(out.Images, c.Images)
+	out.Providers = make([]ProviderConfig, len(c.Providers))
+	copy(out.Providers, c.Providers)
+	out.Variables = make(map[string]string, len(c.Variables))
+	for key, val := range c.Variables {
+		out.Variables[key] = val
+	}
+	out.Intervals = make(map[string][]string, len(c.Intervals))
+	for key, val := range c.Intervals {
+		out.Intervals[key] = val
+	}
+	return out
 }
 
 // Defaults assigns default values to the object. More specifically:
@@ -568,8 +589,8 @@ func (c *E2EConfig) GetInt64PtrVariable(varName string) *int64 {
 	}
 
 	wCount, err := strconv.ParseInt(wCountStr, 10, 64)
-	Expect(err).NotTo(HaveOccurred())
-	return pointer.Int64Ptr(wCount)
+	Expect(err).ToNot(HaveOccurred())
+	return pointer.Int64(wCount)
 }
 
 // GetInt32PtrVariable returns an Int32Ptr variable from the e2e config file.
@@ -580,8 +601,8 @@ func (c *E2EConfig) GetInt32PtrVariable(varName string) *int32 {
 	}
 
 	wCount, err := strconv.ParseUint(wCountStr, 10, 32)
-	Expect(err).NotTo(HaveOccurred())
-	return pointer.Int32Ptr(int32(wCount))
+	Expect(err).ToNot(HaveOccurred())
+	return pointer.Int32(int32(wCount))
 }
 
 // GetProviderVersions returns the sorted list of versions defined for a provider.

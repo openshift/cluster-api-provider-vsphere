@@ -27,13 +27,58 @@ type RootFS struct {
 // ImageInspect contains response of Engine API:
 // GET "/images/{name:.*}/json"
 type ImageInspect struct {
-	ID              string `json:"Id"`
-	RepoTags        []string
-	RepoDigests     []string
-	Parent          string
-	Comment         string
-	Created         string
-	Container       string
+	// ID is the content-addressable ID of an image.
+	//
+	// This identifier is a content-addressable digest calculated from the
+	// image's configuration (which includes the digests of layers used by
+	// the image).
+	//
+	// Note that this digest differs from the `RepoDigests` below, which
+	// holds digests of image manifests that reference the image.
+	ID string `json:"Id"`
+
+	// RepoTags is a list of image names/tags in the local image cache that
+	// reference this image.
+	//
+	// Multiple image tags can refer to the same image, and this list may be
+	// empty if no tags reference the image, in which case the image is
+	// "untagged", in which case it can still be referenced by its ID.
+	RepoTags []string
+
+	// RepoDigests is a list of content-addressable digests of locally available
+	// image manifests that the image is referenced from. Multiple manifests can
+	// refer to the same image.
+	//
+	// These digests are usually only available if the image was either pulled
+	// from a registry, or if the image was pushed to a registry, which is when
+	// the manifest is generated and its digest calculated.
+	RepoDigests []string
+
+	// Parent is the ID of the parent image.
+	//
+	// Depending on how the image was created, this field may be empty and
+	// is only set for images that were built/created locally. This field
+	// is empty if the image was pulled from an image registry.
+	Parent string
+
+	// Comment is an optional message that can be set when committing or
+	// importing the image.
+	Comment string
+
+	// Created is the date and time at which the image was created, formatted in
+	// RFC 3339 nano-seconds (time.RFC3339Nano).
+	Created string
+
+	// Container is the ID of the container that was used to create the image.
+	//
+	// Depending on how the image was created, this field may be empty.
+	Container string
+
+	// ContainerConfig is an optional field containing the configuration of the
+	// container that was last committed when creating the image.
+	//
+	// Previous versions of Docker builder used this field to store build cache,
+	// and it is not in active use anymore.
 	ContainerConfig *container.Config
 	DockerVersion   string
 	Author          string
@@ -49,8 +94,60 @@ type ImageInspect struct {
 	Metadata        ImageMetadata
 }
 
+	// DockerVersion is the version of Docker that was used to build the image.
+	//
+	// Depending on how the image was created, this field may be empty.
+	DockerVersion string
+
+	// Author is the name of the author that was specified when committing the
+	// image, or as specified through MAINTAINER (deprecated) in the Dockerfile.
+	Author string
+	Config *container.Config
+
+	// Architecture is the hardware CPU architecture that the image runs on.
+	Architecture string
+
+	// Variant is the CPU architecture variant (presently ARM-only).
+	Variant string `json:",omitempty"`
+
+	// OS is the Operating System the image is built to run on.
+	Os string
+
+	// OsVersion is the version of the Operating System the image is built to
+	// run on (especially for Windows).
+	OsVersion string `json:",omitempty"`
+
+	// Size is the total size of the image including all layers it is composed of.
+	Size int64
+
+	// VirtualSize is the total size of the image including all layers it is
+	// composed of.
+	//
+	// In versions of Docker before v1.10, this field was calculated from
+	// the image itself and all of its parent images. Docker v1.10 and up
+	// store images self-contained, and no longer use a parent-chain, making
+	// this field an equivalent of the Size field.
+	//
+	// Deprecated: Unused in API 1.43 and up, but kept for backward compatibility with older API versions.
+	VirtualSize int64 `json:"VirtualSize,omitempty"`
+
+	// GraphDriver holds information about the storage driver used to store the
+	// container's and image's filesystem.
+	GraphDriver GraphDriverData
+
+	// RootFS contains information about the image's RootFS, including the
+	// layer IDs.
+	RootFS RootFS
+
+	// Metadata of the image in the local cache.
+	//
+	// This information is local to the daemon, and not part of the image itself.
+	Metadata ImageMetadata
+}
+
 // ImageMetadata contains engine-local data about the image
 type ImageMetadata struct {
+	// LastTagTime is the date and time at which the image was last tagged.
 	LastTagTime time.Time `json:",omitempty"`
 }
 
@@ -158,8 +255,8 @@ type Info struct {
 	Plugins            PluginsInfo
 	MemoryLimit        bool
 	SwapLimit          bool
-	KernelMemory       bool // Deprecated: kernel 5.4 deprecated kmem.limit_in_bytes
-	KernelMemoryTCP    bool
+	KernelMemory       bool `json:",omitempty"` // Deprecated: kernel 5.4 deprecated kmem.limit_in_bytes
+	KernelMemoryTCP    bool `json:",omitempty"` // KernelMemoryTCP is not supported on cgroups v2.
 	CPUCfsPeriod       bool `json:"CpuCfsPeriod"`
 	CPUCfsQuota        bool `json:"CpuCfsQuota"`
 	CPUShares          bool
@@ -195,8 +292,6 @@ type Info struct {
 	Labels             []string
 	ExperimentalBuild  bool
 	ServerVersion      string
-	ClusterStore       string `json:",omitempty"` // Deprecated: host-discovery and overlay networks with external k/v stores are deprecated
-	ClusterAdvertise   string `json:",omitempty"` // Deprecated: host-discovery and overlay networks with external k/v stores are deprecated
 	Runtimes           map[string]Runtime
 	DefaultRuntime     string
 	Swarm              swarm.Info
@@ -212,7 +307,12 @@ type Info struct {
 	SecurityOptions     []string
 	ProductLicense      string               `json:",omitempty"`
 	DefaultAddressPools []NetworkAddressPool `json:",omitempty"`
-	Warnings            []string
+
+	// Warnings contains a slice of warnings that occurred  while collecting
+	// system information. These warnings are intended to be informational
+	// messages for the user, and are not intended to be parsed / used for
+	// other purposes, as they do not have a fixed format.
+	Warnings []string
 }
 
 // KeyValue holds a key/value pair
@@ -243,20 +343,19 @@ func DecodeSecurityOptions(opts []string) ([]SecurityOpt, error) {
 			continue
 		}
 		secopt := SecurityOpt{}
-		split := strings.Split(opt, ",")
-		for _, s := range split {
-			kv := strings.SplitN(s, "=", 2)
-			if len(kv) != 2 {
+		for _, s := range strings.Split(opt, ",") {
+			k, v, ok := strings.Cut(s, "=")
+			if !ok {
 				return nil, fmt.Errorf("invalid security option %q", s)
 			}
-			if kv[0] == "" || kv[1] == "" {
+			if k == "" || v == "" {
 				return nil, errors.New("invalid empty security option")
 			}
-			if kv[0] == "name" {
-				secopt.Name = kv[1]
+			if k == "name" {
+				secopt.Name = v
 				continue
 			}
-			secopt.Options = append(secopt.Options, KeyValue{Key: kv[0], Value: kv[1]})
+			secopt.Options = append(secopt.Options, KeyValue{Key: k, Value: v})
 		}
 		so = append(so, secopt)
 	}
@@ -513,6 +612,31 @@ type NetworkInspectOptions struct {
 type Checkpoint struct {
 	Name string // Name is the name of the checkpoint
 }
+
+// Runtime describes an OCI runtime
+type Runtime struct {
+	// "Legacy" runtime configuration for runc-compatible runtimes.
+
+	Path string   `json:"path,omitempty"`
+	Args []string `json:"runtimeArgs,omitempty"`
+
+	// Shimv2 runtime configuration. Mutually exclusive with the legacy config above.
+
+	Type    string                 `json:"runtimeType,omitempty"`
+	Options map[string]interface{} `json:"options,omitempty"`
+
+	// This is exposed here only for internal use
+	ShimConfig *ShimConfig `json:"-"`
+}
+
+// ShimConfig is used by runtime to configure containerd shims
+type ShimConfig struct {
+	Binary string
+	Opts   interface{}
+}
+
+// DiskUsageObject represents an object type used for disk usage query filtering.
+type DiskUsageObject string
 
 // Runtime describes an OCI runtime
 type Runtime struct {
