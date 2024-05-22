@@ -53,50 +53,52 @@ type DHCPOverrides struct {
 var _ = Describe("DHCPOverrides configuration test", func() {
 	When("Creating a cluster with DHCPOverrides configured", func() {
 		const specName = "dhcp-overrides"
-		var namespace *corev1.Namespace
+		Setup("dhcp-overrides", func(testSpecificSettingsGetter func() testSettings) {
+			var namespace *corev1.Namespace
 
-		BeforeEach(func() {
-			namespace = setupSpecNamespace(specName)
-		})
+			BeforeEach(func() {
+				namespace = setupSpecNamespace(specName)
+			})
 
-		AfterEach(func() {
-			cleanupSpecNamespace(namespace)
-		})
+			AfterEach(func() {
+				cleanupSpecNamespace(namespace)
+			})
 
-		It("Only configures the network with the provided nameservers", func() {
-			clusterName := fmt.Sprintf("%s-%s", specName, util.RandomString(6))
-			clusterResources := new(clusterctl.ApplyClusterTemplateAndWaitResult)
+			It("Only configures the network with the provided nameservers", func() {
+				clusterName := fmt.Sprintf("%s-%s", specName, util.RandomString(6))
+				clusterResources := new(clusterctl.ApplyClusterTemplateAndWaitResult)
 
-			By("Creating a workload cluster")
-			clusterctl.ApplyClusterTemplateAndWait(ctx, clusterctl.ApplyClusterTemplateAndWaitInput{
-				ClusterProxy: bootstrapClusterProxy,
-				ConfigCluster: clusterctl.ConfigClusterInput{
-					LogFolder:                filepath.Join(artifactFolder, "clusters", bootstrapClusterProxy.GetName()),
-					ClusterctlConfigPath:     clusterctlConfigPath,
-					KubeconfigPath:           bootstrapClusterProxy.GetKubeconfigPath(),
-					InfrastructureProvider:   clusterctl.DefaultInfrastructureProvider,
-					Flavor:                   "dhcp-overrides",
-					Namespace:                namespace.Name,
-					ClusterName:              clusterName,
-					KubernetesVersion:        e2eConfig.GetVariable(KubernetesVersion),
-					ControlPlaneMachineCount: ptr.To(int64(1)),
-					WorkerMachineCount:       ptr.To(int64(1)),
-				},
-				WaitForClusterIntervals:      e2eConfig.GetIntervals(specName, "wait-cluster"),
-				WaitForControlPlaneIntervals: e2eConfig.GetIntervals(specName, "wait-control-plane"),
-				WaitForMachineDeployments:    e2eConfig.GetIntervals(specName, "wait-worker-nodes"),
-			}, clusterResources)
+				By("Creating a workload cluster")
+				clusterctl.ApplyClusterTemplateAndWait(ctx, clusterctl.ApplyClusterTemplateAndWaitInput{
+					ClusterProxy: bootstrapClusterProxy,
+					ConfigCluster: clusterctl.ConfigClusterInput{
+						LogFolder:                filepath.Join(artifactFolder, "clusters", bootstrapClusterProxy.GetName()),
+						ClusterctlConfigPath:     testSpecificSettingsGetter().ClusterctlConfigPath,
+						KubeconfigPath:           bootstrapClusterProxy.GetKubeconfigPath(),
+						InfrastructureProvider:   clusterctl.DefaultInfrastructureProvider,
+						Flavor:                   testSpecificSettingsGetter().FlavorForMode("dhcp-overrides"),
+						Namespace:                namespace.Name,
+						ClusterName:              clusterName,
+						KubernetesVersion:        e2eConfig.GetVariable(KubernetesVersion),
+						ControlPlaneMachineCount: ptr.To(int64(1)),
+						WorkerMachineCount:       ptr.To(int64(1)),
+					},
+					WaitForClusterIntervals:      e2eConfig.GetIntervals(specName, "wait-cluster"),
+					WaitForControlPlaneIntervals: e2eConfig.GetIntervals(specName, "wait-control-plane"),
+					WaitForMachineDeployments:    e2eConfig.GetIntervals(specName, "wait-worker-nodes"),
+				}, clusterResources)
 
-			list := getVSphereVMsForCluster(clusterName, namespace.Name)
-			for _, vm := range list.Items {
-				metadata, err := getVMMetadata(vm)
-				Expect(err).NotTo(HaveOccurred())
-				guestInfoMetadata := &GuestInfoMetadata{}
-				err = yaml.Unmarshal(metadata, guestInfoMetadata)
-				Expect(err).NotTo(HaveOccurred())
-				Expect(guestInfoMetadata.Network.Ethernets["id0"].DHCP4Overrides.SendHostname).NotTo(BeNil())
-				Expect(*guestInfoMetadata.Network.Ethernets["id0"].DHCP4Overrides.SendHostname).To(BeFalse())
-			}
+				list := getVSphereVMsForCluster(clusterName, namespace.Name)
+				for _, vm := range list.Items {
+					metadata, err := getVMMetadata(vm)
+					Expect(err).NotTo(HaveOccurred())
+					guestInfoMetadata := &GuestInfoMetadata{}
+					err = yaml.Unmarshal(metadata, guestInfoMetadata)
+					Expect(err).NotTo(HaveOccurred())
+					Expect(guestInfoMetadata.Network.Ethernets["id0"].DHCP4Overrides.SendHostname).NotTo(BeNil())
+					Expect(*guestInfoMetadata.Network.Ethernets["id0"].DHCP4Overrides.SendHostname).To(BeFalse())
+				}
+			})
 		})
 	})
 })

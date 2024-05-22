@@ -29,8 +29,10 @@ import (
 	bootstrapv1 "sigs.k8s.io/cluster-api/bootstrap/kubeadm/api/v1beta1"
 	controlplanev1 "sigs.k8s.io/cluster-api/controlplane/kubeadm/api/v1beta1"
 	addonsv1 "sigs.k8s.io/cluster-api/exp/addons/api/v1beta1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	infrav1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/v1beta1"
+	vmwarev1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/vmware/v1beta1"
 	"sigs.k8s.io/cluster-api-provider-vsphere/packaging/flavorgen/flavors/env"
 	"sigs.k8s.io/cluster-api-provider-vsphere/packaging/flavorgen/flavors/kubevip"
 	"sigs.k8s.io/cluster-api-provider-vsphere/packaging/flavorgen/flavors/util"
@@ -67,7 +69,7 @@ systemd:
       RemainAfterExit=yes
       Environment=OUTPUT=/run/metadata/coreos
       ExecStart=/usr/bin/mkdir --parent /run/metadata
-      ExecStart=/usr/bin/bash -cv 'echo "COREOS_CUSTOM_HOSTNAME=$(/usr/share/oem/bin/vmtoolsd --cmd "info-get guestinfo.metadata" | base64 -d | grep local-hostname | awk {\'print $2\'} | tr -d \'"\')" > $${OUTPUT}'
+      ExecStart=/usr/bin/bash -cv 'echo "COREOS_CUSTOM_HOSTNAME=$("$(find /usr/bin /usr/share/oem -name vmtoolsd -type f -executable 2>/dev/null | head -n 1)" --cmd "info-get guestinfo.metadata" | base64 -d | grep local-hostname | awk {\'print $2\'} | tr -d \'"\')" > $${OUTPUT}'
   - name: set-hostname.service
     enabled: true
     contents: |
@@ -97,8 +99,8 @@ systemd:
         EnvironmentFile=/run/metadata/*`
 )
 
-func newClusterTopologyCluster() (clusterv1.Cluster, error) {
-	variables, err := clusterTopologyVariables()
+func newClusterTopologyCluster(supervisorMode bool) (clusterv1.Cluster, error) {
+	variables, err := clusterTopologyVariables(supervisorMode)
 	if err != nil {
 		return clusterv1.Cluster{}, errors.Wrap(err, "failed to create ClusterTopologyCluster template")
 	}
@@ -134,39 +136,29 @@ func newClusterTopologyCluster() (clusterv1.Cluster, error) {
 	}, nil
 }
 
-func clusterTopologyVariables() ([]clusterv1.ClusterVariable, error) {
+func clusterTopologyVariables(supervisorMode bool) ([]clusterv1.ClusterVariable, error) {
 	sshKey, err := json.Marshal(env.VSphereSSHAuthorizedKeysVar)
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to json-encode variable VSphereSSHAuthorizedKeysVar: %q", env.VSphereSSHAuthorizedKeysVar)
 	}
-	controlPlaneIP, err := json.Marshal(env.ControlPlaneEndpointVar)
+	controlPlaneIP, err := json.Marshal(env.ControlPlaneEndpointHostVar)
 	if err != nil {
-		return nil, errors.Wrapf(err, "failed to json-encode variable ControlPlaneEndpointVar: %q", env.ControlPlaneEndpointVar)
+		return nil, errors.Wrapf(err, "failed to json-encode variable ControlPlaneEndpointHostVar: %q", env.ControlPlaneEndpointHostVar)
 	}
-	secretName, err := json.Marshal(env.ClusterNameVar)
+	controlPlanePort, err := json.Marshal(env.ControlPlaneEndpointPortVar)
 	if err != nil {
-		return nil, errors.Wrapf(err, "failed to json-encode variable ClusterNameVar: %q", env.ClusterNameVar)
+		return nil, errors.Wrapf(err, "failed to json-encode variable ControlPlaneEndpointPortVar: %q", env.ControlPlaneEndpointPortVar)
 	}
-
 	kubeVipVariable, err := kubevip.TopologyVariable()
 	if err != nil {
 		return nil, err
 	}
-	infraServerValue, err := getInfraServerValue()
-	if err != nil {
-		return nil, err
-	}
-	return []clusterv1.ClusterVariable{
+
+	variables := []clusterv1.ClusterVariable{
 		{
 			Name: "sshKey",
 			Value: apiextensionsv1.JSON{
 				Raw: sshKey,
-			},
-		},
-		{
-			Name: "infraServer",
-			Value: apiextensionsv1.JSON{
-				Raw: infraServerValue,
 			},
 		},
 		*kubeVipVariable,
@@ -177,12 +169,41 @@ func clusterTopologyVariables() ([]clusterv1.ClusterVariable, error) {
 			},
 		},
 		{
-			Name: "credsSecretName",
+			Name: "controlPlanePort",
 			Value: apiextensionsv1.JSON{
-				Raw: secretName,
+				Raw: controlPlanePort,
 			},
 		},
-	}, nil
+	}
+
+	if !supervisorMode {
+		infraServerValue, err := getInfraServerValue()
+		if err != nil {
+			return nil, err
+		}
+		secretName, err := json.Marshal(env.ClusterNameVar)
+		if err != nil {
+			return nil, errors.Wrapf(err, "failed to json-encode variable ClusterNameVar: %q", env.ClusterNameVar)
+		}
+
+		varForNoneSupervisorMode := []clusterv1.ClusterVariable{
+			{
+				Name: "infraServer",
+				Value: apiextensionsv1.JSON{
+					Raw: infraServerValue,
+				},
+			},
+			{
+				Name: "credsSecretName",
+				Value: apiextensionsv1.JSON{
+					Raw: secretName,
+				},
+			},
+		}
+
+		variables = append(variables, varForNoneSupervisorMode...)
+	}
+	return variables, nil
 }
 
 func getInfraServerValue() ([]byte, error) {
@@ -215,14 +236,33 @@ func newVSphereCluster() infrav1.VSphereCluster {
 				Kind: infrav1.SecretKind,
 			},
 			ControlPlaneEndpoint: infrav1.APIEndpoint{
-				Host: env.ControlPlaneEndpointVar,
+				Host: env.ControlPlaneEndpointHostVar,
 				Port: 6443,
 			},
 		},
 	}
 }
 
-func newCluster(vsphereCluster infrav1.VSphereCluster, controlPlane *controlplanev1.KubeadmControlPlane) clusterv1.Cluster {
+func newVMWareCluster() vmwarev1.VSphereCluster {
+	return vmwarev1.VSphereCluster{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: vmwarev1.GroupVersion.String(),
+			Kind:       util.TypeToKind(&vmwarev1.VSphereCluster{}),
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      env.ClusterNameVar,
+			Namespace: env.NamespaceVar,
+		},
+		Spec: vmwarev1.VSphereClusterSpec{
+			ControlPlaneEndpoint: clusterv1.APIEndpoint{
+				Host: env.ControlPlaneEndpointHostVar,
+				Port: 6443,
+			},
+		},
+	}
+}
+
+func newCluster(vsphereCluster client.Object, controlPlane *controlplanev1.KubeadmControlPlane) clusterv1.Cluster {
 	cluster := clusterv1.Cluster{
 		TypeMeta: metav1.TypeMeta{
 			APIVersion: clusterv1.GroupVersion.String(),
@@ -240,9 +280,9 @@ func newCluster(vsphereCluster infrav1.VSphereCluster, controlPlane *controlplan
 				},
 			},
 			InfrastructureRef: &corev1.ObjectReference{
-				APIVersion: vsphereCluster.GroupVersionKind().GroupVersion().String(),
-				Kind:       vsphereCluster.Kind,
-				Name:       vsphereCluster.Name,
+				APIVersion: vsphereCluster.GetObjectKind().GroupVersionKind().GroupVersion().String(),
+				Kind:       vsphereCluster.GetObjectKind().GroupVersionKind().Kind,
+				Name:       vsphereCluster.GetName(),
 			},
 		},
 	}
@@ -282,6 +322,29 @@ func defaultVirtualMachineSpec() infrav1.VSphereMachineSpec {
 	return infrav1.VSphereMachineSpec{
 		VirtualMachineCloneSpec: defaultVirtualMachineCloneSpec(),
 		PowerOffMode:            infrav1.VirtualMachinePowerOpModeTrySoft,
+	}
+}
+
+func newVMWareMachineTemplate(templateName string) vmwarev1.VSphereMachineTemplate {
+	return vmwarev1.VSphereMachineTemplate{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      templateName,
+			Namespace: env.NamespaceVar,
+		},
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: vmwarev1.GroupVersion.String(),
+			Kind:       util.TypeToKind(&vmwarev1.VSphereMachineTemplate{}),
+		},
+		Spec: vmwarev1.VSphereMachineTemplateSpec{
+			Template: vmwarev1.VSphereMachineTemplateResource{
+				Spec: vmwarev1.VSphereMachineSpec{
+					ImageName:    env.VSphereMachineClassImageVar,
+					ClassName:    env.VSphereMachineClassVar,
+					StorageClass: env.VSphereMachineStorageClassVar,
+					PowerOffMode: env.VSphereMachinePowerOffModeVar,
+				},
+			},
+		},
 	}
 }
 
@@ -540,6 +603,9 @@ func defaultPreKubeadmCommands() []string {
 		"hostnamectl set-hostname \"{{ ds.meta_data.hostname }}\"",
 		"echo \"::1         ipv6-localhost ipv6-loopback localhost6 localhost6.localdomain6\" >/etc/hosts",
 		"echo \"127.0.0.1   {{ ds.meta_data.hostname }} {{ local_hostname }} localhost localhost.localdomain localhost4 localhost4.localdomain4\" >>/etc/hosts",
+		// Ensure the directory exists so the find does not fail if no files got created.
+		"mkdir -p /etc/pre-kubeadm-commands",
+		"for script in $(find /etc/pre-kubeadm-commands/ -name '*.sh' -type f | sort); do echo \"Running script $script\"; \"$script\"; done",
 	}
 }
 
@@ -547,6 +613,9 @@ func flatcarPreKubeadmCommands() []string {
 	return []string{
 		"envsubst < /etc/kubeadm.yml > /etc/kubeadm.yml.tmp",
 		"mv /etc/kubeadm.yml.tmp /etc/kubeadm.yml",
+		// Ensure the directory exists so the find does not fail if no files got created.
+		"mkdir -p /etc/pre-kubeadm-commands",
+		"for script in $(find /etc/pre-kubeadm-commands/ -name '*.sh' -type f | sort); do echo \"Running script $script\"; \"$script\"; done",
 	}
 }
 
@@ -587,7 +656,7 @@ func newIdentitySecret() corev1.Secret {
 	}
 }
 
-func newMachineDeployment(cluster clusterv1.Cluster, machineTemplate infrav1.VSphereMachineTemplate, bootstrapTemplate bootstrapv1.KubeadmConfigTemplate) clusterv1.MachineDeployment {
+func newMachineDeployment(cluster clusterv1.Cluster, machineTemplate client.Object, bootstrapTemplate bootstrapv1.KubeadmConfigTemplate) clusterv1.MachineDeployment {
 	return clusterv1.MachineDeployment{
 		TypeMeta: metav1.TypeMeta{
 			APIVersion: clusterv1.GroupVersion.String(),
@@ -616,9 +685,9 @@ func newMachineDeployment(cluster clusterv1.Cluster, machineTemplate infrav1.VSp
 						},
 					},
 					InfrastructureRef: corev1.ObjectReference{
-						APIVersion: machineTemplate.GroupVersionKind().GroupVersion().String(),
-						Kind:       machineTemplate.Kind,
-						Name:       machineTemplate.Name,
+						APIVersion: machineTemplate.GetObjectKind().GroupVersionKind().GroupVersion().String(),
+						Kind:       machineTemplate.GetObjectKind().GroupVersionKind().Kind,
+						Name:       machineTemplate.GetName(),
 					},
 				},
 			},
@@ -626,7 +695,7 @@ func newMachineDeployment(cluster clusterv1.Cluster, machineTemplate infrav1.VSp
 	}
 }
 
-func newKubeadmControlplane(infraTemplate infrav1.VSphereMachineTemplate, files []bootstrapv1.File) controlplanev1.KubeadmControlPlane {
+func newKubeadmControlplane(infraTemplate client.Object, files []bootstrapv1.File) controlplanev1.KubeadmControlPlane {
 	return controlplanev1.KubeadmControlPlane{
 		TypeMeta: metav1.TypeMeta{
 			APIVersion: controlplanev1.GroupVersion.String(),
@@ -640,9 +709,9 @@ func newKubeadmControlplane(infraTemplate infrav1.VSphereMachineTemplate, files 
 			Version: env.KubernetesVersionVar,
 			MachineTemplate: controlplanev1.KubeadmControlPlaneMachineTemplate{
 				InfrastructureRef: corev1.ObjectReference{
-					APIVersion: infraTemplate.GroupVersionKind().GroupVersion().String(),
-					Kind:       infraTemplate.Kind,
-					Name:       infraTemplate.Name,
+					APIVersion: infraTemplate.GetObjectKind().GroupVersionKind().GroupVersion().String(),
+					Kind:       infraTemplate.GetObjectKind().GroupVersionKind().Kind,
+					Name:       infraTemplate.GetName(),
 				},
 			},
 			KubeadmConfigSpec: defaultKubeadmInitSpec(files),
