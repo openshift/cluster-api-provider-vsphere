@@ -1,11 +1,11 @@
 /*
-Copyright (c) 2017-2023 VMware, Inc. All Rights Reserved.
+Copyright (c) 2017-2024 VMware, Inc. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
 
-    http://www.apache.org/licenses/LICENSE-2.0
+http://www.apache.org/licenses/LICENSE-2.0
 
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
@@ -20,24 +20,24 @@ import "github.com/vmware/govmomi/vim25/types"
 
 // HostConfigInfo is the default template for the HostSystem config property.
 // Capture method:
-//   govc object.collect -s -dump HostSystem:ha-host config
+// govc object.collect -s -dump HostSystem:ha-host config
 var HostConfigInfo = types.HostConfigInfo{
 	Host: types.ManagedObjectReference{Type: "HostSystem", Value: "ha-host"},
 	Product: types.AboutInfo{
 		Name:                  "VMware ESXi",
-		FullName:              "VMware ESXi 6.5.0 build-5969303",
+		FullName:              "VMware ESXi 8.0.2 build-21997540",
 		Vendor:                "VMware, Inc.",
-		Version:               "6.5.0",
-		Build:                 "5969303",
+		Version:               "8.0.2",
+		Build:                 "21997540",
 		LocaleVersion:         "INTL",
 		LocaleBuild:           "000",
 		OsType:                "vmnix-x86",
 		ProductLineId:         "embeddedEsx",
 		ApiType:               "HostAgent",
-		ApiVersion:            "6.5",
+		ApiVersion:            "8.0.2.0",
 		InstanceUuid:          "",
 		LicenseProductName:    "VMware ESX Server",
-		LicenseProductVersion: "6.0",
+		LicenseProductVersion: "8.0.2",
 	},
 	DeploymentInfo: &types.HostDeploymentInfo{
 		BootedFromStatelessCache: types.NewBool(false),
@@ -50,6 +50,7 @@ var HostConfigInfo = types.HostConfigInfo{
 	ConsoleReservation:        (*types.ServiceConsoleReservationInfo)(nil),
 	VirtualMachineReservation: (*types.VirtualMachineMemoryReservationInfo)(nil),
 	StorageDevice:             &HostStorageDeviceInfo,
+	FileSystemVolume:          &HostFileSystemVolumeInfo,
 	SystemFile:                nil,
 	Network: &types.HostNetworkInfo{
 		Vswitch: []types.HostVirtualSwitch{
