@@ -30,7 +30,7 @@ This comes down to changing occurrences of the old version to the new version, e
    1. Goal is that our clusterctl upgrade tests are testing the right versions. For `v1.8` this means:
       - v1beta1: `v1.8` (will change with each new release)
       - v1beta1: `v1.7` (will change with each new release)
-   2. Update providers in `vsphere-ci.yaml`, `vsphere-dev.yaml`, `integration-dev.yaml`:
+   2. Update providers in `vsphere.yaml`, `integration-dev.yaml`:
       1. Add a new `v1.7.0` entry.
       2. Remove providers that are not used anymore in clusterctl upgrade tests.
       3. Change `v1.7.99` to `v1.8.99`.
@@ -44,12 +44,13 @@ This comes down to changing occurrences of the old version to the new version, e
       1. Create a new `v1.7` folder. It should be created based on the `main` folder and only contain the templates
         we use in the clusterctl upgrade tests (as of today `remote-management`).
       2. Remove old folders that are not used anymore in clusterctl upgrade tests.
-   5. Modify the test specs in `test/e2e/capi_clusterctl_upgrade_test.go` (according to the versions we want to test described above).
+      3. Copy over the workload folder from a previous release.
+   5. Modify the test specs in `test/e2e/clusterctl_upgrade_test.go` (according to the versions we want to test described above).
       Please note that both `InitWithKubernetesVersion` and `WorkloadKubernetesVersion` should be the highest mgmt cluster version supported by the respective Cluster API version.
 2. Update `clusterctl-settings.json`: `v1.7.99` => `v1.8.99`.
 3. Make sure all tests are green (also run `pull-cluster-api-provider-vsphere-e2e-full-main` and `pull-cluster-api-provider-vsphere-conformance-main`).
 
-Prior art: TODO(sbueringer): link example PR
+Prior art: [🌱 Prepare main for development of the new release](https://github.com/kubernetes-sigs/cluster-api-provider-vsphere/pull/2643)
 
 ## Remove previously deprecated code
 
@@ -97,16 +98,9 @@ From this point forward changes which should land in the release have to be cher
 3. Update the [milestone applier config](https://github.com/kubernetes/test-infra/blob/151bab62dc023525f592e6d1fdc2a8de5305cd01/config/prow/plugins.yaml#L523) accordingly (e.g. `release-1.8: v1.8`
    and `main: v1.9`)
 4. Create new jobs based on the jobs running against our `main` branch:
-   1. Copy `config/jobs/kubernetes-sigs/cluster-api-provider-vsphere/cluster-api-provider-vsphere-periodics-main.yaml` to `config/jobs/kubernetes-sigs/cluster-api-provider-vsphere/cluster-api-provider-vsphere-periodics-release-1.8.yaml`.
-   2. Copy `config/jobs/kubernetes-sigs/cluster-api-provider-vsphere/cluster-api-provider-vsphere-presubmits-main.yaml` to `config/jobs/kubernetes-sigs/cluster-api-provider-vsphere/cluster-api-provider-vsphere-presubmits-release-1.8.yaml`.
-   3. Modify the following:
-      1. Rename the jobs, e.g.: `periodic-cluster-api-provider-vsphere-test-main` => `periodic-cluster-api-provider-vsphere-test-release-1-8`.
-      2. Change `annotations.testgrid-tab-name`, e.g. `periodic-test-main` => `periodic-test-release-1-8`.
-      3. For periodics additionally:
-         - Change `extra_refs[].base_ref` to `release-1.8` (for repo: `cluster-api-provider-vsphere`).
-      4. For presubmits additionally:
-         - Adjust branches: `^main$` => `^release-1.8$`.
-5. Remove tests for old release branches if necessary
+   1. Copy the `.branches.main` section in `config/jobs/kubernetes-sigs/cluster-api-provider-vsphere/cluster-api-provider-vsphere-prowjob-gen.yaml` over to a new branch specific section (e.g. `.branches.release-1.8`).
+   2. Run `TEST_INFRA_DIR=../../k8s.io/test-infra make generate-test-infra-prowjobs` to regenerate the prowjob files.
+5. Remove tests for old release branches if necessary by removing the release-branch from `cluster-api-provider-vsphere-prowjob-gen.yaml` and regenerating the prowjob files.
 6. Verify the jobs and dashboards a day later by taking a look at [testgrid](https://testgrid.k8s.io/sig-cluster-lifecycle-cluster-api-provider-vsphere)
 7. Update `.github/workflows/weekly-security-scan.yaml` - to setup Trivy and govulncheck scanning - `.github/workflows/weekly-md-link-check.yaml` - to setup link checking in the CAPI book - and `.github/workflows/weekly-test-release.yaml` - to verify the release target is working - for the currently supported branches.
 8. Update the [PR markdown link checker](https://github.com/kubernetes-sigs/cluster-api-provider-vsphere/blob/main/.github/workflows/pr-md-link-check.yaml) accordingly (e.g. `main` -> `release-1.8`).
