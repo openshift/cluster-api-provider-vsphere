@@ -29,11 +29,13 @@ import (
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	"sigs.k8s.io/cluster-api/test/framework"
 	"sigs.k8s.io/cluster-api/test/framework/clusterctl"
+	. "sigs.k8s.io/cluster-api/test/framework/ginkgoextensions"
 	"sigs.k8s.io/cluster-api/util"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	infrav1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/v1beta1"
 	vsphereframework "sigs.k8s.io/cluster-api-provider-vsphere/test/framework"
+	vsphereip "sigs.k8s.io/cluster-api-provider-vsphere/test/framework/ip"
 )
 
 type MultiVCenterSpecInput struct {
@@ -171,7 +173,7 @@ func VerifyMultiVC(ctx context.Context, input MultiVCenterSpecInput) {
 	_ = os.Setenv("VSPHERE_PASSWORD", os.Getenv("VSPHERE2_PASSWORD"))
 	_ = os.Setenv("VSPHERE_RESOURCE_POOL", e2eConfig.GetVariable("VSPHERE2_RESOURCE_POOL"))
 	_ = os.Setenv("VSPHERE_TEMPLATE", e2eConfig.GetVariable("VSPHERE2_TEMPLATE"))
-	_ = os.Setenv("CONTROL_PLANE_ENDPOINT_IP", e2eConfig.GetVariable("VSPHERE2_CONTROL_PLANE_ENDPOINT_IP"))
+	_ = os.Setenv(vsphereip.ControlPlaneEndpointIPVariable, e2eConfig.GetVariable("VSPHERE2_CONTROL_PLANE_ENDPOINT_IP"))
 
 	By("creating a workload cluster from vsphere hosted management cluster")
 	wlConfigCluster := defaultConfigCluster(wlClusterName, namespace.Name, specName, 1, 1, GlobalInput{
