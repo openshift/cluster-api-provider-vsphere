@@ -348,6 +348,19 @@ data:
       - list
       - watch
     - apiGroups:
+      - nsx.vmware.com
+      resources:
+      - subnetsets
+      - subnetsets/status
+      verbs:
+      - create
+      - delete
+      - get
+      - list
+      - patch
+      - update
+      - watch
+    - apiGroups:
       - rbac.authorization.k8s.io
       resources:
       - rolebindings
@@ -679,6 +692,19 @@ data:
             - --v=4
             - --enable-keep-alive
             - --feature-gates=NodeAntiAffinity=${EXP_NODE_ANTI_AFFINITY:=false}
+            env:
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_UID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.uid
             image: to.be/replaced:v99
             imagePullPolicy: IfNotPresent
             livenessProbe:
@@ -2076,9 +2102,9 @@ data:
                               type: string
                             ipAddrs:
                               description: IPAddrs is a list of one or more IPv4 and/or
-                                IPv6 addresses to assign to this device.  IP addresses
+                                IPv6 addresses to assign to this device. IP addresses
                                 must also specify the segment length in CIDR notation.
-                                Required when DHCP4 and DHCP6 are both false.
+                                Required when DHCP4, DHCP6 and SkipIPAllocation are false.
                               items:
                                 type: string
                               type: array
@@ -2135,13 +2161,20 @@ data:
                               items:
                                 type: string
                               type: array
+                            skipIPAllocation:
+                              description: SkipIPAllocation allows the device to not have
+                                IP address or DHCP configured. This is suitable for devices
+                                for which IP allocation is handled externally, eg. using
+                                Multus CNI. If true, CAPV will not verify IP address allocation.
+                              type: boolean
                           required:
                           - networkName
                           type: object
                         type: array
                       preferredAPIServerCidr:
-                        description: PreferredAPIServeCIDR is the preferred CIDR for the
-                          Kubernetes API server endpoint on this machine
+                        description: "PreferredAPIServeCIDR is the preferred CIDR for
+                          the Kubernetes API server endpoint on this machine \n Deprecated:
+                          This field is going to be removed in a future release."
                         type: string
                       routes:
                         description: Routes is a list of optional, static routes applied
@@ -2190,6 +2223,11 @@ data:
                     items:
                       description: PCIDeviceSpec defines virtual machine's PCI configuration.
                       properties:
+                        customLabel:
+                          description: CustomLabel is the hardware label of a virtual
+                            machine's PCI device. Defaults to the eponymous property value
+                            in the template from which the virtual machine is cloned.
+                          type: string
                         deviceId:
                           description: DeviceID is the device ID of a virtual machine's
                             PCI, in integer. Defaults to the eponymous property value
@@ -4230,10 +4268,10 @@ data:
                                       type: string
                                     ipAddrs:
                                       description: IPAddrs is a list of one or more IPv4
-                                        and/or IPv6 addresses to assign to this device.  IP
-                                        addresses must also specify the segment length
-                                        in CIDR notation. Required when DHCP4 and DHCP6
-                                        are both false.
+                                        and/or IPv6 addresses to assign to this device.
+                                        IP addresses must also specify the segment length
+                                        in CIDR notation. Required when DHCP4, DHCP6 and
+                                        SkipIPAllocation are false.
                                       items:
                                         type: string
                                       type: array
@@ -4291,13 +4329,22 @@ data:
                                       items:
                                         type: string
                                       type: array
+                                    skipIPAllocation:
+                                      description: SkipIPAllocation allows the device
+                                        to not have IP address or DHCP configured. This
+                                        is suitable for devices for which IP allocation
+                                        is handled externally, eg. using Multus CNI. If
+                                        true, CAPV will not verify IP address allocation.
+                                      type: boolean
                                   required:
                                   - networkName
                                   type: object
                                 type: array
                               preferredAPIServerCidr:
-                                description: PreferredAPIServeCIDR is the preferred CIDR
+                                description: "PreferredAPIServeCIDR is the preferred CIDR
                                   for the Kubernetes API server endpoint on this machine
+                                  \n Deprecated: This field is going to be removed in
+                                  a future release."
                                 type: string
                               routes:
                                 description: Routes is a list of optional, static routes
@@ -4350,6 +4397,12 @@ data:
                               description: PCIDeviceSpec defines virtual machine's PCI
                                 configuration.
                               properties:
+                                customLabel:
+                                  description: CustomLabel is the hardware label of a
+                                    virtual machine's PCI device. Defaults to the eponymous
+                                    property value in the template from which the virtual
+                                    machine is cloned.
+                                  type: string
                                 deviceId:
                                   description: DeviceID is the device ID of a virtual
                                     machine's PCI, in integer. Defaults to the eponymous
@@ -5591,9 +5644,9 @@ data:
                               type: string
                             ipAddrs:
                               description: IPAddrs is a list of one or more IPv4 and/or
-                                IPv6 addresses to assign to this device.  IP addresses
+                                IPv6 addresses to assign to this device. IP addresses
                                 must also specify the segment length in CIDR notation.
-                                Required when DHCP4 and DHCP6 are both false.
+                                Required when DHCP4, DHCP6 and SkipIPAllocation are false.
                               items:
                                 type: string
                               type: array
@@ -5650,13 +5703,20 @@ data:
                               items:
                                 type: string
                               type: array
+                            skipIPAllocation:
+                              description: SkipIPAllocation allows the device to not have
+                                IP address or DHCP configured. This is suitable for devices
+                                for which IP allocation is handled externally, eg. using
+                                Multus CNI. If true, CAPV will not verify IP address allocation.
+                              type: boolean
                           required:
                           - networkName
                           type: object
                         type: array
                       preferredAPIServerCidr:
-                        description: PreferredAPIServeCIDR is the preferred CIDR for the
-                          Kubernetes API server endpoint on this machine
+                        description: "PreferredAPIServeCIDR is the preferred CIDR for
+                          the Kubernetes API server endpoint on this machine \n Deprecated:
+                          This field is going to be removed in a future release."
                         type: string
                       routes:
                         description: Routes is a list of optional, static routes applied
@@ -5705,6 +5765,11 @@ data:
                     items:
                       description: PCIDeviceSpec defines virtual machine's PCI configuration.
                       properties:
+                        customLabel:
+                          description: CustomLabel is the hardware label of a virtual
+                            machine's PCI device. Defaults to the eponymous property value
+                            in the template from which the virtual machine is cloned.
+                          type: string
                         deviceId:
                           description: DeviceID is the device ID of a virtual machine's
                             PCI, in integer. Defaults to the eponymous property value
@@ -7431,6 +7496,9 @@ data:
       - major: 1
         minor: 9
         contract: v1beta1
+      - major: 1
+        minor: 10
+        contract: v1beta1
 kind: ConfigMap
 metadata:
   annotations:
@@ -7442,6 +7510,6 @@ metadata:
   labels:
     provider.cluster.x-k8s.io/name: vsphere
     provider.cluster.x-k8s.io/type: infrastructure
-    provider.cluster.x-k8s.io/version: v1.9.3
+    provider.cluster.x-k8s.io/version: v1.10.0
   name: vsphere
   namespace: openshift-cluster-api

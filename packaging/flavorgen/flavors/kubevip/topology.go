@@ -35,29 +35,17 @@ import (
 
 // TopologyVariable returns the ClusterClass variable for kube-vip.
 func TopologyVariable() (*clusterv1.ClusterVariable, error) {
-	kubeVipPodYaml := kubeVIPPodYaml()
-	kubeVipPod, err := json.Marshal(kubeVipPodYaml)
+	out, err := json.Marshal(kubeVIPPodYAML())
 	if err != nil {
-		return nil, errors.Wrapf(err, "failed to json-encode variable kubeVipPod: %q", kubeVipPodYaml)
+		return nil, errors.Wrapf(err, "failed to json-encode variable kubeVipPod")
 	}
 
 	return &clusterv1.ClusterVariable{
 		Name: "kubeVipPodManifest",
 		Value: apiextensionsv1.JSON{
-			Raw: kubeVipPod,
+			Raw: out,
 		},
 	}, nil
-}
-
-// TopologyKubeVipPod returns the ClusterClass patch for kube-vip.
-func TopologyKubeVipPod() ([]byte, error) {
-	kubeVipPodYaml := kubeVIPPodYaml()
-	kubeVipPod, err := json.Marshal(kubeVipPodYaml)
-	if err != nil {
-		return nil, errors.Wrapf(err, "failed to json-encode variable kubeVipPod: %q", kubeVipPodYaml)
-	}
-
-	return kubeVipPod, nil
 }
 
 // TopologyPatch returns the ClusterClass patch for kube-vip.
@@ -89,15 +77,7 @@ func TopologyPatch() clusterv1.ClusterClassPatch {
 		patches = append(patches, p)
 	}
 
-	// This two patches are part of the workaround for https://github.com/kube-vip/kube-vip/issues/684
-	patches = append(patches,
-		clusterv1.JSONPatch{
-			Op:        "add",
-			Path:      "/spec/template/spec/kubeadmConfigSpec/preKubeadmCommands/-",
-			ValueFrom: &clusterv1.JSONPatchValue{Template: ptr.To("/etc/kube-vip-prepare.sh")},
-		},
-	)
-
+	// This two patches is part of the workaround for https://github.com/kube-vip/kube-vip/issues/684
 	return clusterv1.ClusterClassPatch{
 		Name: "kubeVipPodManifest",
 		Definitions: []clusterv1.PatchDefinition{

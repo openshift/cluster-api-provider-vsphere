@@ -26,50 +26,58 @@ import (
 	"sigs.k8s.io/cluster-api/test/framework/kubernetesversions"
 )
 
-var _ = Describe("When upgrading a workload cluster using ClusterClass and testing K8S conformance [Conformance] [K8s-Upgrade] [ClusterClass]", func() {
+var _ = Describe("When upgrading a workload cluster using ClusterClass and testing K8S conformance [supervisor] [Conformance] [K8s-Upgrade] [ClusterClass]", func() {
 	// Note: This installs a cluster based on KUBERNETES_VERSION_UPGRADE_FROM and then upgrades to
 	// KUBERNETES_VERSION_UPGRADE_TO and runs conformance tests.
 	// Note: We are resolving KUBERNETES_VERSION_UPGRADE_FROM and KUBERNETES_VERSION_UPGRADE_TO and then setting
 	// the resolved versions as env vars. This only works without side effects on other tests because we are
 	// running this test in its separate job.
-	capi_e2e.ClusterUpgradeConformanceSpec(ctx, func() capi_e2e.ClusterUpgradeConformanceSpecInput {
-		// The Kubernetes versions have to be resolved as they can be defined like this: stable-1.29, ci/latest-1.30.
-		kubernetesVersionUpgradeFrom, err := kubernetesversions.ResolveVersion(ctx, e2eConfig.GetVariable("KUBERNETES_VERSION_UPGRADE_FROM"))
-		Expect(err).NotTo(HaveOccurred())
-		kubernetesVersionUpgradeTo, err := kubernetesversions.ResolveVersion(ctx, e2eConfig.GetVariable("KUBERNETES_VERSION_UPGRADE_TO"))
-		Expect(err).NotTo(HaveOccurred())
-		Expect(os.Setenv("KUBERNETES_VERSION_UPGRADE_FROM", kubernetesVersionUpgradeFrom)).To(Succeed())
-		Expect(os.Setenv("KUBERNETES_VERSION_UPGRADE_TO", kubernetesVersionUpgradeTo)).To(Succeed())
-		return capi_e2e.ClusterUpgradeConformanceSpecInput{
-			E2EConfig:             e2eConfig,
-			ClusterctlConfigPath:  clusterctlConfigPath,
-			BootstrapClusterProxy: bootstrapClusterProxy,
-			ArtifactFolder:        artifactFolder,
-			SkipCleanup:           skipCleanup,
-			WorkerMachineCount:    ptr.To[int64](5),
-			// Note: install-on-bootstrap will install Kubernetes on bootstrap if the correct Kubernetes version
-			// cannot be detected. This is required to install versions we don't have images for (e.g. ci/latest-1.30).
-			Flavor: ptr.To("install-on-bootstrap"),
-		}
+	const specName = "k8s-upgrade-and-conformance" // copied from CAPI
+	Setup(specName, func(testSpecificSettingsGetter func() testSettings) {
+		capi_e2e.ClusterUpgradeConformanceSpec(ctx, func() capi_e2e.ClusterUpgradeConformanceSpecInput {
+			// The Kubernetes versions have to be resolved as they can be defined like this: stable-1.29, ci/latest-1.30.
+			kubernetesVersionUpgradeFrom, err := kubernetesversions.ResolveVersion(ctx, e2eConfig.GetVariable("KUBERNETES_VERSION_UPGRADE_FROM"))
+			Expect(err).NotTo(HaveOccurred())
+			kubernetesVersionUpgradeTo, err := kubernetesversions.ResolveVersion(ctx, e2eConfig.GetVariable("KUBERNETES_VERSION_UPGRADE_TO"))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(os.Setenv("KUBERNETES_VERSION_UPGRADE_FROM", kubernetesVersionUpgradeFrom)).To(Succeed())
+			Expect(os.Setenv("KUBERNETES_VERSION_UPGRADE_TO", kubernetesVersionUpgradeTo)).To(Succeed())
+			return capi_e2e.ClusterUpgradeConformanceSpecInput{
+				E2EConfig:             e2eConfig,
+				ClusterctlConfigPath:  testSpecificSettingsGetter().ClusterctlConfigPath,
+				BootstrapClusterProxy: bootstrapClusterProxy,
+				ArtifactFolder:        artifactFolder,
+				SkipCleanup:           skipCleanup,
+				WorkerMachineCount:    ptr.To[int64](5),
+				// Note: install-on-bootstrap will install Kubernetes on bootstrap if the correct Kubernetes version
+				// cannot be detected. This is required to install versions we don't have images for (e.g. ci/latest-1.30).
+				Flavor:               ptr.To(testSpecificSettingsGetter().FlavorForMode("install-on-bootstrap")),
+				PostNamespaceCreated: testSpecificSettingsGetter().PostNamespaceCreatedFunc,
+			}
+		})
 	})
 })
 
-var _ = Describe("When upgrading a workload cluster using ClusterClass [ClusterClass]", func() {
+var _ = Describe("When upgrading a workload cluster using ClusterClass [supervisor] [ClusterClass]", func() {
 	// Note: This installs a cluster based on KUBERNETES_VERSION_UPGRADE_FROM and then upgrades to
 	// KUBERNETES_VERSION_UPGRADE_TO.
-	capi_e2e.ClusterUpgradeConformanceSpec(ctx, func() capi_e2e.ClusterUpgradeConformanceSpecInput {
-		return capi_e2e.ClusterUpgradeConformanceSpecInput{
-			E2EConfig:             e2eConfig,
-			ClusterctlConfigPath:  clusterctlConfigPath,
-			BootstrapClusterProxy: bootstrapClusterProxy,
-			ArtifactFolder:        artifactFolder,
-			SkipCleanup:           skipCleanup,
-			Flavor:                ptr.To("topology"),
-			// This test is run in CI in parallel with other tests. To keep the test duration reasonable
-			// the conformance tests are skipped.
-			ControlPlaneMachineCount: ptr.To[int64](1),
-			WorkerMachineCount:       ptr.To[int64](2),
-			SkipConformanceTests:     true,
-		}
+	const specName = "k8s-upgrade" // aligned to CAPI
+	Setup(specName, func(testSpecificSettingsGetter func() testSettings) {
+		capi_e2e.ClusterUpgradeConformanceSpec(ctx, func() capi_e2e.ClusterUpgradeConformanceSpecInput {
+			return capi_e2e.ClusterUpgradeConformanceSpecInput{
+				E2EConfig:             e2eConfig,
+				ClusterctlConfigPath:  testSpecificSettingsGetter().ClusterctlConfigPath,
+				BootstrapClusterProxy: bootstrapClusterProxy,
+				ArtifactFolder:        artifactFolder,
+				SkipCleanup:           skipCleanup,
+				Flavor:                ptr.To(testSpecificSettingsGetter().FlavorForMode("topology")),
+				PostNamespaceCreated:  testSpecificSettingsGetter().PostNamespaceCreatedFunc,
+				// This test is run in CI in parallel with other tests. To keep the test duration reasonable
+				// the conformance tests are skipped.
+				ControlPlaneMachineCount: ptr.To[int64](1),
+				WorkerMachineCount:       ptr.To[int64](2),
+				SkipConformanceTests:     true,
+			}
+		})
 	})
 })
