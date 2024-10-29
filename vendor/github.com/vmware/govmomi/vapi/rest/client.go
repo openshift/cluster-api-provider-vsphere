@@ -22,7 +22,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net/http"
 	"net/url"
 	"strings"
@@ -32,6 +31,7 @@ import (
 	"github.com/vmware/govmomi/vapi/internal"
 	"github.com/vmware/govmomi/vim25"
 	"github.com/vmware/govmomi/vim25/soap"
+	"github.com/vmware/govmomi/vim25/types"
 )
 
 // Client extends soap.Client to support JSON encoding, while inheriting security features, debug tracing and session persistence.
@@ -155,6 +155,14 @@ func (e *statusError) Error() string {
 	return fmt.Sprintf("%s %s: %s", e.res.Request.Method, e.res.Request.URL, e.res.Status)
 }
 
+func IsStatusError(err error, code int) bool {
+	statusErr, ok := err.(*statusError)
+	if !ok || statusErr == nil || statusErr.res == nil {
+		return false
+	}
+	return statusErr.res.StatusCode == code
+}
+
 // RawResponse may be used with the Do method as the resBody argument in order
 // to capture the raw response data.
 type RawResponse struct {
@@ -164,7 +172,7 @@ type RawResponse struct {
 // Do sends the http.Request, decoding resBody if provided.
 func (c *Client) Do(ctx context.Context, req *http.Request, resBody interface{}) error {
 	switch req.Method {
-	case http.MethodPost, http.MethodPatch:
+	case http.MethodPost, http.MethodPatch, http.MethodPut:
 		req.Header.Set("Content-Type", "application/json")
 	}
 
@@ -180,6 +188,11 @@ func (c *Client) Do(ctx context.Context, req *http.Request, resBody interface{})
 		}
 	}
 
+	// OperationID (see soap.Client.soapRoundTrip)
+	if id, ok := ctx.Value(types.ID{}).(string); ok {
+		req.Header.Add("X-Request-ID", id)
+	}
+
 	if headers, ok := ctx.Value(headersContext{}).(http.Header); ok {
 		for k, v := range headers {
 			for _, v := range v {
@@ -192,10 +205,11 @@ func (c *Client) Do(ctx context.Context, req *http.Request, resBody interface{})
 		switch res.StatusCode {
 		case http.StatusOK:
 		case http.StatusCreated:
+		case http.StatusAccepted:
 		case http.StatusNoContent:
 		case http.StatusBadRequest:
 			// TODO: structured error types
-			detail, err := ioutil.ReadAll(res.Body)
+			detail, err := io.ReadAll(res.Body)
 			if err != nil {
 				return err
 			}

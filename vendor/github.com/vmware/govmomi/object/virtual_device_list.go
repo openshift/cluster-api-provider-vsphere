@@ -64,17 +64,12 @@ func EthernetCardTypes() VirtualDeviceList {
 		&types.VirtualE1000e{},
 		&types.VirtualVmxnet2{},
 		&types.VirtualVmxnet3{},
+		&types.VirtualVmxnet3Vrdma{},
 		&types.VirtualPCNet32{},
 		&types.VirtualSriovEthernetCard{},
 	}).Select(func(device types.BaseVirtualDevice) bool {
 		c := device.(types.BaseVirtualEthernetCard).GetVirtualEthernetCard()
-
-		key := rand.Int31() * -1
-		if key == 0 {
-			key = -1
-		}
-
-		c.GetVirtualDevice().Key = key
+		c.GetVirtualDevice().Key = VirtualDeviceList{}.newRandomKey()
 		return true
 	})
 }
@@ -156,6 +151,25 @@ func (l VirtualDeviceList) SelectByBackingInfo(backing types.BaseVirtualDeviceBa
 		case types.BaseVirtualDeviceFileBackingInfo:
 			b := backing.(types.BaseVirtualDeviceFileBackingInfo)
 			return a.GetVirtualDeviceFileBackingInfo().FileName == b.GetVirtualDeviceFileBackingInfo().FileName
+		case *types.VirtualPCIPassthroughVmiopBackingInfo:
+			b := backing.(*types.VirtualPCIPassthroughVmiopBackingInfo)
+			return a.Vgpu == b.Vgpu
+		case *types.VirtualPCIPassthroughDynamicBackingInfo:
+			b := backing.(*types.VirtualPCIPassthroughDynamicBackingInfo)
+			if b.CustomLabel != "" && b.CustomLabel != a.CustomLabel {
+				return false
+			}
+			if len(b.AllowedDevice) == 0 {
+				return true
+			}
+			for _, x := range a.AllowedDevice {
+				for _, y := range b.AllowedDevice {
+					if x.DeviceId == y.DeviceId && x.VendorId == y.VendorId {
+						return true
+					}
+				}
+			}
+			return false
 		default:
 			return false
 		}
@@ -347,6 +361,77 @@ func (l VirtualDeviceList) newNVMEBusNumber() int32 {
 	return -1
 }
 
+// FindSATAController will find the named SATA or AHCI controller if given, otherwise will pick an available controller.
+// An error is returned if the named controller is not found or not a SATA or AHCI controller. Or, if name is not
+// given and no available controller can be found.
+func (l VirtualDeviceList) FindSATAController(name string) (types.BaseVirtualController, error) {
+	if name != "" {
+		d := l.Find(name)
+		if d == nil {
+			return nil, fmt.Errorf("device '%s' not found", name)
+		}
+		switch c := d.(type) {
+		case *types.VirtualSATAController:
+			return c, nil
+		case *types.VirtualAHCIController:
+			return c, nil
+		default:
+			return nil, fmt.Errorf("%s is not a SATA or AHCI controller", name)
+		}
+	}
+
+	c := l.PickController((*types.VirtualSATAController)(nil))
+	if c == nil {
+		c = l.PickController((*types.VirtualAHCIController)(nil))
+	}
+	if c == nil {
+		return nil, errors.New("no available SATA or AHCI controller")
+	}
+
+	switch c := c.(type) {
+	case *types.VirtualSATAController:
+		return c, nil
+	case *types.VirtualAHCIController:
+		return c, nil
+	}
+
+	return nil, errors.New("unexpected controller type")
+}
+
+// CreateSATAController creates a new SATA controller.
+func (l VirtualDeviceList) CreateSATAController() (types.BaseVirtualDevice, error) {
+	sata := &types.VirtualAHCIController{}
+	sata.BusNumber = l.newSATABusNumber()
+	sata.Key = l.NewKey()
+
+	return sata, nil
+}
+
+var sataBusNumbers = []int{0, 1, 2, 3}
+
+// newSATABusNumber returns the bus number to use for adding a new SATA bus device.
+// -1 is returned if there are no bus numbers available.
+func (l VirtualDeviceList) newSATABusNumber() int32 {
+	var used []int
+
+	for _, d := range l.SelectByType((*types.VirtualSATAController)(nil)) {
+		num := d.(types.BaseVirtualController).GetVirtualController().BusNumber
+		if num >= 0 {
+			used = append(used, int(num))
+		} // else caller is creating a new vm using SATAControllerTypes
+	}
+
+	sort.Ints(used)
+
+	for i, n := range sataBusNumbers {
+		if i == len(used) || n != used[i] {
+			return int32(n)
+		}
+	}
+
+	return -1
+}
+
 // FindDiskController will find an existing ide or scsi disk controller.
 func (l VirtualDeviceList) FindDiskController(name string) (types.BaseVirtualController, error) {
 	switch {
@@ -356,6 +441,8 @@ func (l VirtualDeviceList) FindDiskController(name string) (types.BaseVirtualCon
 		return l.FindSCSIController("")
 	case name == "nvme":
 		return l.FindNVMEController("")
+	case name == "sata":
+		return l.FindSATAController("")
 	default:
 		if c, ok := l.Find(name).(types.BaseVirtualController); ok {
 			return c, nil
@@ -375,6 +462,8 @@ func (l VirtualDeviceList) PickController(kind types.BaseVirtualController) type
 			return num < 15
 		case *types.VirtualIDEController:
 			return num < 2
+		case types.BaseVirtualSATAController:
+			return num < 30
 		case *types.VirtualNVMEController:
 			return num < 8
 		default:
@@ -390,8 +479,12 @@ func (l VirtualDeviceList) PickController(kind types.BaseVirtualController) type
 }
 
 // newUnitNumber returns the unit number to use for attaching a new device to the given controller.
-func (l VirtualDeviceList) newUnitNumber(c types.BaseVirtualController) int32 {
+func (l VirtualDeviceList) newUnitNumber(c types.BaseVirtualController, offset int) int32 {
 	units := make([]bool, 30)
+
+	for i := 0; i < offset; i++ {
+		units[i] = true
+	}
 
 	switch sc := c.(type) {
 	case types.BaseVirtualSCSIController:
@@ -441,10 +534,29 @@ func (l VirtualDeviceList) AssignController(device types.BaseVirtualDevice, c ty
 	d := device.GetVirtualDevice()
 	d.ControllerKey = c.GetVirtualController().Key
 	d.UnitNumber = new(int32)
-	*d.UnitNumber = l.newUnitNumber(c)
-	if d.Key == 0 {
-		d.Key = int32(rand.Uint32()) * -1
+
+	offset := 0
+	switch device.(type) {
+	case types.BaseVirtualEthernetCard:
+		offset = 7
 	}
+	*d.UnitNumber = l.newUnitNumber(c, offset)
+
+	if d.Key == 0 {
+		d.Key = l.newRandomKey()
+	}
+}
+
+// newRandomKey returns a random negative device key.
+// The generated key can be used for devices you want to add so that it does not collide with existing ones.
+func (l VirtualDeviceList) newRandomKey() int32 {
+	// NOTE: rand.Uint32 cannot be used here because conversion from uint32 to int32 may change the sign
+	key := rand.Int31() * -1
+	if key == 0 {
+		return -1
+	}
+
+	return key
 }
 
 // CreateDisk creates a new VirtualDisk device which can be added to a VM.
@@ -872,8 +984,8 @@ func (l VirtualDeviceList) Type(device types.BaseVirtualDevice) string {
 		return "pvscsi"
 	case *types.VirtualLsiLogicSASController:
 		return "lsilogic-sas"
-	case *types.VirtualNVMEController:
-		return "nvme"
+	case *types.VirtualPrecisionClock:
+		return "clock"
 	default:
 		return l.deviceName(device)
 	}
@@ -891,7 +1003,13 @@ func (l VirtualDeviceList) Name(device types.BaseVirtualDevice) string {
 	dtype := l.Type(device)
 	switch dtype {
 	case DeviceTypeEthernet:
-		key = fmt.Sprintf("%d", UnitNumber-7)
+		// Ethernet devices of UnitNumber 7-19 are non-SRIOV. Ethernet devices of
+		// UnitNumber 45-36 descending are SRIOV
+		if UnitNumber <= 45 && UnitNumber >= 36 {
+			key = fmt.Sprintf("sriov-%d", 45-UnitNumber)
+		} else {
+			key = fmt.Sprintf("%d", UnitNumber-7)
+		}
 	case DeviceTypeDisk:
 		key = fmt.Sprintf("%d-%d", d.ControllerKey, UnitNumber)
 	default:
@@ -919,25 +1037,9 @@ func (l VirtualDeviceList) ConfigSpec(op types.VirtualDeviceConfigSpecOperation)
 	var res []types.BaseVirtualDeviceConfigSpec
 	for _, device := range l {
 		config := &types.VirtualDeviceConfigSpec{
-			Device:    device,
-			Operation: op,
-		}
-
-		if disk, ok := device.(*types.VirtualDisk); ok {
-			config.FileOperation = fop
-
-			// Special case to attach an existing disk
-			if op == types.VirtualDeviceConfigSpecOperationAdd && disk.CapacityInKB == 0 {
-				childDisk := false
-				if b, ok := disk.Backing.(*types.VirtualDiskFlatVer2BackingInfo); ok {
-					childDisk = b.Parent != nil
-				}
-
-				if !childDisk {
-					// Existing disk, clear file operation
-					config.FileOperation = ""
-				}
-			}
+			Device:        device,
+			Operation:     op,
+			FileOperation: diskFileOperation(op, fop, device),
 		}
 
 		res = append(res, config)

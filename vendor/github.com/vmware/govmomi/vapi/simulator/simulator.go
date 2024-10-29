@@ -1,11 +1,11 @@
 /*
-Copyright (c) 2018 VMware, Inc. All Rights Reserved.
+Copyright (c) 2018-2024 VMware, Inc. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
 
-    http://www.apache.org/licenses/LICENSE-2.0
+http://www.apache.org/licenses/LICENSE-2.0
 
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
@@ -18,13 +18,21 @@ package simulator
 
 import (
 	"archive/tar"
+	"bytes"
 	"context"
+	"crypto/md5"
+	"crypto/sha1"
+	"crypto/sha256"
+	"crypto/sha512"
 	"crypto/tls"
+	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
+	"hash"
 	"io"
-	"io/ioutil"
 	"log"
 	"net/http"
 	"net/url"
@@ -43,6 +51,7 @@ import (
 	"github.com/vmware/govmomi/object"
 	"github.com/vmware/govmomi/ovf"
 	"github.com/vmware/govmomi/simulator"
+	"github.com/vmware/govmomi/vapi"
 	"github.com/vmware/govmomi/vapi/internal"
 	"github.com/vmware/govmomi/vapi/library"
 	"github.com/vmware/govmomi/vapi/rest"
@@ -51,8 +60,10 @@ import (
 	"github.com/vmware/govmomi/view"
 	"github.com/vmware/govmomi/vim25"
 	"github.com/vmware/govmomi/vim25/methods"
+	"github.com/vmware/govmomi/vim25/soap"
 	"github.com/vmware/govmomi/vim25/types"
 	vim "github.com/vmware/govmomi/vim25/types"
+	"github.com/vmware/govmomi/vim25/xml"
 )
 
 type item struct {
@@ -69,6 +80,7 @@ type content struct {
 }
 
 type update struct {
+	*sync.WaitGroup
 	*library.Session
 	Library *library.Library
 	File    map[string]*library.UpdateFile
@@ -82,6 +94,7 @@ type download struct {
 
 type handler struct {
 	sync.Mutex
+	sm          *simulator.SessionManager
 	ServeMux    *http.ServeMux
 	URL         url.URL
 	Category    map[string]*tags.Category
@@ -91,20 +104,25 @@ type handler struct {
 	Library     map[string]*content
 	Update      map[string]update
 	Download    map[string]download
+	Policies    []library.ContentSecurityPoliciesInfo
+	Trust       map[string]library.TrustedCertificate
 }
 
 func init() {
 	simulator.RegisterEndpoint(func(s *simulator.Service, r *simulator.Registry) {
 		if r.IsVPX() {
-			path, handler := New(s.Listen, r.OptionManager().Setting)
-			s.Handle(path, handler)
+			patterns, h := New(s.Listen, r)
+			for _, p := range patterns {
+				s.Handle(p, h)
+			}
 		}
 	})
 }
 
 // New creates a vAPI simulator.
-func New(u *url.URL, settings []vim.BaseOptionValue) (string, http.Handler) {
+func New(u *url.URL, r *simulator.Registry) ([]string, http.Handler) {
 	s := &handler{
+		sm:          r.SessionManager(),
 		ServeMux:    http.NewServeMux(),
 		URL:         *u,
 		Category:    make(map[string]*tags.Category),
@@ -114,12 +132,15 @@ func New(u *url.URL, settings []vim.BaseOptionValue) (string, http.Handler) {
 		Library:     make(map[string]*content),
 		Update:      make(map[string]update),
 		Download:    make(map[string]download),
+		Policies:    defaultSecurityPolicies(),
+		Trust:       make(map[string]library.TrustedCertificate),
 	}
 
 	handlers := []struct {
 		p string
 		m http.HandlerFunc
 	}{
+		// /rest/ patterns.
 		{internal.SessionPath, s.session},
 		{internal.CategoryPath, s.category},
 		{internal.CategoryPath + "/", s.categoryID},
@@ -137,6 +158,8 @@ func New(u *url.URL, settings []vim.BaseOptionValue) (string, http.Handler) {
 		{internal.Subscriptions + "/", s.subscriptionsID},
 		{internal.LibraryItemPath, s.libraryItem},
 		{internal.LibraryItemPath + "/", s.libraryItemID},
+		{internal.LibraryItemStoragePath, s.libraryItemStorage},
+		{internal.LibraryItemStoragePath + "/", s.libraryItemStorageID},
 		{internal.SubscribedLibraryItem + "/", s.libraryItemID},
 		{internal.LibraryItemUpdateSession, s.libraryItemUpdateSession},
 		{internal.LibraryItemUpdateSession + "/", s.libraryItemUpdateSessionID},
@@ -153,8 +176,11 @@ func New(u *url.URL, settings []vim.BaseOptionValue) (string, http.Handler) {
 		{internal.VCenterOVFLibraryItem + "/", s.libraryItemOVFID},
 		{internal.VCenterVMTXLibraryItem, s.libraryItemCreateTemplate},
 		{internal.VCenterVMTXLibraryItem + "/", s.libraryItemTemplateID},
-		{internal.VCenterVM + "/", s.vmID},
 		{internal.DebugEcho, s.debugEcho},
+		// /api/ patterns.
+		{internal.SecurityPoliciesPath, s.librarySecurityPolicies},
+		{internal.TrustedCertificatesPath, s.libraryTrustedCertificates},
+		{internal.TrustedCertificatesPath + "/", s.libraryTrustedCertificatesID},
 	}
 
 	for i := range handlers {
@@ -162,7 +188,7 @@ func New(u *url.URL, settings []vim.BaseOptionValue) (string, http.Handler) {
 		s.HandleFunc(h.p, h.m)
 	}
 
-	return rest.Path + "/", s
+	return []string{rest.Path + "/", vapi.Path + "/"}, s
 }
 
 func (s *handler) withClient(f func(context.Context, *vim25.Client) error) error {
@@ -179,7 +205,8 @@ func (s *handler) withClient(f func(context.Context, *vim25.Client) error) error
 
 // HandleFunc wraps the given handler with authorization checks and passes to http.ServeMux.HandleFunc
 func (s *handler) HandleFunc(pattern string, handler func(http.ResponseWriter, *http.Request)) {
-	if !strings.HasPrefix(pattern, rest.Path) {
+	// Rest paths have been moved from /rest/* to /api/*. Account for both the legacy and new cases here.
+	if !strings.HasPrefix(pattern, rest.Path) && !strings.HasPrefix(pattern, vapi.Path) {
 		pattern = rest.Path + pattern
 	}
 
@@ -219,10 +246,7 @@ func (s *handler) isAuthorized(r *http.Request) bool {
 func (s *handler) hasAuthorization(r *http.Request) (string, bool) {
 	u, p, ok := r.BasicAuth()
 	if ok { // user+pass auth
-		if u == "" || p == "" {
-			return u, false
-		}
-		return u, true
+		return u, s.sm.Authenticate(s.URL, &vim.Login{UserName: u, Password: p})
 	}
 	auth := r.Header.Get("Authorization")
 	return "TODO", strings.HasPrefix(auth, "SIGN ") // token auth
@@ -249,14 +273,22 @@ func (s *handler) AttachedObjects(tag vim.VslmTagEntry) ([]vim.ManagedObjectRefe
 	}
 	var ids []vim.ManagedObjectReference
 	for id := range s.Association[t.ID] {
-		ids = append(ids, vim.ManagedObjectReference(id))
+		ids = append(
+			ids,
+			vim.ManagedObjectReference{
+				Type:  id.Type,
+				Value: id.Value,
+			})
 	}
 	return ids, nil
 }
 
 // AttachedTags is meant for internal use via simulator.Registry.tagManager
 func (s *handler) AttachedTags(ref vim.ManagedObjectReference) ([]vim.VslmTagEntry, vim.BaseMethodFault) {
-	oid := internal.AssociatedObject(ref)
+	oid := internal.AssociatedObject{
+		Type:  ref.Type,
+		Value: ref.Value,
+	}
 	var tags []vim.VslmTagEntry
 	for id, objs := range s.Association {
 		if objs[oid] {
@@ -277,7 +309,10 @@ func (s *handler) AttachTag(ref vim.ManagedObjectReference, tag vim.VslmTagEntry
 	if t == nil {
 		return new(vim.NotFound)
 	}
-	s.Association[t.ID][internal.AssociatedObject(ref)] = true
+	s.Association[t.ID][internal.AssociatedObject{
+		Type:  ref.Type,
+		Value: ref.Value,
+	}] = true
 	return nil
 }
 
@@ -287,13 +322,17 @@ func (s *handler) DetachTag(id vim.ManagedObjectReference, tag vim.VslmTagEntry)
 	if t == nil {
 		return new(vim.NotFound)
 	}
-	delete(s.Association[t.ID], internal.AssociatedObject(id))
+	delete(s.Association[t.ID], internal.AssociatedObject{
+		Type:  id.Type,
+		Value: id.Value,
+	})
 	return nil
 }
 
-// StatusOK responds with http.StatusOK and json encoded val if given.
+// StatusOK responds with http.StatusOK and encodes val, if specified, to JSON
 // For use with "/api" endpoints.
 func StatusOK(w http.ResponseWriter, val ...interface{}) {
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	if len(val) == 0 {
 		return
@@ -306,7 +345,7 @@ func StatusOK(w http.ResponseWriter, val ...interface{}) {
 	}
 }
 
-// OK responds with http.StatusOK and json encoded val if given.
+// OK responds with http.StatusOK and encodes val, if specified, to JSON
 // For use with "/rest" endpoints where the response is a "value" wrapped structure.
 func OK(w http.ResponseWriter, val ...interface{}) {
 	if len(val) == 0 {
@@ -340,6 +379,60 @@ func BadRequest(w http.ResponseWriter, kind string) {
 	if err != nil {
 		log.Panic(err)
 	}
+}
+
+// ApiErrorAlreadyExists responds with a REST error of type "ALREADY_EXISTS".
+// For use with "/api" endpoints.
+func ApiErrorAlreadyExists(w http.ResponseWriter) {
+	apiError(w, http.StatusBadRequest, "ALREADY_EXISTS")
+}
+
+// ApiErrorGeneral responds with a REST error of type "ERROR".
+// For use with "/api" endpoints.
+func ApiErrorGeneral(w http.ResponseWriter) {
+	apiError(w, http.StatusInternalServerError, "ERROR")
+}
+
+// ApiErrorInvalidArgument responds with a REST error of type "INVALID_ARGUMENT".
+// For use with "/api" endpoints.
+func ApiErrorInvalidArgument(w http.ResponseWriter) {
+	apiError(w, http.StatusBadRequest, "INVALID_ARGUMENT")
+}
+
+// ApiErrorNotAllowedInCurrentState responds with a REST error of type "NOT_ALLOWED_IN_CURRENT_STATE".
+// For use with "/api" endpoints.
+func ApiErrorNotAllowedInCurrentState(w http.ResponseWriter) {
+	apiError(w, http.StatusBadRequest, "NOT_ALLOWED_IN_CURRENT_STATE")
+}
+
+// ApiErrorNotFound responds with a REST error of type "NOT_FOUND".
+// For use with "/api" endpoints.
+func ApiErrorNotFound(w http.ResponseWriter) {
+	apiError(w, http.StatusNotFound, "NOT_FOUND")
+}
+
+// ApiErrorResourceInUse responds with a REST error of type "RESOURCE_IN_USE".
+// For use with "/api" endpoints.
+func ApiErrorResourceInUse(w http.ResponseWriter) {
+	apiError(w, http.StatusBadRequest, "RESOURCE_IN_USE")
+}
+
+// ApiErrorUnauthorized responds with a REST error of type "UNAUTHORIZED".
+// For use with "/api" endpoints.
+func ApiErrorUnauthorized(w http.ResponseWriter) {
+	apiError(w, http.StatusBadRequest, "UNAUTHORIZED")
+}
+
+// ApiErrorUnsupported responds with a REST error of type "UNSUPPORTED".
+// For use with "/api" endpoints.
+func ApiErrorUnsupported(w http.ResponseWriter) {
+	apiError(w, http.StatusBadRequest, "UNSUPPORTED")
+}
+
+func apiError(w http.ResponseWriter, statusCode int, errorType string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(statusCode)
+	w.Write([]byte(fmt.Sprintf(`{"error_type":"%s", "messages":[]}`, errorType)))
 }
 
 func (*handler) error(w http.ResponseWriter, err error) {
@@ -768,10 +861,16 @@ func (s *handler) library(w http.ResponseWriter, r *http.Request) {
 			}
 			OK(w, ids)
 		case "":
+			if !s.isValidSecurityPolicy(spec.Library.SecurityPolicyID) {
+				http.NotFound(w, r)
+				return
+			}
+
 			id := uuid.New().String()
 			spec.Library.ID = id
 			spec.Library.CreationTime = types.NewTime(time.Now())
 			spec.Library.LastModifiedTime = types.NewTime(time.Now())
+			spec.Library.UnsetSecurityPolicyID = spec.Library.SecurityPolicyID == ""
 			dir := libraryPath(&spec.Library, "")
 			if err := os.Mkdir(dir, 0750); err != nil {
 				s.error(w, err)
@@ -811,6 +910,19 @@ func (s *handler) library(w http.ResponseWriter, r *http.Request) {
 			ids = append(ids, id)
 		}
 		OK(w, ids)
+	}
+}
+
+func (content *content) cached(val bool) {
+	for _, item := range content.Item {
+		item.cached(val)
+	}
+}
+
+func (item *item) cached(val bool) {
+	item.Cached = val
+	for _, file := range item.File {
+		file.Cached = types.NewBool(val)
 	}
 }
 
@@ -900,10 +1012,14 @@ func (s *handler) libraryID(w http.ResponseWriter, r *http.Request) {
 		case "sync":
 			if l.Type == "SUBSCRIBED" {
 				l.LastSyncTime = types.NewTime(time.Now())
+				l.cached(true)
 				OK(w)
 			} else {
 				http.NotFound(w, r)
 			}
+		case "evict":
+			l.cached(false)
+			OK(w)
 		}
 	case http.MethodGet:
 		OK(w, l)
@@ -1057,6 +1173,13 @@ func (s *handler) libraryItem(w http.ResponseWriter, r *http.Request) {
 			spec.Item.ID = id
 			spec.Item.CreationTime = types.NewTime(time.Now())
 			spec.Item.LastModifiedTime = types.NewTime(time.Now())
+			if l.SecurityPolicyID != "" {
+				// TODO: verify signed items
+				spec.Item.SecurityCompliance = types.NewBool(false)
+				spec.Item.CertificateVerification = &library.ItemCertificateVerification{
+					Status: "NOT_AVAILABLE",
+				}
+			}
 			l.Item[id] = &item{Item: &spec.Item}
 			OK(w, id)
 		}
@@ -1144,8 +1267,9 @@ func (s *handler) libraryItemID(w http.ResponseWriter, r *http.Request) {
 
 			OK(w, id)
 		case "sync":
-			if l.Type == "SUBSCRIBED" {
+			if l.Type == "SUBSCRIBED" || l.Publication != nil {
 				item.LastSyncTime = types.NewTime(time.Now())
+				item.cached(true)
 				OK(w)
 			} else {
 				http.NotFound(w, r)
@@ -1157,9 +1281,99 @@ func (s *handler) libraryItemID(w http.ResponseWriter, r *http.Request) {
 					OK(w)
 				}
 			}
+		case "evict":
+			item.cached(false)
+			OK(w, id)
 		}
 	case http.MethodGet:
 		OK(w, item)
+	}
+}
+
+func (s *handler) libraryItemByID(id string) (*content, *item) {
+	for _, l := range s.Library {
+		if item, ok := l.Item[id]; ok {
+			return l, item
+		}
+	}
+
+	log.Printf("library for item %q not found", id)
+
+	return nil, nil
+}
+
+func (s *handler) libraryItemStorageByID(id string) ([]library.Storage, bool) {
+	lib, item := s.libraryItemByID(id)
+	if item == nil {
+		return nil, false
+	}
+
+	storage := make([]library.Storage, len(item.File))
+
+	for i, file := range item.File {
+		storage[i] = library.Storage{
+			StorageBacking: lib.Storage[0],
+			StorageURIs: []string{
+				path.Join(libraryPath(lib.Library, id), file.Name),
+			},
+			Name:    file.Name,
+			Version: file.Version,
+		}
+		if file.Checksum != nil {
+			storage[i].Checksum = *file.Checksum
+		}
+		if file.Size != nil {
+			storage[i].Size = *file.Size
+		}
+		if file.Cached != nil {
+			storage[i].Cached = *file.Cached
+		}
+	}
+
+	return storage, true
+}
+
+func (s *handler) libraryItemStorage(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	id := r.URL.Query().Get("library_item_id")
+	storage, ok := s.libraryItemStorageByID(id)
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+
+	OK(w, storage)
+}
+
+func (s *handler) libraryItemStorageID(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	id := s.id(r)
+	storage, ok := s.libraryItemStorageByID(id)
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+
+	var spec struct {
+		Name string `json:"file_name"`
+	}
+
+	if s.decode(r, w, &spec) {
+		for _, file := range storage {
+			if file.Name == spec.Name {
+				OK(w, []library.Storage{file})
+				return
+			}
+		}
+		http.NotFound(w, r)
 	}
 }
 
@@ -1196,9 +1410,10 @@ func (s *handler) libraryItemUpdateSession(w http.ResponseWriter, r *http.Reques
 				ExpirationTime:            types.NewTime(time.Now().Add(time.Hour)),
 			}
 			s.Update[session.ID] = update{
-				Session: session,
-				Library: lib,
-				File:    make(map[string]*library.UpdateFile),
+				WaitGroup: new(sync.WaitGroup),
+				Session:   session,
+				Library:   lib,
+				File:      make(map[string]*library.UpdateFile),
 			}
 			OK(w, session.ID)
 		}
@@ -1216,7 +1431,9 @@ func (s *handler) libraryItemUpdateSessionID(w http.ResponseWriter, r *http.Requ
 
 	session := up.Session
 	done := func(state string) {
-		up.State = state
+		if up.State != "ERROR" {
+			up.State = state
+		}
 		go time.AfterFunc(session.ExpirationTime.Sub(time.Now()), func() {
 			s.Lock()
 			delete(s.Update, id)
@@ -1232,7 +1449,10 @@ func (s *handler) libraryItemUpdateSessionID(w http.ResponseWriter, r *http.Requ
 		case "cancel":
 			done("CANCELED")
 		case "complete":
-			done("DONE")
+			go func() {
+				up.Wait() // wait for any PULL sources to complete
+				done("DONE")
+			}()
 		case "fail":
 			done("ERROR")
 		case "keep-alive":
@@ -1245,8 +1465,88 @@ func (s *handler) libraryItemUpdateSessionID(w http.ResponseWriter, r *http.Requ
 	}
 }
 
+func (s *handler) libraryItemProbe(endpoint library.TransferEndpoint) *library.ProbeResult {
+	p := &library.ProbeResult{
+		Status: "SUCCESS",
+	}
+
+	result := func() *library.ProbeResult {
+		for i, m := range p.ErrorMessages {
+			p.ErrorMessages[i].DefaultMessage = fmt.Sprintf(m.DefaultMessage, m.Args[0])
+		}
+		return p
+	}
+
+	u, err := url.Parse(endpoint.URI)
+	if err != nil {
+		p.Status = "INVALID_URL"
+		p.ErrorMessages = []rest.LocalizableMessage{{
+			Args:           []string{endpoint.URI},
+			ID:             "com.vmware.vdcs.cls-main.invalid_url_format",
+			DefaultMessage: "Invalid URL format for %s",
+		}}
+		return result()
+	}
+
+	if u.Scheme != "http" && u.Scheme != "https" {
+		p.Status = "INVALID_URL"
+		p.ErrorMessages = []rest.LocalizableMessage{{
+			Args:           []string{endpoint.URI},
+			ID:             "com.vmware.vdcs.cls-main.file_probe_unsupported_uri_scheme",
+			DefaultMessage: "The specified URI %s is not supported",
+		}}
+		return result()
+	}
+
+	res, err := http.Head(endpoint.URI)
+	if err != nil {
+		id := "com.vmware.vdcs.cls-main.http_request_error"
+		p.Status = "INVALID_URL"
+
+		if soap.IsCertificateUntrusted(err) {
+			var info object.HostCertificateInfo
+			_ = info.FromURL(u, nil)
+
+			id = "com.vmware.vdcs.cls-main.http_request_error_peer_not_authenticated"
+			p.Status = "CERTIFICATE_ERROR"
+			p.SSLThumbprint = info.ThumbprintSHA1
+		}
+
+		p.ErrorMessages = []rest.LocalizableMessage{{
+			Args:           []string{err.Error()},
+			ID:             id,
+			DefaultMessage: "HTTP request error: %s",
+		}}
+
+		return result()
+	}
+	_ = res.Body.Close()
+
+	if res.TLS != nil {
+		p.SSLThumbprint = soap.ThumbprintSHA1(res.TLS.PeerCertificates[0])
+	}
+
+	return result()
+}
+
 func (s *handler) libraryItemUpdateSessionFile(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
+	switch r.Method {
+	case http.MethodPost:
+		switch s.action(r) {
+		case "probe":
+			var spec struct {
+				SourceEndpoint library.TransferEndpoint `json:"source_endpoint"`
+			}
+			if s.decode(r, w, &spec) {
+				res := s.libraryItemProbe(spec.SourceEndpoint)
+				OK(w, res)
+			}
+		default:
+			http.NotFound(w, r)
+		}
+		return
+	case http.MethodGet:
+	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
@@ -1267,14 +1567,16 @@ func (s *handler) libraryItemUpdateSessionFile(w http.ResponseWriter, r *http.Re
 }
 
 func (s *handler) pullSource(up update, info *library.UpdateFile) {
+	defer up.Done()
 	done := func(err error) {
 		s.Lock()
 		info.Status = "READY"
 		if err != nil {
 			log.Printf("PULL %s: %s", info.SourceEndpoint.URI, err)
 			info.Status = "ERROR"
-			up.State = "ERROR"
-			up.ErrorMessage = &rest.LocalizableMessage{DefaultMessage: err.Error()}
+			info.ErrorMessage = &rest.LocalizableMessage{DefaultMessage: err.Error()}
+			up.State = info.Status
+			up.ErrorMessage = info.ErrorMessage
 		}
 		s.Unlock()
 	}
@@ -1291,8 +1593,19 @@ func (s *handler) pullSource(up update, info *library.UpdateFile) {
 		return
 	}
 
-	err = s.libraryItemFileCreate(&up, info.Name, res.Body)
+	err = s.libraryItemFileCreate(&up, info.Name, res.Body, info.Checksum)
 	done(err)
+}
+
+func hasChecksum(c *library.Checksum) bool {
+	return c != nil && c.Checksum != ""
+}
+
+var checksum = map[string]func() hash.Hash{
+	"MD5":    md5.New,
+	"SHA1":   sha1.New,
+	"SHA256": sha256.New,
+	"SHA512": sha512.New,
 }
 
 func (s *handler) libraryItemUpdateSessionFileID(w http.ResponseWriter, r *http.Request) {
@@ -1318,6 +1631,7 @@ func (s *handler) libraryItemUpdateSessionFileID(w http.ResponseWriter, r *http.
 			id = uuid.New().String()
 			info := &library.UpdateFile{
 				Name:             spec.File.Name,
+				Checksum:         spec.File.Checksum,
 				SourceType:       spec.File.SourceType,
 				Status:           "WAITING_FOR_TRANSFER",
 				BytesTransferred: 0,
@@ -1331,25 +1645,45 @@ func (s *handler) libraryItemUpdateSessionFileID(w http.ResponseWriter, r *http.
 				}
 				info.UploadEndpoint = &library.TransferEndpoint{URI: u.String()}
 			case "PULL":
+				if hasChecksum(info.Checksum) && checksum[info.Checksum.Algorithm] == nil {
+					BadRequest(w, "com.vmware.vapi.std.errors.invalid_argument")
+					return
+				}
 				info.SourceEndpoint = spec.File.SourceEndpoint
+				info.Status = "TRANSFERRING"
+				up.Add(1)
 				go s.pullSource(up, info)
 			}
 			up.File[id] = info
 			OK(w, info)
 		}
 	case "get":
-		OK(w, up.Session)
-	case "list":
-		var ids []string
-		for id := range up.File {
-			ids = append(ids, id)
+		var spec struct {
+			File string `json:"file_name"`
 		}
-		OK(w, ids)
+		if s.decode(r, w, &spec) {
+			for _, f := range up.File {
+				if f.Name == spec.File {
+					OK(w, f)
+					return
+				}
+			}
+		}
 	case "remove":
+		if up.State != "ACTIVE" {
+			s.error(w, fmt.Errorf("removeFile not allowed in state %s", up.State))
+			return
+		}
 		delete(s.Update, id)
 		OK(w)
 	case "validate":
-		// TODO
+		if up.State != "ACTIVE" {
+			BadRequest(w, "com.vmware.vapi.std.errors.not_allowed_in_current_state")
+			return
+		}
+		var res library.UpdateFileValidation
+		// TODO check missing_files, validate .ovf
+		OK(w, res)
 	}
 }
 
@@ -1371,20 +1705,12 @@ func (s *handler) libraryItemDownloadSession(w http.ResponseWriter, r *http.Requ
 
 		switch s.action(r) {
 		case "create", "":
-			var lib *library.Library
-			var files []library.File
-			for _, l := range s.Library {
-				if item, ok := l.Item[spec.Session.LibraryItemID]; ok {
-					lib = l.Library
-					files = item.File
-					break
-				}
-			}
-			if lib == nil {
-				log.Printf("library for item %q not found", spec.Session.LibraryItemID)
+			lib, item := s.libraryItemByID(spec.Session.LibraryItemID)
+			if item == nil {
 				http.NotFound(w, r)
 				return
 			}
+
 			session := &library.Session{
 				ID:                        uuid.New().String(),
 				LibraryItemID:             spec.Session.LibraryItemID,
@@ -1395,10 +1721,10 @@ func (s *handler) libraryItemDownloadSession(w http.ResponseWriter, r *http.Requ
 			}
 			s.Download[session.ID] = download{
 				Session: session,
-				Library: lib,
+				Library: lib.Library,
 				File:    make(map[string]*library.DownloadFile),
 			}
-			for _, file := range files {
+			for _, file := range item.File {
 				s.Download[session.ID].File[file.Name] = &library.DownloadFile{
 					Name:   file.Name,
 					Status: "UNPREPARED",
@@ -1523,13 +1849,16 @@ func (s *handler) updateFileInfo(id string) *update {
 
 // libraryPath returns the local Datastore fs path for a Library or Item if id is specified.
 func libraryPath(l *library.Library, id string) string {
-	// DatastoreID (moref) format is "$local-path@$ds-folder-id",
-	// see simulator.HostDatastoreSystem.CreateLocalDatastore
-	ds := strings.SplitN(l.Storage[0].DatastoreID, "@", 2)[0]
-	return path.Join(append([]string{ds, "contentlib-" + l.ID}, id)...)
+	dsref := types.ManagedObjectReference{
+		Type:  "Datastore",
+		Value: l.Storage[0].DatastoreID,
+	}
+	ds := simulator.Map.Get(dsref).(*simulator.Datastore)
+
+	return path.Join(append([]string{ds.Info.GetDatastoreInfo().Url, "contentlib-" + l.ID}, id)...)
 }
 
-func (s *handler) libraryItemFileCreate(up *update, name string, body io.ReadCloser) error {
+func (s *handler) libraryItemFileCreate(up *update, name string, body io.ReadCloser, cs *library.Checksum) error {
 	var in io.Reader = body
 	dir := libraryPath(up.Library, up.Session.LibraryItemID)
 	if err := os.MkdirAll(dir, 0750); err != nil {
@@ -1558,6 +1887,12 @@ func (s *handler) libraryItemFileCreate(up *update, name string, body io.ReadClo
 		return err
 	}
 
+	var h hash.Hash
+	if hasChecksum(cs) {
+		h = checksum[cs.Algorithm]()
+		in = io.TeeReader(in, h)
+	}
+
 	n, err := io.Copy(file, in)
 	_ = body.Close()
 	if err != nil {
@@ -1566,6 +1901,13 @@ func (s *handler) libraryItemFileCreate(up *update, name string, body io.ReadClo
 	err = file.Close()
 	if err != nil {
 		return err
+	}
+
+	if h != nil {
+		sum := fmt.Sprintf("%x", h.Sum(nil))
+		if sum != cs.Checksum {
+			return fmt.Errorf("checksum mismatch: actual=%s, expected=%s", sum, cs.Checksum)
+		}
 	}
 
 	i := s.Library[up.Library.ID].Item[up.Session.LibraryItemID]
@@ -1616,7 +1958,7 @@ func (s *handler) libraryItemFileData(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err := s.libraryItemFileCreate(up, name, r.Body)
+	err := s.libraryItemFileCreate(up, name, r.Body, nil)
 	if err != nil {
 		s.error(w, err)
 	}
@@ -1672,9 +2014,36 @@ func (i *item) ovf() string {
 	return ""
 }
 
+func vmConfigSpec(ctx context.Context, c *vim25.Client, deploy vcenter.Deploy) (*types.VirtualMachineConfigSpec, error) {
+	if deploy.VmConfigSpec == nil {
+		return nil, nil
+	}
+
+	b, err := base64.StdEncoding.DecodeString(deploy.VmConfigSpec.XML)
+	if err != nil {
+		return nil, err
+	}
+
+	var spec *types.VirtualMachineConfigSpec
+
+	dec := xml.NewDecoder(bytes.NewReader(b))
+	dec.TypeFunc = c.Types
+	err = dec.Decode(&spec)
+	if err != nil {
+		return nil, err
+	}
+
+	return spec, nil
+}
+
 func (s *handler) libraryDeploy(ctx context.Context, c *vim25.Client, lib *library.Library, item *item, deploy vcenter.Deploy) (*nfc.LeaseInfo, error) {
+	config, err := vmConfigSpec(ctx, c, deploy)
+	if err != nil {
+		return nil, err
+	}
+
 	name := item.ovf()
-	desc, err := ioutil.ReadFile(filepath.Join(libraryPath(lib, item.ID), name))
+	desc, err := os.ReadFile(filepath.Join(libraryPath(lib, item.ID), name))
 	if err != nil {
 		return nil, err
 	}
@@ -1749,6 +2118,23 @@ func (s *handler) libraryDeploy(ctx context.Context, c *vim25.Client, lib *libra
 		return nil, errors.New(spec.Error[0].LocalizedMessage)
 	}
 
+	if config != nil {
+		if vmImportSpec, ok := spec.ImportSpec.(*types.VirtualMachineImportSpec); ok {
+			var configSpecs []types.BaseVirtualDeviceConfigSpec
+
+			// Remove devices that we don't want to carry over from the import spec. Otherwise, since we
+			// just reconfigure the VM with the provided ConfigSpec later these devices won't be removed.
+			for _, d := range vmImportSpec.ConfigSpec.DeviceChange {
+				switch d.GetVirtualDeviceConfigSpec().Device.(type) {
+				case types.BaseVirtualEthernetCard:
+				default:
+					configSpecs = append(configSpecs, d)
+				}
+			}
+			vmImportSpec.ConfigSpec.DeviceChange = configSpecs
+		}
+	}
+
 	req := types.ImportVApp{
 		This:   pool,
 		Spec:   spec.ImportSpec,
@@ -1766,7 +2152,17 @@ func (s *handler) libraryDeploy(ctx context.Context, c *vim25.Client, lib *libra
 		return nil, err
 	}
 
-	return info, lease.Complete(ctx)
+	if err = lease.Complete(ctx); err != nil {
+		return nil, err
+	}
+
+	if config != nil {
+		if err = s.reconfigVM(info.Entity, *config); err != nil {
+			return nil, err
+		}
+	}
+
+	return info, nil
 }
 
 func (s *handler) libraryItemOVF(w http.ResponseWriter, r *http.Request) {
@@ -1794,7 +2190,7 @@ func (s *handler) libraryItemOVF(w http.ResponseWriter, r *http.Request) {
 				ID:               id,
 				LibraryID:        l.Library.ID,
 				Name:             req.Spec.Name,
-				Description:      req.Spec.Description,
+				Description:      &req.Spec.Description,
 				Type:             library.ItemTypeOVF,
 				CreationTime:     types.NewTime(time.Now()),
 				LastModifiedTime: types.NewTime(time.Now()),
@@ -1854,7 +2250,10 @@ func (s *handler) libraryItemOVFID(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				return err
 			}
-			id := vcenter.ResourceID(info.Entity)
+			id := vcenter.ResourceID{
+				Type:  info.Entity.Type,
+				Value: info.Entity.Value,
+			}
 			d.Succeeded = true
 			d.ResourceID = &id
 			return nil
@@ -1892,6 +2291,17 @@ func (s *handler) deleteVM(ref *types.ManagedObjectReference) {
 	_ = s.withClient(func(ctx context.Context, c *vim25.Client) error {
 		_, _ = object.NewVirtualMachine(c, *ref).Destroy(ctx)
 		return nil
+	})
+}
+
+func (s *handler) reconfigVM(ref types.ManagedObjectReference, config types.VirtualMachineConfigSpec) error {
+	return s.withClient(func(ctx context.Context, c *vim25.Client) error {
+		vm := object.NewVirtualMachine(c, ref)
+		task, err := vm.Reconfigure(ctx, config)
+		if err != nil {
+			return err
+		}
+		return task.Wait(ctx)
 	})
 }
 
@@ -2024,18 +2434,17 @@ func (s *handler) libraryItemTemplateID(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
+	if r.Method == http.MethodGet {
+		// TODO: add mock data
+		t := &vcenter.TemplateInfo{}
+		OK(w, t)
+		return
+	}
+
 	var spec struct {
 		vcenter.DeployTemplate `json:"spec"`
 	}
 	if !s.decode(r, w, &spec) {
-		return
-	}
-
-	if r.Method == http.MethodGet {
-		// TODO: place holder as the API supports this method,
-		// but not aware of a use case for the data yet.
-		t := &vcenter.TemplateInfo{}
-		OK(w, t)
 		return
 	}
 
@@ -2051,6 +2460,7 @@ func (s *handler) libraryItemTemplateID(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 
+		item.cached(true)
 		ref, err := s.cloneVM(item.Template.Value, spec.Name, p, spec.DiskStorage)
 		if err != nil {
 			BadRequest(w, err.Error())
@@ -2086,14 +2496,101 @@ func (s *handler) libraryItemCheckOuts(item *item, w http.ResponseWriter, r *htt
 	}
 }
 
-func (s *handler) vmID(w http.ResponseWriter, r *http.Request) {
+// defaultSecurityPolicies generates the initial set of security policies always present on vCenter.
+func defaultSecurityPolicies() []library.ContentSecurityPoliciesInfo {
+	policyID, _ := uuid.NewUUID()
+	return []library.ContentSecurityPoliciesInfo{
+		{
+			ItemTypeRules: map[string]string{
+				"ovf": "OVF_STRICT_VERIFICATION",
+			},
+			Name:   "OVF default policy",
+			Policy: policyID.String(),
+		},
+	}
+}
+
+func (s *handler) librarySecurityPolicies(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		StatusOK(w, s.Policies)
+	default:
+		w.WriteHeader(http.StatusMethodNotAllowed)
+	}
+}
+
+func (s *handler) isValidSecurityPolicy(policy string) bool {
+	if policy == "" {
+		return true
+	}
+
+	for _, p := range s.Policies {
+		if p.Policy == policy {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *handler) libraryTrustedCertificates(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		var res struct {
+			Certificates []library.TrustedCertificateSummary `json:"certificates"`
+		}
+		for id, cert := range s.Trust {
+			res.Certificates = append(res.Certificates, library.TrustedCertificateSummary{
+				TrustedCertificate: cert,
+				ID:                 id,
+			})
+		}
+
+		StatusOK(w, &res)
+	case http.MethodPost:
+		var info library.TrustedCertificate
+		if s.decode(r, w, &info) {
+			block, _ := pem.Decode([]byte(info.Text))
+			if block == nil {
+				s.error(w, errors.New("invalid certificate"))
+				return
+			}
+			_, err := x509.ParseCertificate(block.Bytes)
+			if err != nil {
+				s.error(w, err)
+				return
+			}
+
+			id := uuid.New().String()
+			for x, cert := range s.Trust {
+				if info.Text == cert.Text {
+					id = x // existing certificate
+					break
+				}
+			}
+			s.Trust[id] = info
+
+			w.WriteHeader(http.StatusCreated)
+		}
+	default:
+		w.WriteHeader(http.StatusMethodNotAllowed)
+	}
+}
+
+func (s *handler) libraryTrustedCertificatesID(w http.ResponseWriter, r *http.Request) {
 	id := path.Base(r.URL.Path)
+	cert, ok := s.Trust[id]
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
 
 	switch r.Method {
+	case http.MethodGet:
+		StatusOK(w, &cert)
 	case http.MethodDelete:
-		s.deleteVM(&types.ManagedObjectReference{Type: "VirtualMachine", Value: id})
+		delete(s.Trust, id)
 	default:
-		http.NotFound(w, r)
+		w.WriteHeader(http.StatusMethodNotAllowed)
 	}
 }
 

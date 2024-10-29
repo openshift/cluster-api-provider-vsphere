@@ -1,4 +1,4 @@
-// Copyright (c) 2020 VMware, Inc. All Rights Reserved.
+// Copyright (c) 2020-2024 VMware, Inc. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 package v1alpha1
@@ -11,11 +11,13 @@ import (
 type VSphereDistributedNetworkConditionType string
 
 const (
-	// VSphereDistributedNetworkFailure is added when PortGroupID specified either doesn't exist, or
+	// VSphereDistributedNetworkPortGroupFailure is added when PortGroupID specified either doesn't exist, or
 	// there was an error in communicating with vCenter Server.
 	VSphereDistributedNetworkPortGroupFailure VSphereDistributedNetworkConditionType = "PortGroupFailure"
 	// VSphereDistributedNetworkIPPoolInvalid is added when no valid IPPool references exists.
 	VSphereDistributedNetworkIPPoolInvalid VSphereDistributedNetworkConditionType = "IPPoolInvalid"
+	// VsphereDistributedNetworkIPPoolPressure condition status is set to True when IPPool is low on free IPs.
+	VsphereDistributedNetworkIPPoolPressure VSphereDistributedNetworkConditionType = "IPPoolPressure"
 )
 
 type IPAssignmentModeType string
@@ -38,6 +40,8 @@ type VSphereDistributedNetworkCondition struct {
 	Reason string `json:"reason,omitempty"`
 	// Human-readable message indicating details about last transition.
 	Message string `json:"message,omitempty"`
+	// Provides a timestamp for when the VSphereDistributedNetwork object last transitioned from one status to another.
+	LastTransitionTime metav1.Time `json:"lastTransitionTime,omitempty" patchStrategy:"replace"`
 }
 
 type IPPoolReference struct {
