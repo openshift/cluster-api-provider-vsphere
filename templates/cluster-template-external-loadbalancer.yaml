@@ -1,4 +1,3 @@
----
 apiVersion: cluster.x-k8s.io/v1beta1
 kind: Cluster
 metadata:
@@ -222,8 +221,8 @@ metadata:
   name: '${CLUSTER_NAME}'
   namespace: '${NAMESPACE}'
 stringData:
-  password: ${VSPHERE_PASSWORD}
-  username: ${VSPHERE_USERNAME}
+  password: "${VSPHERE_PASSWORD}"
+  username: "${VSPHERE_USERNAME}"
 ---
 apiVersion: v1
 kind: Secret
@@ -231,7 +230,7 @@ metadata:
   name: vsphere-config-secret
   namespace: '${NAMESPACE}'
 stringData:
-  data: |
+  data: |-
     apiVersion: v1
     kind: Secret
     metadata:
@@ -255,8 +254,7 @@ type: addons.cluster.x-k8s.io/resource-set
 ---
 apiVersion: v1
 data:
-  data: |
-    ---
+  data: |-
     apiVersion: v1
     kind: Namespace
     metadata:
@@ -548,20 +546,7 @@ data:
     ---
     apiVersion: v1
     data:
-      async-query-volume: "true"
-      block-volume-snapshot: "true"
-      cnsmgr-suspend-create-volume: "true"
-      csi-auth-check: "true"
-      csi-internal-generated-cluster-id: "true"
-      csi-migration: "true"
-      csi-windows-support: "true"
-      list-volumes: "true"
-      listview-tasks: "true"
-      max-pvscsi-targets-per-vm: "true"
-      multi-vcenter-csi-topology: "true"
-      online-volume-extend: "true"
       pv-to-backingdiskobjectid-mapping: "false"
-      topology-preferential-datastores: "true"
       trigger-csi-fullsync: "false"
     kind: ConfigMap
     metadata:
@@ -609,6 +594,18 @@ data:
             role: vsphere-csi
         spec:
           affinity:
+            nodeAffinity:
+              requiredDuringSchedulingIgnoredDuringExecution:
+                nodeSelectorTerms:
+                - matchExpressions:
+                  - key: node-role.kubernetes.io/control-plane
+                    operator: Exists
+                - matchExpressions:
+                  - key: node-role.kubernetes.io/controlplane
+                    operator: Exists
+                - matchExpressions:
+                  - key: node-role.kubernetes.io/master
+                    operator: Exists
             podAntiAffinity:
               requiredDuringSchedulingIgnoredDuringExecution:
               - labelSelector:
@@ -632,7 +629,7 @@ data:
             env:
             - name: ADDRESS
               value: /csi/csi.sock
-            image: registry.k8s.io/sig-storage/csi-attacher:v4.3.0
+            image: registry.k8s.io/sig-storage/csi-attacher:v4.5.1
             name: csi-attacher
             volumeMounts:
             - mountPath: /csi
@@ -651,7 +648,7 @@ data:
             env:
             - name: ADDRESS
               value: /csi/csi.sock
-            image: registry.k8s.io/sig-storage/csi-resizer:v1.8.0
+            image: registry.k8s.io/sig-storage/csi-resizer:v1.10.1
             name: csi-resizer
             volumeMounts:
             - mountPath: /csi
@@ -680,7 +677,7 @@ data:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.namespace
-            image: gcr.io/cloud-provider-vsphere/csi/release/driver:v3.1.0
+            image: registry.k8s.io/csi-vsphere/driver:v3.3.1
             imagePullPolicy: Always
             livenessProbe:
               failureThreshold: 3
@@ -711,7 +708,7 @@ data:
           - args:
             - --v=4
             - --csi-address=/csi/csi.sock
-            image: registry.k8s.io/sig-storage/livenessprobe:v2.10.0
+            image: registry.k8s.io/sig-storage/livenessprobe:v2.12.0
             name: liveness-probe
             volumeMounts:
             - mountPath: /csi
@@ -734,13 +731,11 @@ data:
               value: "100"
             - name: INCLUSTER_CLIENT_BURST
               value: "100"
-            - name: GODEBUG
-              value: x509sha1=1
             - name: CSI_NAMESPACE
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.namespace
-            image: gcr.io/cloud-provider-vsphere/csi/release/syncer:v3.1.0
+            image: registry.k8s.io/csi-vsphere/syncer:v3.3.1
             imagePullPolicy: Always
             name: vsphere-syncer
             ports:
@@ -769,7 +764,7 @@ data:
             env:
             - name: ADDRESS
               value: /csi/csi.sock
-            image: registry.k8s.io/sig-storage/csi-provisioner:v3.5.0
+            image: registry.k8s.io/sig-storage/csi-provisioner:v4.0.1
             name: csi-provisioner
             volumeMounts:
             - mountPath: /csi
@@ -787,7 +782,7 @@ data:
             env:
             - name: ADDRESS
               value: /csi/csi.sock
-            image: registry.k8s.io/sig-storage/csi-snapshotter:v6.2.2
+            image: registry.k8s.io/sig-storage/csi-snapshotter:v7.0.2
             name: csi-snapshotter
             volumeMounts:
             - mountPath: /csi
@@ -834,7 +829,7 @@ data:
               value: /csi/csi.sock
             - name: DRIVER_REG_SOCK_PATH
               value: /var/lib/kubelet/plugins/csi.vsphere.vmware.com/csi.sock
-            image: registry.k8s.io/sig-storage/csi-node-driver-registrar:v2.8.0
+            image: registry.k8s.io/sig-storage/csi-node-driver-registrar:v2.10.1
             livenessProbe:
               exec:
                 command:
@@ -868,15 +863,13 @@ data:
               value: "true"
             - name: LOGGER_LEVEL
               value: PRODUCTION
-            - name: GODEBUG
-              value: x509sha1=1
             - name: CSI_NAMESPACE
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.namespace
             - name: NODEGETINFO_WATCH_TIMEOUT_MINUTES
               value: "1"
-            image: gcr.io/cloud-provider-vsphere/csi/release/driver:v3.1.0
+            image: registry.k8s.io/csi-vsphere/driver:v3.3.1
             imagePullPolicy: Always
             livenessProbe:
               failureThreshold: 3
@@ -912,7 +905,7 @@ data:
           - args:
             - --v=4
             - --csi-address=/csi/csi.sock
-            image: registry.k8s.io/sig-storage/livenessprobe:v2.10.0
+            image: registry.k8s.io/sig-storage/livenessprobe:v2.12.0
             name: liveness-probe
             volumeMounts:
             - mountPath: /csi
@@ -982,7 +975,7 @@ data:
               value: unix://C:\\csi\\csi.sock
             - name: DRIVER_REG_SOCK_PATH
               value: C:\\var\\lib\\kubelet\\plugins\\csi.vsphere.vmware.com\\csi.sock
-            image: registry.k8s.io/sig-storage/csi-node-driver-registrar:v2.8.0
+            image: registry.k8s.io/sig-storage/csi-node-driver-registrar:v2.10.0
             livenessProbe:
               exec:
                 command:
@@ -1025,7 +1018,7 @@ data:
                   fieldPath: metadata.namespace
             - name: NODEGETINFO_WATCH_TIMEOUT_MINUTES
               value: "1"
-            image: gcr.io/cloud-provider-vsphere/csi/release/driver:v3.1.0
+            image: registry.k8s.io/csi-vsphere/driver:v3.3.1
             imagePullPolicy: Always
             livenessProbe:
               failureThreshold: 3
@@ -1056,7 +1049,7 @@ data:
           - args:
             - --v=4
             - --csi-address=/csi/csi.sock
-            image: registry.k8s.io/sig-storage/livenessprobe:v2.10.0
+            image: registry.k8s.io/sig-storage/livenessprobe:v2.12.0
             name: liveness-probe
             volumeMounts:
             - mountPath: /csi
@@ -1114,7 +1107,7 @@ metadata:
   name: cloud-provider-vsphere-credentials
   namespace: '${NAMESPACE}'
 stringData:
-  data: |
+  data: |-
     apiVersion: v1
     kind: Secret
     metadata:
@@ -1124,14 +1117,14 @@ stringData:
       name: cloud-provider-vsphere-credentials
       namespace: kube-system
     stringData:
-      ${VSPHERE_SERVER}.password: ${VSPHERE_PASSWORD}
-      ${VSPHERE_SERVER}.username: ${VSPHERE_USERNAME}
+      ${VSPHERE_SERVER}.password: "${VSPHERE_PASSWORD}"
+      ${VSPHERE_SERVER}.username: "${VSPHERE_USERNAME}"
     type: Opaque
 type: addons.cluster.x-k8s.io/resource-set
 ---
 apiVersion: v1
 data:
-  data: |
+  data: |-
     ---
     # Source: vsphere-cpi/templates/service-account.yaml
     apiVersion: v1
@@ -1265,21 +1258,25 @@ data:
             vsphere-cpi-infra: daemonset
         spec:
           tolerations:
-          - key: node.cloudprovider.kubernetes.io/uninitialized
-            value: "true"
-            effect: NoSchedule
-          - key: node-role.kubernetes.io/master
-            effect: NoSchedule
-            operator: Exists
-          - key: node-role.kubernetes.io/control-plane
-            effect: NoSchedule
-            operator: Exists
-          - key: node.kubernetes.io/not-ready
-            effect: NoSchedule
-            operator: Exists
-          - key: CriticalAddonsOnly
-            effect: NoExecute
-            operator: Exists
+            - effect: NoSchedule
+              key: node.cloudprovider.kubernetes.io/uninitialized
+              value: "true"
+            - effect: NoSchedule
+              key: node-role.kubernetes.io/control-plane
+              operator: Exists
+            - effect: NoSchedule
+              key: node.kubernetes.io/not-ready
+              operator: Exists
+            - effect: NoExecute
+              key: CriticalAddonsOnly
+              operator: Exists
+          affinity:
+            nodeAffinity:
+              requiredDuringSchedulingIgnoredDuringExecution:
+                nodeSelectorTerms:
+                - matchExpressions:
+                  - key: node-role.kubernetes.io/control-plane
+                    operator: Exists
           securityContext:
             fsGroup: 1001
             runAsUser: 1001
@@ -1289,7 +1286,7 @@ data:
           priorityClassName: system-node-critical
           containers:
           - name: vsphere-cpi
-            image: gcr.io/cloud-provider-vsphere/cpi/release/manager:${CPI_IMAGE_K8S_VERSION}
+            image: registry.k8s.io/cloud-pv-vsphere/cloud-provider-vsphere:${CPI_IMAGE_K8S_VERSION}
             imagePullPolicy: IfNotPresent
             args:
               - --cloud-provider=vsphere
@@ -1303,16 +1300,6 @@ data:
             - name: vsphere-config-volume
               configMap:
                 name: cloud-config
-          affinity:
-            nodeAffinity:
-              requiredDuringSchedulingIgnoredDuringExecution:
-                nodeSelectorTerms:
-                - matchExpressions:
-                  - key: node-role.kubernetes.io/control-plane
-                    operator: Exists
-                - matchExpressions:
-                  - key: node-role.kubernetes.io/master
-                    operator: Exists
     ---
     apiVersion: rbac.authorization.k8s.io/v1
     kind: RoleBinding

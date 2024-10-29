@@ -19,9 +19,6 @@ package helpers
 import (
 	"net"
 	"os"
-	"path"
-	"path/filepath"
-	goruntime "runtime"
 	"strconv"
 	"time"
 
@@ -76,14 +73,12 @@ func appendWebhookConfiguration(configyamlFile []byte, tag string) ([]*v1.Mutati
 	return mutatingWebhooks, validatingWebhooks, err
 }
 
-func initializeWebhookInEnvironment() {
-	// Get the root of the current file to use in CRD paths.
-	_, filename, _, ok := goruntime.Caller(0)
-	if !ok {
-		klog.Fatalf("Failed to get information for current file from runtime")
+// InitializeWebhookInEnvironment initializes WebhookInstallOptions for the provided environment.
+func InitializeWebhookInEnvironment(e *envtest.Environment, configPath string) {
+	if configPath == "" {
+		klog.Fatalf("webhook configuration path is empty")
 	}
-	root := path.Join(path.Dir(filename), "..", "..", "..")
-	configyamlFile, err := os.ReadFile(filepath.Clean(filepath.Join(root, "config", "webhook", "manifests.yaml")))
+	configyamlFile, err := os.ReadFile(configPath) //nolint:gosec
 	if err != nil {
 		klog.Fatalf("Failed to read core webhook configuration file: %v ", err)
 	}
@@ -96,7 +91,7 @@ func initializeWebhookInEnvironment() {
 		klog.Fatalf("Failed to append core controller webhook config: %v", err)
 	}
 
-	env.WebhookInstallOptions = envtest.WebhookInstallOptions{
+	e.WebhookInstallOptions = envtest.WebhookInstallOptions{
 		MaxTime:            20 * time.Second,
 		PollInterval:       time.Second,
 		ValidatingWebhooks: validatingWebhooks,
@@ -108,19 +103,19 @@ func initializeWebhookInEnvironment() {
 func (t *TestEnvironment) WaitForWebhooks() {
 	port := env.WebhookInstallOptions.LocalServingPort
 
-	klog.V(2).Infof("Waiting for webhook port %d to be open prior to running tests", port)
+	klog.Infof("Waiting for webhook port %d to be open prior to running tests", port)
 	timeout := 1 * time.Second
 	for {
 		time.Sleep(1 * time.Second)
 		conn, err := net.DialTimeout("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)), timeout)
 		if err != nil {
-			klog.V(2).Infof("Webhook port is not ready, will retry in %v: %s", timeout, err)
+			klog.Infof("Webhook port is not ready, will retry in %v: %s", timeout, err)
 			continue
 		}
 		if err := conn.Close(); err != nil {
-			klog.V(2).Info("Connection to webhook port could not be closed. Continuing with tests...")
+			klog.Info("Connection to webhook port could not be closed. Continuing with tests...")
 		}
-		klog.V(2).Info("Webhook port is now open. Continuing with tests...")
+		klog.Info("Webhook port is now open. Continuing with tests...")
 		return
 	}
 }

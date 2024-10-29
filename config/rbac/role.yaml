@@ -188,6 +188,19 @@ rules:
   - update
   - watch
 - apiGroups:
+  - crd.nsx.vmware.com
+  resources:
+  - subnetsets
+  - subnetsets/status
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
   - infrastructure.cluster.x-k8s.io
   resources:
   - vsphereclusteridentities
@@ -335,19 +348,6 @@ rules:
   - list
   - watch
 - apiGroups:
-  - nsx.vmware.com
-  resources:
-  - subnetsets
-  - subnetsets/status
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
   - rbac.authorization.k8s.io
   resources:
   - rolebindings
@@ -372,6 +372,22 @@ rules:
   - topology.tanzu.vmware.com
   resources:
   - availabilityzones/status
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - topology.tanzu.vmware.com
+  resources:
+  - zones
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - vmoperator.vmware.com
+  resources:
+  - virtualmachineclasses
   verbs:
   - get
   - list

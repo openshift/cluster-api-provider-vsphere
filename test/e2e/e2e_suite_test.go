@@ -27,8 +27,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	vmoprv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha1"
-	topologyv1 "github.com/vmware-tanzu/vm-operator/external/tanzu-topology/api/v1alpha1"
+	vmoprv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha2"
 	corev1 "k8s.io/api/core/v1"
 	storagev1 "k8s.io/api/storage/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -42,6 +41,7 @@ import (
 
 	infrav1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/v1beta1"
 	vmwarev1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/vmware/v1beta1"
+	topologyv1 "sigs.k8s.io/cluster-api-provider-vsphere/internal/apis/topology/v1alpha1"
 	vsphereframework "sigs.k8s.io/cluster-api-provider-vsphere/test/framework"
 	vsphereip "sigs.k8s.io/cluster-api-provider-vsphere/test/framework/ip"
 	vspherelog "sigs.k8s.io/cluster-api-provider-vsphere/test/framework/log"
@@ -119,9 +119,8 @@ var (
 
 	namespaces map[*corev1.Namespace]context.CancelFunc
 
-	// e2eIPAMKubeconfig is a kubeconfig to a cluster which provides IP address management via an in-cluster
-	// IPAM provider to claim IPs for the control plane IPs of created clusters.
-	e2eIPAMKubeconfig string
+	// e2eIPPool to be used for the e2e test.
+	e2eIPPool string
 
 	// inClusterAddressManager is used to claim and cleanup IP addresses used for kubernetes control plane API Servers.
 	inClusterAddressManager vsphereip.AddressManager
@@ -137,7 +136,7 @@ func init() {
 	flag.BoolVar(&alsoLogToFile, "e2e.also-log-to-file", true, "if true, ginkgo logs are additionally written to the `ginkgo-log.txt` file in the artifacts folder (including timestamps)")
 	flag.BoolVar(&skipCleanup, "e2e.skip-resource-cleanup", false, "if true, the resource cleanup after tests will be skipped")
 	flag.BoolVar(&useExistingCluster, "e2e.use-existing-cluster", false, "if true, the test uses the current cluster instead of creating a new one (default discovery rules apply)")
-	flag.StringVar(&e2eIPAMKubeconfig, "e2e.ipam-kubeconfig", "", "path to the kubeconfig for the IPAM cluster")
+	flag.StringVar(&e2eIPPool, "e2e.ip-pool", "", "IPPool to use for the e2e test. Supports the addresses, gateway and prefix fields from the InClusterIPPool CRD https://github.com/kubernetes-sigs/cluster-api-ipam-provider-in-cluster/blob/main/api/v1alpha2/inclusterippool_types.go")
 }
 
 func TestE2E(t *testing.T) {
@@ -209,9 +208,7 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 	vsphereframework.InitBootstrapCluster(ctx, bootstrapClusterProxy, e2eConfig, clusterctlConfigPath, artifactFolder)
 
 	if testTarget == VCSimTestTarget {
-		Byf("Creating a vcsim server")
-		err := vspherevcsim.Create(ctx, bootstrapClusterProxy.GetClient())
-		Expect(err).ToNot(HaveOccurred(), "Failed to create VCenterSimulator")
+		createVCSimServer(bootstrapClusterProxy)
 	}
 
 	By("Getting AddressClaim labels")
@@ -266,9 +263,18 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 	// vspherelog.MachineLogCollector tries to ssh to the machines to collect logs.
 	// This does not work when using vcsim because there are no real machines running ssh.
 	if testTarget != VCSimTestTarget {
-		clusterProxyOptions = append(clusterProxyOptions, framework.WithMachineLogCollector(vspherelog.MachineLogCollector{}))
+		clusterProxyOptions = append(clusterProxyOptions, framework.WithMachineLogCollector(&vspherelog.MachineLogCollector{
+			Client: vsphereClient,
+			Finder: vsphereFinder,
+		}))
 	}
-	bootstrapClusterProxy = framework.NewClusterProxy("bootstrap", kubeconfigPath, initScheme(), clusterProxyOptions...)
+	if testTarget == VCSimTestTarget {
+		// Use a custom cluster-proxy in VCSim mode to allow connections from the e2e test code (outside of the management cluster)
+		// to the fake kube-apiserver running in vcsim-controller.
+		bootstrapClusterProxy = vspherevcsim.NewClusterProxy("bootstrap", kubeconfigPath, initScheme(), clusterProxyOptions...)
+	} else {
+		bootstrapClusterProxy = framework.NewClusterProxy("bootstrap", kubeconfigPath, initScheme(), clusterProxyOptions...)
+	}
 
 	ipClaimLabels := map[string]string{}
 	for _, s := range strings.Split(ipClaimLabelsRaw, ";") {
@@ -282,7 +288,7 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 	switch testTarget {
 	case VCenterTestTarget:
 		// Create the in cluster address manager
-		inClusterAddressManager, err = vsphereip.InClusterAddressManager(e2eIPAMKubeconfig, ipClaimLabels, skipCleanup)
+		inClusterAddressManager, err = vsphereip.InClusterAddressManager(ctx, bootstrapClusterProxy.GetClient(), e2eIPPool, ipClaimLabels, skipCleanup)
 		Expect(err).ToNot(HaveOccurred())
 
 	case VCSimTestTarget:
@@ -351,7 +357,7 @@ func initScheme() *runtime.Scheme {
 	return sc
 }
 
-func setupSpecNamespace(specName string) *corev1.Namespace {
+func setupSpecNamespace(specName string, postNamespaceCreatedFunc func(managementClusterProxy framework.ClusterProxy, workloadClusterNamespace string)) *corev1.Namespace {
 	Byf("Creating a namespace for hosting the %q test spec", specName)
 	namespace, cancelWatches := framework.CreateNamespaceAndWatchEvents(ctx, framework.CreateNamespaceAndWatchEventsInput{
 		Creator:   bootstrapClusterProxy.GetClient(),
@@ -361,6 +367,8 @@ func setupSpecNamespace(specName string) *corev1.Namespace {
 	})
 
 	namespaces[namespace] = cancelWatches
+
+	postNamespaceCreatedFunc(bootstrapClusterProxy, namespace.Name)
 
 	return namespace
 }

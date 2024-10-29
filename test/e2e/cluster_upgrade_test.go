@@ -49,16 +49,14 @@ var _ = Describe("When upgrading a workload cluster using ClusterClass and testi
 				ArtifactFolder:        artifactFolder,
 				SkipCleanup:           skipCleanup,
 				WorkerMachineCount:    ptr.To[int64](5),
-				// Note: install-on-bootstrap will install Kubernetes on bootstrap if the correct Kubernetes version
-				// cannot be detected. This is required to install versions we don't have images for (e.g. ci/latest-1.30).
-				Flavor:               ptr.To(testSpecificSettingsGetter().FlavorForMode("install-on-bootstrap")),
-				PostNamespaceCreated: testSpecificSettingsGetter().PostNamespaceCreatedFunc,
+				Flavor:                ptr.To(testSpecificSettingsGetter().FlavorForMode("fast-rollout")),
+				PostNamespaceCreated:  testSpecificSettingsGetter().PostNamespaceCreatedFunc,
 			}
 		})
 	})
 })
 
-var _ = Describe("When upgrading a workload cluster using ClusterClass [supervisor] [ClusterClass]", func() {
+var _ = Describe("When upgrading a workload cluster using ClusterClass [vcsim] [supervisor] [ClusterClass]", func() {
 	// Note: This installs a cluster based on KUBERNETES_VERSION_UPGRADE_FROM and then upgrades to
 	// KUBERNETES_VERSION_UPGRADE_TO.
 	const specName = "k8s-upgrade" // aligned to CAPI

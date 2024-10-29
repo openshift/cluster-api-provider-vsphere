@@ -9,7 +9,6 @@
 
 - [Prepare main branch for development of the new release](#prepare-main-branch-for-development-of-the-new-release)
 - [Remove previously deprecated code](#remove-previously-deprecated-code)
-- [[Optional] Bump the Kubernetes version](#optional-bump-the-kubernetes-version)
 - [Bump dependencies](#bump-dependencies)
 - [Create a release branch](#create-a-release-branch)
 - [Cut a release](#cut-a-release)
@@ -19,38 +18,39 @@
 
 ## Prepare main branch for development of the new release
 
-TODO(sbueringer): Finalize this section once we do this for the first time
-
 The goal of this issue is to bump the versions on the main branch so that the upcoming release version
 is used for e.g. local development and e2e tests. We also modify tests so that they are testing the previous release.
 
-This comes down to changing occurrences of the old version to the new version, e.g. `v1.7` to `v1.8`:
+This comes down to changing occurrences of the old version to the new version, e.g. `v1.10` to `v1.11`:
 
 1. Setup E2E tests for the new release:
-   1. Goal is that our clusterctl upgrade tests are testing the right versions. For `v1.8` this means:
-      - v1beta1: `v1.8` (will change with each new release)
-      - v1beta1: `v1.7` (will change with each new release)
-   2. Update providers in `vsphere.yaml`, `integration-dev.yaml`:
-      1. Add a new `v1.7.0` entry.
-      2. Remove providers that are not used anymore in clusterctl upgrade tests.
-      3. Change `v1.7.99` to `v1.8.99`.
-   3. Adjust `metadata.yaml`'s:
-      1. Add new release to the top-level `metadata.yaml`
-      2. Create a new `v1.7` `metadata.yaml` (`test/e2e/data/shared/v1.7/v1beta1_provider/metadata.yaml`) by copying
-        `test/e2e/data/shared/main/v1beta1_provider/metadata.yaml`
-      3. Add the new v1.8 release to the main `metadata.yaml` (`test/e2e/data/shared/main/v1beta1_provider/metadata.yaml`).
-      4. Remove old `metadata.yaml`'s that are not used anymore in clusterctl upgrade tests.
-   4. Adjust cluster templates in `test/e2e/data/infrastructure-vsphere`:
-      1. Create a new `v1.7` folder. It should be created based on the `main` folder and only contain the templates
-        we use in the clusterctl upgrade tests (as of today `remote-management`).
-      2. Remove old folders that are not used anymore in clusterctl upgrade tests.
-      3. Copy over the workload folder from a previous release.
-   5. Modify the test specs in `test/e2e/clusterctl_upgrade_test.go` (according to the versions we want to test described above).
+   1. Goal is that our clusterctl upgrade tests are testing the right versions. For `v1.11` this means:
+      - v1beta1: `v1.10 => current` (will change with each new release)
+      - v1beta1: `v1.9 => current` (will change with each new release)
+   2. Modify the test specs in `test/e2e/clusterctl_upgrade_test.go` (according to the versions we want to test described above).
       Please note that both `InitWithKubernetesVersion` and `WorkloadKubernetesVersion` should be the highest mgmt cluster version supported by the respective Cluster API version.
-2. Update `clusterctl-settings.json`: `v1.7.99` => `v1.8.99`.
-3. Make sure all tests are green (also run `pull-cluster-api-provider-vsphere-e2e-full-main` and `pull-cluster-api-provider-vsphere-conformance-main`).
-
-Prior art: [🌱 Prepare main for development of the new release](https://github.com/kubernetes-sigs/cluster-api-provider-vsphere/pull/2643)
+   3. Update providers in `vsphere.yaml`:
+      1. Add a new `v1.10` entry.
+      2. Remove providers that are not used anymore in clusterctl upgrade tests.
+      3. Change `v1.10.99` to `v1.11.99`.
+   4. Adjust `metadata.yaml`'s:
+      1. Create a new `v1.10` `metadata.yaml` (`test/e2e/data/shared/capv/v1.10/metadata.yaml`) by copying the top-level `metadata.yaml`.
+      2. Add new release to the top-level `metadata.yaml`
+      3. Add the new v1.11 release to the main `metadata.yaml` (`test/e2e/data/shared/capv/main/metadata.yaml`).
+      4. Remove old `metadata.yaml`'s that are not used anymore in clusterctl upgrade tests.
+   5. Adjust cluster templates in `test/e2e/data/infrastructure-vsphere-govmomi` and `test/e2e/data/infrastructure-vsphere-supervisor`:
+      1. Regenerate templates via `make generate-e2e-templates`.
+      2. Create a new `v1.10` folder. It should be created based on the `main` folder and only contain the templates
+        we use in the clusterctl upgrade tests, as of today:
+         - `clusterclass` (including `clusterclass-quick-start.yaml`)
+         - `commons` (excluding `vcpu.yaml` and `remove-storage-policy.yaml`)
+         - `topology` (including `cluster-template-topology.yaml`)
+         - `workload`
+      3. Remove old folders that are not used anymore in clusterctl upgrade tests.
+      4. Add a `generate-e2e-templates-v1.10` target in `Makefile` and remove the old ones.
+2. Update `clusterctl-settings.json`: `v1.10.99` => `v1.11.99`.
+3. Make sure all tests are green.
+Prior art: [🌱 Prepare main for development of release v1.11](https://github.com/kubernetes-sigs/cluster-api-provider-vsphere/pull/2950)
 
 ## Remove previously deprecated code
 
@@ -61,10 +61,6 @@ The goal of this task is to remove all previously deprecated code that can be no
    we have to keep the old code.
 
 Prior art: TODO(sbueringer): link example PR
-
-## [Optional] Bump the Kubernetes version
-
-TODO(sbueringer): Write this when we do it the next time
 
 ## Bump dependencies
 
@@ -100,11 +96,15 @@ From this point forward changes which should land in the release have to be cher
 4. Create new jobs based on the jobs running against our `main` branch:
    1. Copy the `.branches.main` section in `config/jobs/kubernetes-sigs/cluster-api-provider-vsphere/cluster-api-provider-vsphere-prowjob-gen.yaml` over to a new branch specific section (e.g. `.branches.release-1.8`).
    2. Run `TEST_INFRA_DIR=../../k8s.io/test-infra make generate-test-infra-prowjobs` to regenerate the prowjob files.
-5. Remove tests for old release branches if necessary by removing the release-branch from `cluster-api-provider-vsphere-prowjob-gen.yaml` and regenerating the prowjob files.
-6. Verify the jobs and dashboards a day later by taking a look at [testgrid](https://testgrid.k8s.io/sig-cluster-lifecycle-cluster-api-provider-vsphere)
-7. Update `.github/workflows/weekly-security-scan.yaml` - to setup Trivy and govulncheck scanning - `.github/workflows/weekly-md-link-check.yaml` - to setup link checking in the CAPI book - and `.github/workflows/weekly-test-release.yaml` - to verify the release target is working - for the currently supported branches.
-8. Update the [PR markdown link checker](https://github.com/kubernetes-sigs/cluster-api-provider-vsphere/blob/main/.github/workflows/pr-md-link-check.yaml) accordingly (e.g. `main` -> `release-1.8`).
+5. Verify the jobs and dashboards a day later by taking a look at [testgrid](https://testgrid.k8s.io/sig-cluster-lifecycle-cluster-api-provider-vsphere)
+6. Update `.github/workflows/weekly-security-scan.yaml` - to setup Trivy and govulncheck scanning - `.github/workflows/weekly-md-link-check.yaml` - to setup link checking in the CAPI book - and `.github/workflows/weekly-test-release.yaml` - to verify the release target is working - for the currently supported branches.
+7. Update the [PR markdown link checker](https://github.com/kubernetes-sigs/cluster-api-provider-vsphere/blob/main/.github/workflows/pr-md-link-check.yaml) accordingly (e.g. `main` -> `release-1.8`).
    - Prior art: [Update branch for link checker](https://github.com/kubernetes-sigs/cluster-api-provider-vsphere/pull/2242)
+
+After the release is cut:
+
+1. Remove tests for old release branches if necessary by removing the release-branch from `cluster-api-provider-vsphere-prowjob-gen.yaml` and regenerating the prowjob files.
+2. Update `.github/workflows/weekly-security-scan.yaml` - to setup Trivy and govulncheck scanning - `.github/workflows/weekly-md-link-check.yaml` - to setup link checking in the CAPI book - and `.github/workflows/weekly-test-release.yaml` - to verify the release target is working - to remove the not supported release-branch.
 
 ## Cut a release
 

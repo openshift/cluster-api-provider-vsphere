@@ -18,8 +18,8 @@ package controllers
 
 import (
 	"fmt"
-	"os"
 	"reflect"
+	"time"
 
 	"github.com/google/uuid"
 	. "github.com/onsi/ginkgo/v2"
@@ -30,7 +30,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/ptr"
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	"sigs.k8s.io/cluster-api/util/conditions"
 	"sigs.k8s.io/cluster-api/util/patch"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -44,11 +43,6 @@ var _ = Describe("ProviderServiceAccount controller integration tests", func() {
 
 	BeforeEach(func() {
 		intCtx = helpers.NewIntegrationTestContextWithClusters(ctx, testEnv.Manager.GetClient())
-		testSystemSvcAcctCM := "test-system-svc-acct-cm"
-		cfgMap := getSystemServiceAccountsConfigMap(intCtx.VSphereCluster.Namespace, testSystemSvcAcctCM)
-		Expect(intCtx.Client.Create(ctx, cfgMap)).To(Succeed())
-		_ = os.Setenv("SERVICE_ACCOUNTS_CM_NAMESPACE", intCtx.VSphereCluster.Namespace)
-		_ = os.Setenv("SERVICE_ACCOUNTS_CM_NAME", testSystemSvcAcctCM)
 	})
 
 	AfterEach(func() {
@@ -61,14 +55,31 @@ var _ = Describe("ProviderServiceAccount controller integration tests", func() {
 			targetNSObj *corev1.Namespace
 		)
 		BeforeEach(func() {
+			By(fmt.Sprintf("Creating the Cluster (%s), vSphereCluster (%s) and KubeconfigSecret", intCtx.Cluster.Name, intCtx.VSphereCluster.Name), func() {
+				helpers.CreateAndWait(ctx, intCtx.Client, intCtx.Cluster)
+				helpers.CreateAndWait(ctx, intCtx.Client, intCtx.VSphereCluster)
+				helpers.CreateAndWait(ctx, intCtx.Client, intCtx.KubeconfigSecret)
+			})
+
+			By("Verifying that the guest cluster client works")
+			var guestClient client.Client
+			var err error
+			Eventually(func() error {
+				guestClient, err = tracker.GetClient(ctx, client.ObjectKeyFromObject(intCtx.Cluster))
+				return err
+			}, time.Minute, 5*time.Second).Should(Succeed())
+			// Note: Create a Service informer, so the test later doesn't fail if this doesn't work.
+			Expect(guestClient.List(ctx, &corev1.ServiceList{}, client.InNamespace(metav1.NamespaceDefault))).To(Succeed())
+
 			pSvcAccount = getTestProviderServiceAccount(intCtx.Namespace, intCtx.VSphereCluster)
 			createTestResource(ctx, intCtx.Client, pSvcAccount)
 			assertEventuallyExistsInNamespace(ctx, intCtx.Client, intCtx.Namespace, pSvcAccount.GetName(), pSvcAccount)
 		})
 		AfterEach(func() {
-			// Deleting the provider service account is not strictly required as the context itself
-			// gets teared down but keeping it for clarity.
 			deleteTestResource(ctx, intCtx.Client, pSvcAccount)
+			deleteTestResource(ctx, intCtx.Client, intCtx.VSphereCluster)
+			deleteTestResource(ctx, intCtx.Client, intCtx.Cluster)
+			deleteTestResource(ctx, intCtx.Client, intCtx.KubeconfigSecret)
 		})
 
 		Context("When serviceaccount secret is created", func() {
@@ -129,13 +140,9 @@ var _ = Describe("ProviderServiceAccount controller integration tests", func() {
 
 	Context("With non-existent Cluster object", func() {
 		It("cannot reconcile the ProviderServiceAccount object", func() {
-			By("Deleting the CAPI cluster object", func() {
-				clusterName, ok := intCtx.VSphereCluster.GetLabels()[clusterv1.ClusterNameLabel]
-				Expect(ok).To(BeTrue())
-				cluster := &clusterv1.Cluster{}
-				key := client.ObjectKey{Namespace: intCtx.Namespace, Name: clusterName}
-				Expect(intCtx.Client.Get(ctx, key, cluster)).To(Succeed())
-				Expect(intCtx.Client.Delete(ctx, cluster)).To(Succeed())
+			By("Creating the vSphereCluster and KubeconfigSecret only", func() {
+				helpers.CreateAndWait(ctx, intCtx.Client, intCtx.VSphereCluster)
+				helpers.CreateAndWait(ctx, intCtx.Client, intCtx.KubeconfigSecret)
 			})
 
 			By("Creating the ProviderServiceAccount", func() {
@@ -155,16 +162,9 @@ var _ = Describe("ProviderServiceAccount controller integration tests", func() {
 
 	Context("With non-existent Cluster credentials secret", func() {
 		It("cannot reconcile the ProviderServiceAccount object", func() {
-			By("Deleting the CAPI kubeconfig secret object", func() {
-				clusterName, ok := intCtx.VSphereCluster.GetLabels()[clusterv1.ClusterNameLabel]
-				Expect(ok).To(BeTrue())
-				secret := &corev1.Secret{
-					ObjectMeta: metav1.ObjectMeta{
-						Namespace: intCtx.Namespace,
-						Name:      fmt.Sprintf("%s-kubeconfig", clusterName),
-					},
-				}
-				Expect(intCtx.Client.Delete(ctx, secret)).To(Succeed())
+			By("Creating the Cluster and vSphereCluster only", func() {
+				helpers.CreateAndWait(ctx, intCtx.Client, intCtx.Cluster)
+				helpers.CreateAndWait(ctx, intCtx.Client, intCtx.VSphereCluster)
 			})
 
 			By("Creating the ProviderServiceAccount", func() {
@@ -187,6 +187,11 @@ var _ = Describe("ProviderServiceAccount controller integration tests", func() {
 		var role *rbacv1.Role
 		var roleBinding *rbacv1.RoleBinding
 		BeforeEach(func() {
+			By(fmt.Sprintf("Creating the Cluster (%s), vSphereCluster (%s) and KubeconfigSecret", intCtx.Cluster.Name, intCtx.VSphereCluster.Name), func() {
+				helpers.CreateAndWait(ctx, intCtx.Client, intCtx.Cluster)
+				helpers.CreateAndWait(ctx, intCtx.Client, intCtx.VSphereCluster)
+				helpers.CreateAndWait(ctx, intCtx.Client, intCtx.KubeconfigSecret)
+			})
 			pSvcAccount = getTestProviderServiceAccount(intCtx.Namespace, intCtx.VSphereCluster)
 			pSvcAccount.Spec.TargetNamespace = "default"
 			// Pause the ProviderServiceAccount so we can create dependent but legacy resources
