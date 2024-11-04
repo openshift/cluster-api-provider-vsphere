@@ -20,10 +20,9 @@ import (
 	"context"
 	"fmt"
 	"path"
-	"time"
 
 	"github.com/pkg/errors"
-	vmoprv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha1"
+	vmoprv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha2"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	kerrors "k8s.io/apimachinery/pkg/util/errors"
@@ -50,11 +49,9 @@ import (
 )
 
 type VirtualMachineReconciler struct {
-	Client            client.Client
-	InMemoryManager   inmemoryruntime.Manager
-	APIServerMux      *inmemoryserver.WorkloadClustersMux
-	EnableKeepAlive   bool
-	KeepAliveDuration time.Duration
+	Client          client.Client
+	InMemoryManager inmemoryruntime.Manager
+	APIServerMux    *inmemoryserver.WorkloadClustersMux
 
 	// WatchFilterValue is the label value used to filter events prior to reconciliation.
 	WatchFilterValue string
@@ -217,8 +214,8 @@ func (r *VirtualMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 
 	// Add finalizer first if not set to avoid the race condition between init and delete.
 	// Note: Finalizers in general can only be added when the deletionTimestamp is not set.
-	if !controllerutil.ContainsFinalizer(virtualMachine, VMFinalizer) {
-		controllerutil.AddFinalizer(virtualMachine, VMFinalizer)
+	if !controllerutil.ContainsFinalizer(virtualMachine, vcsimv1.VMFinalizer) {
+		controllerutil.AddFinalizer(virtualMachine, vcsimv1.VMFinalizer)
 		return ctrl.Result{}, nil
 	}
 
@@ -246,15 +243,13 @@ func (r *VirtualMachineReconciler) reconcileDelete(ctx context.Context, cluster 
 		return ret, err
 	}
 
-	controllerutil.RemoveFinalizer(virtualMachine, VMFinalizer)
+	controllerutil.RemoveFinalizer(virtualMachine, vcsimv1.VMFinalizer)
 	return ctrl.Result{}, nil
 }
 
 func (r *VirtualMachineReconciler) getVMIpReconciler(cluster *clusterv1.Cluster, virtualMachine *vmoprv1.VirtualMachine) *vmIPReconciler {
 	return &vmIPReconciler{
-		Client:            r.Client,
-		EnableKeepAlive:   r.EnableKeepAlive,
-		KeepAliveDuration: r.KeepAliveDuration,
+		Client: r.Client,
 
 		// Type specific functions; those functions wraps the differences between govmomi and supervisor types,
 		// thus allowing to use the same vmIPReconciler in both scenarios.
@@ -264,7 +259,7 @@ func (r *VirtualMachineReconciler) getVMIpReconciler(cluster *clusterv1.Cluster,
 		},
 		IsVMWaitingforIP: func() bool {
 			// A virtualMachine is waiting for an IP when PoweredOn but without an Ip.
-			return virtualMachine.Status.PowerState == vmoprv1.VirtualMachinePoweredOn && virtualMachine.Status.VmIp == ""
+			return virtualMachine.Status.PowerState == vmoprv1.VirtualMachinePowerStateOn && (virtualMachine.Status.Network == nil || (virtualMachine.Status.Network.PrimaryIP4 == "" && virtualMachine.Status.Network.PrimaryIP6 == ""))
 		},
 		GetVMPath: func() string {
 			// The vm operator always create VMs under a sub-folder with named like the cluster.
@@ -284,7 +279,7 @@ func (r *VirtualMachineReconciler) getVMBootstrapReconciler(virtualMachine *vmop
 		// thus allowing to use the same vmBootstrapReconciler in both scenarios.
 		IsVMReady: func() bool {
 			// A virtualMachine is ready to provision fake objects hosted on it when PoweredOn, with a primary Ip assigned and BiosUUID is set (bios id is required when provisioning the node to compute the Provider ID).
-			return virtualMachine.Status.PowerState == vmoprv1.VirtualMachinePoweredOn && virtualMachine.Status.VmIp != "" && virtualMachine.Status.BiosUUID != ""
+			return virtualMachine.Status.PowerState == vmoprv1.VirtualMachinePowerStateOn && virtualMachine.Status.Network != nil && (virtualMachine.Status.Network.PrimaryIP4 != "" || virtualMachine.Status.Network.PrimaryIP6 != "") && virtualMachine.Status.BiosUUID != ""
 		},
 		GetProviderID: func() string {
 			// Computes the ProviderID for the node hosted on the virtualMachine
@@ -294,7 +289,7 @@ func (r *VirtualMachineReconciler) getVMBootstrapReconciler(virtualMachine *vmop
 }
 
 func (r *VirtualMachineReconciler) getVCenterSession(ctx context.Context) (*session.Session, error) {
-	return vmoperator.GetVCenterSession(ctx, r.Client, r.EnableKeepAlive, r.KeepAliveDuration)
+	return vmoperator.GetVCenterSession(ctx, r.Client)
 }
 
 // SetupWithManager will add watches for this controller.

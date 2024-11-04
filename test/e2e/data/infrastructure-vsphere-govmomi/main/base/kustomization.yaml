@@ -6,10 +6,15 @@ resources:
 patchesStrategicMerge:
   - ../commons/cluster-resource-set-label.yaml
   - ../commons/cluster-network-CIDR.yaml
-  - ../commons/cluster-resource-set-csi-insecure.yaml
 patches:
   # We are dropping storage policy so we also have test coverage
   # for normal provisioning via data stores.
   - target:
       kind: VSphereMachineTemplate
     path: ../commons/remove-storage-policy.yaml
+  - target:
+      kind: KubeadmControlPlane
+    path: ./patch-k8s-install-script-kcp.yaml
+  - target:
+      kind: KubeadmConfigTemplate
+    path: ./patch-k8s-install-script-kct.yaml

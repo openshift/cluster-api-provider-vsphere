@@ -28,8 +28,7 @@ import (
 
 	"github.com/pkg/errors"
 	"github.com/spf13/pflag"
-	vmoprv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha1"
-	topologyv1 "github.com/vmware-tanzu/vm-operator/external/tanzu-topology/api/v1alpha1"
+	vmoprv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha2"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
@@ -57,7 +56,7 @@ import (
 
 	infrav1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/v1beta1"
 	vmwarev1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/vmware/v1beta1"
-	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/constants"
+	topologyv1 "sigs.k8s.io/cluster-api-provider-vsphere/internal/apis/topology/v1alpha1"
 	vcsimv1 "sigs.k8s.io/cluster-api-provider-vsphere/test/infrastructure/vcsim/api/v1alpha1"
 	"sigs.k8s.io/cluster-api-provider-vsphere/test/infrastructure/vcsim/controllers"
 )
@@ -81,7 +80,7 @@ var (
 	restConfigQPS               float32
 	restConfigBurst             int
 	healthAddr                  string
-	diagnosticsOptions          = flags.DiagnosticsOptions{}
+	managerOptions              = flags.ManagerOptions{}
 	logOptions                  = logs.NewOptions()
 	// vcsim specific flags.
 	vSphereVMConcurrency              int
@@ -90,9 +89,6 @@ var (
 	controlPlaneEndpointConcurrency   int
 	envsubstConcurrency               int
 	vmOperatorDependenciesConcurrency int
-	// vsphere session specific flags.
-	enableKeepAlive   bool
-	keepAliveDuration time.Duration
 )
 
 func init() {
@@ -163,21 +159,15 @@ func InitFlags(fs *pflag.FlagSet) {
 		"The minimum interval at which watched resources are reconciled (e.g. 15m)")
 
 	fs.Float32Var(&restConfigQPS, "kube-api-qps", 20,
-		"Maximum queries per second from the controller client to the Kubernetes API server. Defaults to 20")
+		"Maximum queries per second from the controller client to the Kubernetes API server.")
 
 	fs.IntVar(&restConfigBurst, "kube-api-burst", 30,
-		"Maximum number of queries that should be allowed in one burst from the controller client to the Kubernetes API server. Default 30")
+		"Maximum number of queries that should be allowed in one burst from the controller client to the Kubernetes API server.")
 
 	fs.StringVar(&healthAddr, "health-addr", ":9440",
 		"The address the health endpoint binds to.")
 
-	fs.BoolVar(&enableKeepAlive, "enable-keep-alive", constants.DefaultEnableKeepAlive,
-		"feature to enable keep alive handler in vsphere sessions. This functionality is enabled by default.")
-
-	fs.DurationVar(&keepAliveDuration, "keep-alive-duration", constants.DefaultKeepAliveDuration,
-		"idle time interval(minutes) in between send() requests in keepalive handler")
-
-	flags.AddDiagnosticsOptions(fs, &diagnosticsOptions)
+	flags.AddManagerOptions(fs, &managerOptions)
 
 	feature.MutableGates.AddFlag(fs)
 }
@@ -210,8 +200,11 @@ func main() {
 	restConfig.Burst = restConfigBurst
 	restConfig.UserAgent = remote.DefaultClusterAPIUserAgent(controllerName)
 
-	diagnosticsOpts := flags.GetDiagnosticsOptions(diagnosticsOptions)
-
+	_, metricsOptions, err := flags.GetManagerOptions(managerOptions)
+	if err != nil {
+		setupLog.Error(err, "Unable to start manager: invalid flags")
+		os.Exit(1)
+	}
 	var watchNamespaces map[string]cache.Config
 	if watchNamespace != "" {
 		watchNamespaces = map[string]cache.Config{
@@ -233,7 +226,7 @@ func main() {
 		LeaderElectionResourceLock: resourcelock.LeasesResourceLock,
 		HealthProbeBindAddress:     healthAddr,
 		PprofBindAddress:           profilerAddress,
-		Metrics:                    diagnosticsOpts,
+		Metrics:                    *metricsOptions,
 		Cache: cache.Options{
 			DefaultNamespaces: watchNamespaces,
 			SyncPeriod:        &syncPeriod,
@@ -353,12 +346,10 @@ func setupReconcilers(ctx context.Context, mgr ctrl.Manager, supervisorMode bool
 
 	if supervisorMode {
 		if err := (&controllers.VirtualMachineReconciler{
-			Client:            mgr.GetClient(),
-			InMemoryManager:   inmemoryManager,
-			APIServerMux:      apiServerMux,
-			EnableKeepAlive:   enableKeepAlive,
-			KeepAliveDuration: keepAliveDuration,
-			WatchFilterValue:  watchFilterValue,
+			Client:           mgr.GetClient(),
+			InMemoryManager:  inmemoryManager,
+			APIServerMux:     apiServerMux,
+			WatchFilterValue: watchFilterValue,
 		}).SetupWithManager(ctx, mgr, concurrency(virtualMachineConcurrency)); err != nil {
 			setupLog.Error(err, "unable to create controller", "controller", "VirtualMachineReconciler")
 			os.Exit(1)
@@ -373,12 +364,10 @@ func setupReconcilers(ctx context.Context, mgr ctrl.Manager, supervisorMode bool
 		}
 	} else {
 		if err := (&controllers.VSphereVMReconciler{
-			Client:            mgr.GetClient(),
-			InMemoryManager:   inmemoryManager,
-			APIServerMux:      apiServerMux,
-			EnableKeepAlive:   enableKeepAlive,
-			KeepAliveDuration: keepAliveDuration,
-			WatchFilterValue:  watchFilterValue,
+			Client:           mgr.GetClient(),
+			InMemoryManager:  inmemoryManager,
+			APIServerMux:     apiServerMux,
+			WatchFilterValue: watchFilterValue,
 		}).SetupWithManager(ctx, mgr, concurrency(vSphereVMConcurrency)); err != nil {
 			setupLog.Error(err, "unable to create controller", "controller", "VSphereVMReconciler")
 			os.Exit(1)

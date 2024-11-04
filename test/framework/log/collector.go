@@ -22,16 +22,25 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/pkg/errors"
+	"github.com/vmware/govmomi"
+	"github.com/vmware/govmomi/find"
+	"github.com/vmware/govmomi/vim25/mo"
 	"golang.org/x/crypto/ssh"
+	kerrors "k8s.io/apimachinery/pkg/util/errors"
+	"k8s.io/klog/v2"
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	expv1 "sigs.k8s.io/cluster-api/exp/api/v1beta1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	kinderrors "sigs.k8s.io/kind/pkg/errors"
+
+	vmwarev1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/vmware/v1beta1"
+	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/services/vmoperator"
 )
 
 const (
@@ -39,20 +48,19 @@ const (
 	VSpherePrivateKeyFilePath = "VSPHERE_SSH_PRIVATE_KEY"
 )
 
-type MachineLogCollector struct{}
+type MachineLogCollector struct {
+	Client *govmomi.Client
+	Finder *find.Finder
+}
 
-func (collector MachineLogCollector) CollectMachinePoolLog(_ context.Context, _ client.Client, _ *expv1.MachinePool, _ string) error {
+func (c *MachineLogCollector) CollectMachinePoolLog(_ context.Context, _ client.Client, _ *expv1.MachinePool, _ string) error {
 	return nil
 }
 
-func (collector MachineLogCollector) CollectMachineLog(_ context.Context, _ client.Client, m *clusterv1.Machine, outputPath string) error {
-	var hostIPAddr string
-	for _, address := range m.Status.Addresses {
-		if address.Type != clusterv1.MachineExternalIP {
-			continue
-		}
-		hostIPAddr = address.Address
-		break
+func (c *MachineLogCollector) CollectMachineLog(ctx context.Context, ctrlClient client.Client, m *clusterv1.Machine, outputPath string) error {
+	machineIPAddresses, err := c.machineIPAddresses(ctx, ctrlClient, m)
+	if err != nil {
+		return err
 	}
 
 	captureLogs := func(hostFileName, command string, args ...string) func() error {
@@ -62,11 +70,24 @@ func (collector MachineLogCollector) CollectMachineLog(_ context.Context, _ clie
 				return err
 			}
 			defer f.Close()
-			return executeRemoteCommand(f, hostIPAddr, command, args...)
+			var errs []error
+			// Try with all available IPs unless it succeeded.
+			for _, machineIPAddress := range machineIPAddresses {
+				if err := executeRemoteCommand(f, machineIPAddress, command, args...); err != nil {
+					errs = append(errs, err)
+					continue
+				}
+				return nil
+			}
+
+			if err := kerrors.NewAggregate(errs); err != nil {
+				return errors.Wrapf(err, "failed to run command %s for machine %s on ips [%s]", command, klog.KObj(m), strings.Join(machineIPAddresses, ", "))
+			}
+			return nil
 		}
 	}
 
-	return kinderrors.AggregateConcurrent([]func() error{
+	return aggregateConcurrent(
 		captureLogs("kubelet.log",
 			"sudo journalctl", "--no-pager", "--output=short-precise", "-u", "kubelet.service"),
 		captureLogs("containerd.log",
@@ -75,15 +96,80 @@ func (collector MachineLogCollector) CollectMachineLog(_ context.Context, _ clie
 			"sudo", "cat", "/var/log/cloud-init.log"),
 		captureLogs("cloud-init-output.log",
 			"sudo", "cat", "/var/log/cloud-init-output.log"),
-	})
+		captureLogs("kubeadm-service.log",
+			"sudo", "cat", "/var/log/kubeadm-service.log"),
+	)
 }
 
-func (collector MachineLogCollector) CollectInfrastructureLogs(_ context.Context, _ client.Client, _ *clusterv1.Cluster, _ string) error {
+func (c *MachineLogCollector) CollectInfrastructureLogs(_ context.Context, _ client.Client, _ *clusterv1.Cluster, _ string) error {
 	return nil
 }
 
+func (c *MachineLogCollector) machineIPAddresses(ctx context.Context, ctrlClient client.Client, m *clusterv1.Machine) ([]string, error) {
+	for _, address := range m.Status.Addresses {
+		if address.Type != clusterv1.MachineExternalIP {
+			continue
+		}
+		return []string{address.Address}, nil
+	}
+
+	vmName := m.GetName()
+
+	// For supervisor mode it could be the case that the name of the virtual machine differs from the machine's name.
+	if m.Spec.InfrastructureRef.GroupVersionKind().Group == vmwarev1.GroupVersion.Group {
+		vsphereMachine := &vmwarev1.VSphereMachine{}
+		if err := ctrlClient.Get(ctx, client.ObjectKey{Namespace: m.Spec.InfrastructureRef.Namespace, Name: m.Spec.InfrastructureRef.Name}, vsphereMachine); err != nil {
+			return nil, errors.Wrapf(err, "getting vmwarev1.VSphereMachine %s/%s", m.Spec.InfrastructureRef.Namespace, m.Spec.InfrastructureRef.Name)
+		}
+
+		if vsphereMachine.Status.IPAddr != "" {
+			return []string{vsphereMachine.Status.IPAddr}, nil
+		}
+
+		var err error
+		vmName, err = vmoperator.GenerateVirtualMachineName(m.Name, vsphereMachine.Spec.NamingStrategy)
+		if err != nil {
+			return nil, errors.Wrapf(err, "generating VirtualMachine name for Machine %s/%s", m.Namespace, m.Name)
+		}
+	}
+
+	vmObj, err := c.Finder.VirtualMachine(ctx, vmName)
+	if err != nil {
+		return nil, err
+	}
+
+	var vm mo.VirtualMachine
+
+	if err := c.Client.RetrieveOne(ctx, vmObj.Reference(), []string{"guest.net"}, &vm); err != nil {
+		// We cannot get the properties e.g. when the vm already got deleted or is getting deleted.
+		return nil, errors.Errorf("error retrieving properties for machine %s", klog.KObj(m))
+	}
+
+	addresses := []string{}
+
+	// Return all IPs so we can try each of them until one succeeded.
+	for _, nic := range vm.Guest.Net {
+		if nic.IpConfig == nil {
+			continue
+		}
+		for _, ip := range nic.IpConfig.IpAddress {
+			netIP := net.ParseIP(ip.IpAddress)
+			ipv4 := netIP.To4()
+			if ipv4 != nil {
+				addresses = append(addresses, ip.IpAddress)
+			}
+		}
+	}
+
+	if len(addresses) == 0 {
+		return nil, errors.Errorf("unable to find IP Addresses for Machine %s", klog.KObj(m))
+	}
+
+	return addresses, nil
+}
+
 func createOutputFile(path string) (*os.File, error) {
-	if err := os.MkdirAll(filepath.Dir(path), os.ModePerm); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0750); err != nil {
 		return nil, err
 	}
 	return os.Create(filepath.Clean(path))
@@ -154,4 +240,29 @@ func readPrivateKey() ([]byte, error) {
 	}
 
 	return os.ReadFile(filepath.Clean(privateKeyFilePath))
+}
+
+// aggregateConcurrent runs fns concurrently, returning aggregated errors.
+func aggregateConcurrent(funcs ...func() error) error {
+	// run all fns concurrently
+	ch := make(chan error, len(funcs))
+	var wg sync.WaitGroup
+	for _, f := range funcs {
+		f := f
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ch <- f()
+		}()
+	}
+	wg.Wait()
+	close(ch)
+	// collect up and return errors
+	errs := []error{}
+	for err := range ch {
+		if err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return kerrors.NewAggregate(errs)
 }

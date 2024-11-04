@@ -1,7 +1,7 @@
 ---
 - name: vsphere
   config:
-    version: v1.10.99
+    version: v1.11.99
     image: gcr.io/k8s-staging-capi-vsphere/cluster-api-vsphere-controller
     live_reload_deps:
       - main.go
@@ -15,7 +15,7 @@
     label: CAPV
 - name: vsphere-supervisor
   config:
-    version: v1.10.99
+    version: v1.11.99
     image: gcr.io/k8s-staging-capi-vsphere/cluster-api-vsphere-controller
     live_reload_deps:
       - main.go
@@ -34,6 +34,6 @@
   config:
     version: v1.8.6
     label: VMOP
-    kustomize_folder: "/test/infrastructure/vm-operator"
+    kustomize_folder: "/test/infrastructure/vm-operator/config"
     kustomize_options:
       - "--load-restrictor=LoadRestrictionsNone"

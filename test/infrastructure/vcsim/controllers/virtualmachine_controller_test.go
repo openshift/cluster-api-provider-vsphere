@@ -21,7 +21,7 @@ import (
 	"time"
 
 	. "github.com/onsi/gomega"
-	vmoprv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha1"
+	vmoprv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha2"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -37,6 +37,7 @@ import (
 
 	infrav1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/v1beta1"
 	vmwarev1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/vmware/v1beta1"
+	vcsimv1 "sigs.k8s.io/cluster-api-provider-vsphere/test/infrastructure/vcsim/api/v1alpha1"
 )
 
 func Test_Reconcile_VirtualMachine(t *testing.T) {
@@ -106,7 +107,7 @@ func Test_Reconcile_VirtualMachine(t *testing.T) {
 					},
 				},
 				Finalizers: []string{
-					VMFinalizer, // Adding this to move past the first reconcile
+					vcsimv1.VMFinalizer, // Adding this to move past the first reconcile
 				},
 			},
 		}
@@ -235,14 +236,16 @@ func Test_Reconcile_VirtualMachine(t *testing.T) {
 					},
 				},
 				Finalizers: []string{
-					VMFinalizer, // Adding this to move past the first reconcile
+					vcsimv1.VMFinalizer, // Adding this to move past the first reconcile
 				},
 			},
 			Status: vmoprv1.VirtualMachineStatus{
 				// Those values are required to unblock provisioning of node
-				BiosUUID:   "foo",
-				VmIp:       "1.2.3.4",
-				PowerState: vmoprv1.VirtualMachinePoweredOn,
+				BiosUUID: "foo",
+				Network: &vmoprv1.VirtualMachineNetworkStatus{
+					PrimaryIP4: "1.2.3.4",
+				},
+				PowerState: vmoprv1.VirtualMachinePowerStateOn,
 			},
 		}
 

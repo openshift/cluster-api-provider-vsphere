@@ -71,7 +71,7 @@ func CreateCrsResourceObjectsCPI(crs *addonsv1.ClusterResourceSet) []runtime.Obj
 	cpiObjects = append(cpiObjects, cloudConfigConfigMap)
 
 	manifestsCm := newConfigMapManifests("cpi-manifests", cpiObjects)
-	manifestsCm.Data["data"] = cpiManifests + manifestsCm.Data["data"]
+	manifestsCm.Data["data"] = cpiManifests + "---\n" + manifestsCm.Data["data"]
 
 	appendConfigMapToCrsResource(crs, manifestsCm)
 	// Define the kubeconfig secret for the target cluster.
@@ -99,7 +99,7 @@ func cpiCredentials(credentials map[string]string) *corev1.Secret {
 		},
 		ObjectMeta: metav1.ObjectMeta{
 			Namespace: metav1.NamespaceSystem,
-			Name:      "cloud-provider-vsphere-credentials",
+			Name:      "cloud-provider-vsphere-credentials", // NOTE: this name is used in E2E tests.
 		},
 		Type:       corev1.SecretTypeOpaque,
 		StringData: credentials,

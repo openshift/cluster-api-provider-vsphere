@@ -18,17 +18,20 @@ package vmoperator
 
 import (
 	"context"
+	"testing"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	vmoprv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha1"
+	gomegatypes "github.com/onsi/gomega/types"
+	vmoprv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha2"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/utils/ptr"
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	"sigs.k8s.io/cluster-api/util/conditions"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -147,9 +150,10 @@ var _ = Describe("VirtualMachine tests", func() {
 				Expect(vmopVM.Spec.ImageName).To(Equal(expectedImageName))
 				Expect(vmopVM.Spec.ClassName).To(Equal(className))
 				Expect(vmopVM.Spec.StorageClass).To(Equal(storageClass))
-				Expect(vmopVM.Spec.ResourcePolicyName).To(Equal(resourcePolicyName))
+				Expect(vmopVM.Spec.Reserved).ToNot(BeNil())
+				Expect(vmopVM.Spec.Reserved.ResourcePolicyName).To(Equal(resourcePolicyName))
 				Expect(vmopVM.Spec.MinHardwareVersion).To(Equal(minHardwareVersion))
-				Expect(vmopVM.Spec.PowerState).To(Equal(vmoprv1.VirtualMachinePoweredOn))
+				Expect(vmopVM.Spec.PowerState).To(Equal(vmoprv1.VirtualMachinePowerStateOn))
 				Expect(vmopVM.ObjectMeta.Annotations[ClusterModuleNameAnnotationKey]).To(Equal(ControlPlaneVMClusterModuleGroupName))
 				Expect(vmopVM.ObjectMeta.Annotations[ProviderTagsAnnotationKey]).To(Equal(ControlPlaneVMVMAntiAffinityTagValue))
 
@@ -229,7 +233,12 @@ var _ = Describe("VirtualMachine tests", func() {
 			// Simulate VMOperator creating a vSphere VM
 			By("vSphere VM is created")
 			vmopVM = getReconciledVM(ctx, vmService, supervisorMachineContext)
-			vmopVM.Status.Phase = vmoprv1.Created
+			vmopVM.Status.Conditions = append(vmopVM.Status.Conditions, metav1.Condition{
+				Type:               vmoprv1.VirtualMachineConditionCreated,
+				Status:             metav1.ConditionTrue,
+				LastTransitionTime: metav1.NewTime(time.Now().UTC().Truncate(time.Second)),
+				Reason:             string(metav1.ConditionTrue),
+			})
 			updateReconciledVMStatus(ctx, vmService, vmopVM)
 			expectedState = vmwarev1.VirtualMachineStateCreated
 			// we expect the reconciliation waiting for VM to be powered on
@@ -240,7 +249,7 @@ var _ = Describe("VirtualMachine tests", func() {
 			// Simulate VMOperator powering on the VM
 			By("VirtualMachine is powered on")
 			vmopVM = getReconciledVM(ctx, vmService, supervisorMachineContext)
-			vmopVM.Status.PowerState = vmoprv1.VirtualMachinePoweredOn
+			vmopVM.Status.PowerState = vmoprv1.VirtualMachinePowerStateOn
 			updateReconciledVMStatus(ctx, vmService, vmopVM)
 			expectedState = vmwarev1.VirtualMachineStatePoweredOn
 			// we expect the reconciliation waiting for VM to have an IP
@@ -251,7 +260,10 @@ var _ = Describe("VirtualMachine tests", func() {
 			// Simulate VMOperator assigning an IP address
 			By("VirtualMachine has an IP address")
 			vmopVM = getReconciledVM(ctx, vmService, supervisorMachineContext)
-			vmopVM.Status.VmIp = vmIP
+			if vmopVM.Status.Network == nil {
+				vmopVM.Status.Network = &vmoprv1.VirtualMachineNetworkStatus{}
+			}
+			vmopVM.Status.Network.PrimaryIP4 = vmIP
 			updateReconciledVMStatus(ctx, vmService, vmopVM)
 			// we expect the reconciliation waiting for VM to have a BIOS UUID
 			expectedConditions[0].Reason = vmwarev1.WaitingForBIOSUUIDReason
@@ -340,7 +352,12 @@ var _ = Describe("VirtualMachine tests", func() {
 			// Simulate VMOperator creating a vSphere VM
 			By("vSphere VM is created")
 			vmopVM = getReconciledVM(ctx, vmService, supervisorMachineContext)
-			vmopVM.Status.Phase = vmoprv1.Created
+			vmopVM.Status.Conditions = append(vmopVM.Status.Conditions, metav1.Condition{
+				Type:               vmoprv1.VirtualMachineConditionCreated,
+				Status:             metav1.ConditionTrue,
+				LastTransitionTime: metav1.NewTime(time.Now().UTC().Truncate(time.Second)),
+				Reason:             string(metav1.ConditionTrue),
+			})
 			updateReconciledVMStatus(ctx, vmService, vmopVM)
 			expectedState = vmwarev1.VirtualMachineStateCreated
 			expectedConditions[0].Reason = vmwarev1.PoweringOnReason
@@ -350,7 +367,7 @@ var _ = Describe("VirtualMachine tests", func() {
 			// Simulate VMOperator powering on the VM
 			By("VirtualMachine is powered on")
 			vmopVM = getReconciledVM(ctx, vmService, supervisorMachineContext)
-			vmopVM.Status.PowerState = vmoprv1.VirtualMachinePoweredOn
+			vmopVM.Status.PowerState = vmoprv1.VirtualMachinePowerStateOn
 			updateReconciledVMStatus(ctx, vmService, vmopVM)
 			expectedState = vmwarev1.VirtualMachineStatePoweredOn
 			expectedConditions[0].Reason = vmwarev1.WaitingForNetworkAddressReason
@@ -360,7 +377,10 @@ var _ = Describe("VirtualMachine tests", func() {
 			// Simulate VMOperator assigning an IP address
 			By("VirtualMachine has an IP address")
 			vmopVM = getReconciledVM(ctx, vmService, supervisorMachineContext)
-			vmopVM.Status.VmIp = vmIP
+			if vmopVM.Status.Network == nil {
+				vmopVM.Status.Network = &vmoprv1.VirtualMachineNetworkStatus{}
+			}
+			vmopVM.Status.Network.PrimaryIP4 = vmIP
 			updateReconciledVMStatus(ctx, vmService, vmopVM)
 			expectedConditions[0].Reason = vmwarev1.WaitingForBIOSUUIDReason
 			requeue, err = vmService.ReconcileNormal(ctx, supervisorMachineContext)
@@ -388,7 +408,10 @@ var _ = Describe("VirtualMachine tests", func() {
 			cluster.Status.ControlPlaneReady = true
 
 			vmopVM = getReconciledVM(ctx, vmService, supervisorMachineContext)
-			vmopVM.Status.VmIp = vmIP
+			if vmopVM.Status.Network == nil {
+				vmopVM.Status.Network = &vmoprv1.VirtualMachineNetworkStatus{}
+			}
+			vmopVM.Status.Network.PrimaryIP4 = vmIP
 			updateReconciledVMStatus(ctx, vmService, vmopVM)
 			requeue, err = vmService.ReconcileNormal(ctx, supervisorMachineContext)
 			verifyOutput(supervisorMachineContext)
@@ -430,12 +453,12 @@ var _ = Describe("VirtualMachine tests", func() {
 			requeue, err = vmService.ReconcileNormal(ctx, supervisorMachineContext)
 			vmopVM = getReconciledVM(ctx, vmService, supervisorMachineContext)
 			errMessage := "TestVirtualMachineClassBinding not found"
-			vmopVM.Status.Conditions = append(vmopVM.Status.Conditions, vmoprv1.Condition{
-				Type:     vmoprv1.VirtualMachinePrereqReadyCondition,
-				Status:   corev1.ConditionFalse,
-				Reason:   vmoprv1.VirtualMachineClassBindingNotFoundReason,
-				Severity: vmoprv1.ConditionSeverityError,
-				Message:  errMessage,
+			vmopVM.Status.Conditions = append(vmopVM.Status.Conditions, metav1.Condition{
+				Type:               vmoprv1.VirtualMachineConditionClassReady,
+				Status:             metav1.ConditionFalse,
+				LastTransitionTime: metav1.NewTime(time.Now().UTC().Truncate(time.Second)),
+				Reason:             "NotFound",
+				Message:            errMessage,
 			})
 
 			updateReconciledVMStatus(ctx, vmService, vmopVM)
@@ -448,7 +471,7 @@ var _ = Describe("VirtualMachine tests", func() {
 				Type:     infrav1.VMProvisionedCondition,
 				Status:   corev1.ConditionFalse,
 				Severity: clusterv1.ConditionSeverityError,
-				Reason:   vmoprv1.VirtualMachineClassBindingNotFoundReason,
+				Reason:   "NotFound",
 				Message:  errMessage,
 			})
 			verifyOutput(supervisorMachineContext)
@@ -479,10 +502,12 @@ var _ = Describe("VirtualMachine tests", func() {
 
 			vmVolume := vmoprv1.VirtualMachineVolume{
 				Name: "test",
-				PersistentVolumeClaim: &vmoprv1.PersistentVolumeClaimVolumeSource{
-					PersistentVolumeClaimVolumeSource: corev1.PersistentVolumeClaimVolumeSource{
-						ClaimName: "test-pvc",
-						ReadOnly:  false,
+				VirtualMachineVolumeSource: vmoprv1.VirtualMachineVolumeSource{
+					PersistentVolumeClaim: &vmoprv1.PersistentVolumeClaimVolumeSource{
+						PersistentVolumeClaimVolumeSource: corev1.PersistentVolumeClaimVolumeSource{
+							ClaimName: "test-pvc",
+							ReadOnly:  false,
+						},
 					},
 				},
 			}
@@ -536,10 +561,12 @@ var _ = Describe("VirtualMachine tests", func() {
 				name := volumeName(vsphereMachine, volume)
 				vmVolume := vmoprv1.VirtualMachineVolume{
 					Name: name,
-					PersistentVolumeClaim: &vmoprv1.PersistentVolumeClaimVolumeSource{
-						PersistentVolumeClaimVolumeSource: corev1.PersistentVolumeClaimVolumeSource{
-							ClaimName: name,
-							ReadOnly:  false,
+					VirtualMachineVolumeSource: vmoprv1.VirtualMachineVolumeSource{
+						PersistentVolumeClaim: &vmoprv1.PersistentVolumeClaimVolumeSource{
+							PersistentVolumeClaimVolumeSource: corev1.PersistentVolumeClaimVolumeSource{
+								ClaimName: name,
+								ReadOnly:  false,
+							},
 						},
 					},
 				}
@@ -627,3 +654,73 @@ var _ = Describe("GetMachinesInCluster", func() {
 		Expect(objs[0].GetName()).To(Equal(machineName))
 	})
 })
+
+func Test_virtualMachineObjectKey(t *testing.T) {
+	tests := []struct {
+		name        string
+		machineName string
+		template    *string
+		want        []gomegatypes.GomegaMatcher
+		wantErr     bool
+	}{
+		{
+			name:        "default template",
+			machineName: "quick-start-d34gt4-md-0-wqc85-8nxwc-gfd5v",
+			template:    nil,
+			want: []gomegatypes.GomegaMatcher{
+				Equal("quick-start-d34gt4-md-0-wqc85-8nxwc-gfd5v"),
+			},
+		},
+		{
+			name:        "template which doesn't respect max length: trim to max length",
+			machineName: "quick-start-d34gt4-md-0-wqc85-8nxwc-gfd5v", // 41 characters
+			template:    ptr.To[string]("{{ .machine.name }}-{{ .machine.name }}"),
+			want: []gomegatypes.GomegaMatcher{
+				Equal("quick-start-d34gt4-md-0-wqc85-8nxwc-gfd5v-quick-start-d34gt4-md"), // 63 characters
+			},
+		},
+		{
+			name:        "template for 20 characters: keep machine name if name has 20 characters",
+			machineName: "quick-md-8nxwc-gfd5v", // 20 characters
+			template:    ptr.To[string]("{{ if le (len .machine.name) 20 }}{{ .machine.name }}{{else}}{{ trimSuffix \"-\" (trunc 14 .machine.name) }}-{{ trunc -5 .machine.name }}{{end}}"),
+			want: []gomegatypes.GomegaMatcher{
+				Equal("quick-md-8nxwc-gfd5v"), // 20 characters
+			},
+		},
+		{
+			name:        "template for 20 characters: trim to 20 characters if name has more than 20 characters",
+			machineName: "quick-start-d34gt4-md-0-wqc85-8nxwc-gfd5v", // 41 characters
+			template:    ptr.To[string]("{{ if le (len .machine.name) 20 }}{{ .machine.name }}{{else}}{{ trimSuffix \"-\" (trunc 14 .machine.name) }}-{{ trunc -5 .machine.name }}{{end}}"),
+			want: []gomegatypes.GomegaMatcher{
+				Equal("quick-start-d3-gfd5v"), // 20 characters
+			},
+		},
+		{
+			name:        "template for 20 characters: trim to 19 characters if name has more than 20 characters and last character of prefix is -",
+			machineName: "quick-start-d-34gt4-md-0-wqc85-8nxwc-gfd5v", // 42 characters
+			template:    ptr.To[string]("{{ if le (len .machine.name) 20 }}{{ .machine.name }}{{else}}{{ trimSuffix \"-\" (trunc 14 .machine.name) }}-{{ trunc -5 .machine.name }}{{end}}"),
+			want: []gomegatypes.GomegaMatcher{
+				Equal("quick-start-d-gfd5v"), // 19 characters
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
+
+			got, err := virtualMachineObjectKey(tt.machineName, corev1.NamespaceDefault, &vmwarev1.VirtualMachineNamingStrategy{
+				Template: tt.template,
+			})
+			if (err != nil) != tt.wantErr {
+				t.Errorf("virtualMachineObjectKey error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if len(got.Name) > maxNameLength {
+				t.Errorf("generated name should never be longer than %d, got %d", maxNameLength, len(got.Name))
+			}
+			for _, matcher := range tt.want {
+				g.Expect(got.Name).To(matcher)
+			}
+		})
+	}
+}

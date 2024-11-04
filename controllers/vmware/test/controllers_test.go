@@ -19,27 +19,34 @@ package test
 import (
 	"context"
 	"fmt"
+	"net"
 	"reflect"
+	"strconv"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	vmoprv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha1"
+	vmoprv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha2"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
+	"k8s.io/klog/v2"
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	ctrlmgr "sigs.k8s.io/controller-runtime/pkg/manager"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
+	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
 	infrav1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/v1beta1"
 	vmwarev1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/vmware/v1beta1"
 	"sigs.k8s.io/cluster-api-provider-vsphere/controllers"
+	"sigs.k8s.io/cluster-api-provider-vsphere/controllers/vmware"
+	vmwarewebhooks "sigs.k8s.io/cluster-api-provider-vsphere/internal/webhooks/vmware"
+	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/constants"
 	capvcontext "sigs.k8s.io/cluster-api-provider-vsphere/pkg/context"
 	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/manager"
 )
@@ -208,7 +215,7 @@ func updateClusterInfraRef(cluster *clusterv1.Cluster, infraCluster client.Objec
 	Expect(k8sClient.Update(ctx, cluster)).To(Succeed())
 }
 
-func getManager(cfg *rest.Config, networkProvider string) manager.Manager {
+func getManager(cfg *rest.Config, networkProvider string, withWebhooks bool) manager.Manager {
 	localScheme := runtime.NewScheme()
 	Expect(scheme.AddToScheme(localScheme)).To(Succeed())
 
@@ -228,10 +235,32 @@ func getManager(cfg *rest.Config, networkProvider string) manager.Manager {
 		NetworkProvider: networkProvider,
 	}
 
+	if withWebhooks {
+		opts.WebhookServer = webhook.NewServer(
+			webhook.Options{
+				Port:    testEnv.WebhookInstallOptions.LocalServingPort,
+				CertDir: testEnv.WebhookInstallOptions.LocalServingCertDir,
+				Host:    "0.0.0.0",
+			},
+		)
+	}
+
 	controllerOpts := controller.Options{MaxConcurrentReconciles: 10}
 
 	opts.AddToManager = func(ctx context.Context, controllerCtx *capvcontext.ControllerManagerContext, mgr ctrlmgr.Manager) error {
 		if err := controllers.AddClusterControllerToManager(ctx, controllerCtx, mgr, true, controllerOpts); err != nil {
+			return err
+		}
+
+		if withWebhooks {
+			if err := (&vmwarewebhooks.VSphereMachineTemplateWebhook{}).SetupWebhookWithManager(mgr); err != nil {
+				return err
+			}
+			if err := (&vmwarewebhooks.VSphereMachineWebhook{}).SetupWebhookWithManager(mgr); err != nil {
+				return err
+			}
+		}
+		if err := vmware.AddVSphereMachineTemplateControllerToManager(ctx, controllerCtx, mgr, controllerOpts); err != nil {
 			return err
 		}
 
@@ -243,9 +272,9 @@ func getManager(cfg *rest.Config, networkProvider string) manager.Manager {
 	return mgr
 }
 
-func initManagerAndBuildClient(networkProvider string) (client.Client, context.CancelFunc) {
+func initManagerAndBuildClient(networkProvider string, withWebhooks bool) (client.Client, context.CancelFunc) {
 	By("setting up a new manager")
-	mgr := getManager(restConfig, networkProvider)
+	mgr := getManager(restConfig, networkProvider, withWebhooks)
 	k8sClient := mgr.GetClient()
 
 	By("starting the manager")
@@ -256,9 +285,34 @@ func initManagerAndBuildClient(networkProvider string) (client.Client, context.C
 		if managerRuntimeError != nil {
 			_, _ = fmt.Fprintln(GinkgoWriter, "Manager failed at runtime")
 		}
+
+		if withWebhooks {
+			// wait for webhook port to be open prior to running tests
+			waitForWebhooks()
+		}
 	}()
 
 	return k8sClient, managerCancel
+}
+
+func waitForWebhooks() {
+	port := testEnv.WebhookInstallOptions.LocalServingPort
+
+	klog.Infof("Waiting for webhook port %d to be open prior to running tests", port)
+	timeout := 1 * time.Second
+	for {
+		time.Sleep(1 * time.Second)
+		conn, err := net.DialTimeout("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)), timeout)
+		if err != nil {
+			klog.Infof("Webhook port is not ready, will retry in %v: %s", timeout, err)
+			continue
+		}
+		if err := conn.Close(); err != nil {
+			klog.Info("Connection to webhook port could not be closed. Continuing with tests...")
+		}
+		klog.Info("Webhook port is now open. Continuing with tests...")
+		return
+	}
 }
 
 func prepareClient(isLoadBalanced bool) (cli client.Client, cancelation context.CancelFunc) {
@@ -267,7 +321,7 @@ func prepareClient(isLoadBalanced bool) (cli client.Client, cancelation context.
 		networkProvider = manager.DummyLBNetworkProvider
 	}
 
-	cli, cancelation = initManagerAndBuildClient(networkProvider)
+	cli, cancelation = initManagerAndBuildClient(networkProvider, false)
 	return
 }
 
@@ -418,7 +472,7 @@ var _ = Describe("Reconciliation tests", func() {
 			Eventually(func() error {
 				return k8sClient.Get(ctx, rpKey, resourcePolicy)
 			}, time.Second*30).Should(Succeed())
-			Expect(len(resourcePolicy.Spec.ClusterModules)).To(BeEquivalentTo(2))
+			Expect(len(resourcePolicy.Spec.ClusterModuleGroups)).To(BeEquivalentTo(2))
 
 			By("Create the CAPI Machine and wait for it to exist")
 			machineKey, machine := deployCAPIMachine(ns.Name, cluster, k8sClient)
@@ -591,7 +645,12 @@ var _ = Describe("Reconciliation tests", func() {
 				}
 				// These two lines must be initialized as requirements of having valid Status
 				newVM.Status.Volumes = []vmoprv1.VirtualMachineVolumeStatus{}
-				newVM.Status.Phase = vmoprv1.Created
+				newVM.Status.Conditions = append(newVM.Status.Conditions, metav1.Condition{
+					Type:               vmoprv1.VirtualMachineConditionCreated,
+					Status:             metav1.ConditionTrue,
+					LastTransitionTime: metav1.NewTime(time.Now().UTC().Truncate(time.Second)),
+					Reason:             string(metav1.ConditionTrue),
+				})
 				return k8sClient.Status().Update(ctx, newVM)
 			}, time.Second*30).Should(Succeed())
 
@@ -604,7 +663,7 @@ var _ = Describe("Reconciliation tests", func() {
 				if err != nil {
 					return err
 				}
-				newVM.Status.PowerState = vmoprv1.VirtualMachinePoweredOn
+				newVM.Status.PowerState = vmoprv1.VirtualMachinePowerStateOn
 				return k8sClient.Status().Update(ctx, newVM)
 			}, time.Second*30).Should(Succeed())
 
@@ -617,20 +676,37 @@ var _ = Describe("Reconciliation tests", func() {
 				if err != nil {
 					return err
 				}
-				newVM.Status.VmIp = "1.2.3.4"
+				if newVM.Status.Network == nil {
+					newVM.Status.Network = &vmoprv1.VirtualMachineNetworkStatus{}
+				}
+				newVM.Status.Network.PrimaryIP4 = "1.2.3.4"
 				newVM.Status.BiosUUID = "test-bios-uuid"
+				newVM.Status.Host = "some-esxi-host"
 				return k8sClient.Status().Update(ctx, newVM)
 			}, time.Second*30).Should(Succeed())
 
 			By("Expect the VSphereMachine VM status to reflect VM Ready status")
 			assertEventuallyVMStatus(infraMachineKey, infraMachine, vmwarev1.VirtualMachineStateReady)
 
+			By("Expect the Machine's label to reflect the ESXi host")
+			EventuallyWithOffset(1, func() (string, error) {
+				if err := k8sClient.Get(ctx, machineKey, machine); err != nil {
+					return "", err
+				}
+				v, ok := machine.GetLabels()[constants.ESXiHostInfoLabel]
+				if !ok {
+					return "", fmt.Errorf("expect machine to have label %s", constants.ESXiHostInfoLabel)
+				}
+
+				return v, nil
+			}, time.Second*30, time.Millisecond*500).Should(Equal("some-esxi-host"))
+
 			// In the case of a LoadBalanced endpoint, ControlPlaneEndpoint is a
 			// load-balancer Testing load-balanced endpoints is done in
 			// control_plane_endpoint_test.go
 			if !isLB {
 				By("Expect the Cluster to have the IP from the VM as an APIEndpoint")
-				assertEventuallyControlPlaneEndpoint(infraClusterKey, infraCluster, newVM.Status.VmIp)
+				assertEventuallyControlPlaneEndpoint(infraClusterKey, infraCluster, newVM.Status.Network.PrimaryIP4)
 			}
 		},
 		Entry("With no load balancer", dontUseLoadBalancer),

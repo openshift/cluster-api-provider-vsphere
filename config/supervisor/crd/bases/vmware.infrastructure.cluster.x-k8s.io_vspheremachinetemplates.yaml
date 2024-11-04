@@ -1,0 +1,187 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.15.0
+  name: vspheremachinetemplates.vmware.infrastructure.cluster.x-k8s.io
+spec:
+  group: vmware.infrastructure.cluster.x-k8s.io
+  names:
+    categories:
+    - cluster-api
+    kind: VSphereMachineTemplate
+    listKind: VSphereMachineTemplateList
+    plural: vspheremachinetemplates
+    singular: vspheremachinetemplate
+  scope: Namespaced
+  versions:
+  - name: v1beta1
+    schema:
+      openAPIV3Schema:
+        description: VSphereMachineTemplate is the Schema for the vspheremachinetemplates
+          API.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: VSphereMachineTemplateSpec defines the desired state of VSphereMachineTemplate.
+            properties:
+              template:
+                description: VSphereMachineTemplateResource describes the data needed
+                  to create a VSphereMachine from a template.
+                properties:
+                  spec:
+                    description: Spec is the specification of the desired behavior
+                      of the machine.
+                    properties:
+                      className:
+                        description: |-
+                          ClassName is the name of the class used when specifying the underlying
+                          virtual machine
+                        type: string
+                      failureDomain:
+                        description: |-
+                          FailureDomain is the failure domain the machine will be created in.
+                          Must match a key in the FailureDomains map stored on the cluster object.
+                        type: string
+                      imageName:
+                        description: |-
+                          ImageName is the name of the base image used when specifying the
+                          underlying virtual machine
+                        type: string
+                      minHardwareVersion:
+                        description: |-
+                          MinHardwareVersion specifies the desired minimum hardware version
+                          for this VM. Setting this field will ensure that the hardware version
+                          of the VM is at least set to the specified value.
+                          The expected format of the field is vmx-15.
+                        type: string
+                      namingStrategy:
+                        description: NamingStrategy allows configuring the naming
+                          strategy used when calculating the name of the VirtualMachine.
+                        properties:
+                          template:
+                            description: |-
+                              Template defines the template to use for generating the name of the VirtualMachine object.
+                              If not defined, it will fall back to `{{ .machine.name }}`.
+                              The templating has the following data available:
+                              * `.machine.name`: The name of the Machine object.
+                              The templating also has the following funcs available:
+                              * `trimSuffix`: same as strings.TrimSuffix
+                              * `trunc`: truncates a string, e.g. `trunc 2 "hello"` or `trunc -2 "hello"`
+                              Notes:
+                              * While the template offers some flexibility, we would like the name to link to the Machine name
+                                to ensure better user experience when troubleshooting
+                              * Generated names must be valid Kubernetes names as they are used to create a VirtualMachine object
+                                and usually also as the name of the Node object.
+                              * Names are automatically truncated at 63 characters. Please note that this can lead to name conflicts,
+                                so we highly recommend to use a template which leads to a name shorter than 63 characters.
+                            type: string
+                        type: object
+                      powerOffMode:
+                        default: hard
+                        description: |-
+                          PowerOffMode describes the desired behavior when powering off a VM.
+
+
+                          There are three, supported power off modes: hard, soft, and
+                          trySoft. The first mode, hard, is the equivalent of a physical
+                          system's power cord being ripped from the wall. The soft mode
+                          requires the VM's guest to have VM Tools installed and attempts to
+                          gracefully shut down the VM. Its variant, trySoft, first attempts
+                          a graceful shutdown, and if that fails or the VM is not in a powered off
+                          state after reaching 5 minutes timeout, the VM is halted.
+
+
+                          If omitted, the mode defaults to hard.
+                        enum:
+                        - hard
+                        - soft
+                        - trySoft
+                        type: string
+                      providerID:
+                        description: |-
+                          ProviderID is the virtual machine's BIOS UUID formatted as
+                          vsphere://12345678-1234-1234-1234-123456789abc.
+                          This is required at runtime by CAPI. Do not remove this field.
+                        type: string
+                      storageClass:
+                        description: |-
+                          StorageClass is the name of the storage class used when specifying the
+                          underlying virtual machine.
+                        type: string
+                      volumes:
+                        description: Volumes is the set of PVCs to be created and
+                          attached to the VSphereMachine
+                        items:
+                          description: VSphereMachineVolume defines a PVC attachment.
+                          properties:
+                            capacity:
+                              additionalProperties:
+                                anyOf:
+                                - type: integer
+                                - type: string
+                                pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                                x-kubernetes-int-or-string: true
+                              description: Capacity is the PVC capacity
+                              type: object
+                            name:
+                              description: 'Name is suffix used to name this PVC as:
+                                VSphereMachine.Name + "-" + Name'
+                              type: string
+                            storageClass:
+                              description: StorageClass defaults to VSphereMachineSpec.StorageClass
+                              type: string
+                          required:
+                          - capacity
+                          - name
+                          type: object
+                        type: array
+                    required:
+                    - className
+                    - imageName
+                    type: object
+                required:
+                - spec
+                type: object
+            required:
+            - template
+            type: object
+          status:
+            description: VSphereMachineTemplateStatus defines the observed state of
+              VSphereMachineTemplate.
+            properties:
+              capacity:
+                additionalProperties:
+                  anyOf:
+                  - type: integer
+                  - type: string
+                  pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                  x-kubernetes-int-or-string: true
+                description: |-
+                  Capacity defines the resource capacity for this VSphereMachineTemplate.
+                  This value is used for autoscaling from zero operations as defined in:
+                  https://github.com/kubernetes-sigs/cluster-api/blob/main/docs/proposals/20210310-opt-in-autoscaling-from-zero.md
+                type: object
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

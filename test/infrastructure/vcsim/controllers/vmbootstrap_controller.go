@@ -51,12 +51,6 @@ import (
 // TODO: investigate if we can share this code with the CAPI in memory provider.
 
 const (
-	// VMFinalizer allows this reconciler to cleanup resources before removing the
-	// VSphereVM from the API Server.
-	VMFinalizer = "vcsim.fake.infrastructure.cluster.x-k8s.io"
-)
-
-const (
 	// VMProvisionedCondition documents the status of VM provisioning,
 	// which includes the VM being provisioned and with a boostrap secret available.
 	VMProvisionedCondition clusterv1.ConditionType = "VMProvisioned"
@@ -240,11 +234,15 @@ func (r *vmBootstrapReconciler) reconcileBoostrapNode(ctx context.Context, clust
 		Status: corev1.NodeStatus{
 			Conditions: []corev1.NodeCondition{
 				{
-					Type:   corev1.NodeReady,
-					Status: corev1.ConditionTrue,
+					LastTransitionTime: metav1.Now(),
+					Type:               corev1.NodeReady,
+					Status:             corev1.ConditionTrue,
 				},
 			},
 		},
+	}
+	if machine.Spec.Version != nil {
+		node.Status.NodeInfo.KubeletVersion = *machine.Spec.Version
 	}
 	if util.IsControlPlaneMachine(machine) {
 		if node.Labels == nil {
