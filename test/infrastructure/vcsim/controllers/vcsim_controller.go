@@ -30,10 +30,14 @@ import (
 	_ "github.com/dougm/pretty" // NOTE: this is required to add commands vm.* to cli.Run
 	"github.com/pkg/errors"
 	"github.com/vmware/govmomi/govc/cli"
-	_ "github.com/vmware/govmomi/govc/vm" // NOTE: this is required to add commands vm.* to cli.Run
+	_ "github.com/vmware/govmomi/govc/tags"             // NOTE: this is required to add commands tags.* to cli.Run
+	_ "github.com/vmware/govmomi/govc/tags/association" // NOTE: this is required to add commands tags.attach.* to cli.Run
+	_ "github.com/vmware/govmomi/govc/tags/category"    // NOTE: this is required to add commands tags.category.* to cli.Run
+	_ "github.com/vmware/govmomi/govc/vm"               // NOTE: this is required to add commands vm.* to cli.Run
 	pbmsimulator "github.com/vmware/govmomi/pbm/simulator"
 	"github.com/vmware/govmomi/simulator"
 	_ "github.com/vmware/govmomi/vapi/simulator" // NOTE: this is required to content library & other vapi methods to the simulator
+	_ "github.com/vmware/govmomi/vapi/tags"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -189,6 +193,13 @@ func (r *VCenterSimulatorReconciler) reconcileNormal(ctx context.Context, vCente
 		if err := createVMTemplates(ctx, vCenterSimulator); err != nil {
 			return err
 		}
+
+		if !r.SupervisorMode {
+			// Create and attach tags for failure domain tests.
+			if err := createGovmomiFailureDomainTags(vCenterSimulator); err != nil {
+				return err
+			}
+		}
 	}
 
 	if vCenterSimulator.Status.Thumbprint == "" {
@@ -256,6 +267,30 @@ func createVMTemplates(ctx context.Context, vCenterSimulator *vcsimv1.VCenterSim
 	return nil
 }
 
+func createGovmomiFailureDomainTags(vCenterSimulator *vcsimv1.VCenterSimulator) error {
+	govcURLArg := fmt.Sprintf("-u=https://%s:%s@%s/sdk", vCenterSimulator.Status.Username, vCenterSimulator.Status.Password, vCenterSimulator.Status.Host)
+
+	datacenterName := vcsimhelpers.DatacenterName(0)
+	computeClusterName := vcsimhelpers.ClusterName(0, 0)
+	commands := [][]string{
+		{"tags.category.create", "-k=true", govcURLArg, "-t=Datacenter", "k8s-region"},
+		{"tags.category.create", "-k=true", govcURLArg, "k8s-zone"},
+		{"tags.create", "-k=true", govcURLArg, "-c", "k8s-region", datacenterName},
+		{"tags.create", "-k=true", govcURLArg, "-c", "k8s-zone", computeClusterName},
+		{"tags.attach", "-k=true", govcURLArg, "-c", "k8s-region", datacenterName, "/" + datacenterName},
+		{"tags.attach", "-k=true", govcURLArg, "-c", "k8s-zone", computeClusterName, "/" + datacenterName + "/host/" + computeClusterName},
+	}
+
+	for _, command := range commands {
+		exit := cli.Run(command)
+		if exit != 0 {
+			return fmt.Errorf("failed to run command: %s", strings.Join(command, " "))
+		}
+	}
+
+	return nil
+}
+
 func (r *VCenterSimulatorReconciler) reconcileDelete(ctx context.Context, vCenterSimulator *vcsimv1.VCenterSimulator) {
 	log := ctrl.LoggerFrom(ctx)
 	log.Info("Reconciling delete VCenter server")
@@ -276,10 +311,12 @@ func (r *VCenterSimulatorReconciler) reconcileDelete(ctx context.Context, vCente
 
 // SetupWithManager will add watches for this controller.
 func (r *VCenterSimulatorReconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manager, options controller.Options) error {
+	predicateLog := ctrl.LoggerFrom(ctx).WithValues("controller", "vcentersimulator")
+
 	err := ctrl.NewControllerManagedBy(mgr).
 		For(&vcsimv1.VCenterSimulator{}).
 		WithOptions(options).
-		WithEventFilter(predicates.ResourceNotPausedAndHasFilterLabel(ctrl.LoggerFrom(ctx), r.WatchFilterValue)).
+		WithEventFilter(predicates.ResourceNotPausedAndHasFilterLabel(mgr.GetScheme(), predicateLog, r.WatchFilterValue)).
 		Complete(r)
 
 	if err != nil {

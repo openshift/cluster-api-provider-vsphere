@@ -19,71 +19,9 @@ rules:
   - ""
   resources:
   - configmaps
-  verbs:
-  - get
-  - list
-  - watch
-- apiGroups:
-  - ""
-  resources:
-  - configmaps
   - events
   - nodes
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
-  - ""
-  resources:
-  - configmaps/status
-  verbs:
-  - get
-  - patch
-  - update
-- apiGroups:
-  - ""
-  resources:
-  - events
-  verbs:
-  - create
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
-  - ""
-  resources:
-  - persistentvolumeclaims
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - update
-  - watch
-- apiGroups:
-  - ""
-  resources:
-  - persistentvolumeclaims/status
-  verbs:
-  - get
-  - patch
-  - update
-- apiGroups:
-  - ""
-  resources:
   - secrets
-  verbs:
-  - get
-- apiGroups:
-  - ""
-  resources:
   - serviceaccounts
   verbs:
   - create
@@ -96,10 +34,31 @@ rules:
 - apiGroups:
   - ""
   resources:
+  - configmaps/status
+  - persistentvolumeclaims/status
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
+  - ""
+  resources:
+  - namespaces
   - services
   verbs:
   - get
   - list
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - persistentvolumeclaims
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - update
   - watch
 - apiGroups:
   - ""
@@ -124,22 +83,8 @@ rules:
   resources:
   - clusters
   - clusters/status
-  verbs:
-  - get
-  - list
-  - watch
-- apiGroups:
-  - cluster.x-k8s.io
-  resources:
   - machinedeployments
-  verbs:
-  - get
-  - list
-  - watch
-- apiGroups:
-  - cluster.x-k8s.io
-  resources:
-  - machinedeployments
+  - machines/status
   - machinesets
   verbs:
   - get
@@ -155,48 +100,12 @@ rules:
   - patch
   - watch
 - apiGroups:
-  - cluster.x-k8s.io
-  resources:
-  - machines/status
-  verbs:
-  - get
-  - list
-  - watch
-- apiGroups:
   - controlplane.cluster.x-k8s.io
   resources:
   - kubeadmcontrolplanes
   verbs:
   - get
   - list
-  - watch
-- apiGroups:
-  - ""
-  resources:
-  - namespaces
-  verbs:
-  - get
-  - list
-  - watch
-- apiGroups:
-  - ""
-  resources:
-  - nodes
-  verbs:
-  - delete
-  - get
-  - list
-- apiGroups:
-  - ""
-  resources:
-  - secrets
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
   - watch
 - apiGroups:
   - crd.nsx.vmware.com
@@ -215,105 +124,10 @@ rules:
   - infrastructure.cluster.x-k8s.io
   resources:
   - vsphereclusteridentities
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
-  - infrastructure.cluster.x-k8s.io
-  resources:
-  - vsphereclusteridentities/status
-  verbs:
-  - get
-  - patch
-  - update
-- apiGroups:
-  - infrastructure.cluster.x-k8s.io
-  resources:
   - vsphereclusters
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
-  - infrastructure.cluster.x-k8s.io
-  resources:
-  - vsphereclusters/status
-  verbs:
-  - get
-  - patch
-  - update
-- apiGroups:
-  - infrastructure.cluster.x-k8s.io
-  resources:
   - vspheredeploymentzones
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
-  - infrastructure.cluster.x-k8s.io
-  resources:
-  - vspheredeploymentzones/status
-  verbs:
-  - get
-  - patch
-  - update
-- apiGroups:
-  - infrastructure.cluster.x-k8s.io
-  resources:
   - vspherefailuredomains
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
-  - infrastructure.cluster.x-k8s.io
-  resources:
   - vspheremachines
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
-  - infrastructure.cluster.x-k8s.io
-  resources:
-  - vspheremachines/status
-  verbs:
-  - get
-  - patch
-  - update
-- apiGroups:
-  - infrastructure.cluster.x-k8s.io
-  resources:
-  - vspheremachinetemplates
-  verbs:
-  - get
-  - list
-  - watch
-- apiGroups:
-  - infrastructure.cluster.x-k8s.io
-  resources:
   - vspherevms
   verbs:
   - create
@@ -326,11 +140,23 @@ rules:
 - apiGroups:
   - infrastructure.cluster.x-k8s.io
   resources:
+  - vsphereclusteridentities/status
+  - vsphereclusters/status
+  - vspheredeploymentzones/status
+  - vspheremachines/status
   - vspherevms/status
   verbs:
   - get
   - patch
   - update
+- apiGroups:
+  - infrastructure.cluster.x-k8s.io
+  resources:
+  - vspheremachinetemplates
+  verbs:
+  - get
+  - list
+  - watch
 - apiGroups:
   - ipam.cluster.x-k8s.io
   resources:
@@ -375,21 +201,7 @@ rules:
   - topology.tanzu.vmware.com
   resources:
   - availabilityzones
-  verbs:
-  - get
-  - list
-  - watch
-- apiGroups:
-  - topology.tanzu.vmware.com
-  resources:
   - availabilityzones/status
-  verbs:
-  - get
-  - list
-  - watch
-- apiGroups:
-  - topology.tanzu.vmware.com
-  resources:
   - zones
   verbs:
   - get
@@ -408,42 +220,9 @@ rules:
   resources:
   - virtualmachineimages
   - virtualmachineimages/status
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
-  - vmoperator.vmware.com
-  resources:
   - virtualmachines
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
-  - vmoperator.vmware.com
-  resources:
   - virtualmachineservices
   - virtualmachineservices/status
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
-  - vmoperator.vmware.com
-  resources:
   - virtualmachinesetresourcepolicies
   - virtualmachinesetresourcepolicies/status
   verbs:
@@ -479,6 +258,9 @@ rules:
   - vmware.infrastructure.cluster.x-k8s.io
   resources:
   - providerserviceaccounts/status
+  - vsphereclusters/status
+  - vspheremachines/status
+  - vspheremachinetemplates/status
   verbs:
   - get
   - patch
@@ -487,57 +269,8 @@ rules:
   - vmware.infrastructure.cluster.x-k8s.io
   resources:
   - vsphereclusters
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
-  - vmware.infrastructure.cluster.x-k8s.io
-  resources:
-  - vsphereclusters/status
-  verbs:
-  - get
-  - patch
-  - update
-- apiGroups:
-  - vmware.infrastructure.cluster.x-k8s.io
-  resources:
   - vsphereclustertemplates
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
-  - vmware.infrastructure.cluster.x-k8s.io
-  resources:
   - vspheremachines
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
-  - vmware.infrastructure.cluster.x-k8s.io
-  resources:
-  - vspheremachines/status
-  verbs:
-  - get
-  - patch
-  - update
-- apiGroups:
-  - vmware.infrastructure.cluster.x-k8s.io
-  resources:
   - vspheremachinetemplates
   verbs:
   - create
@@ -547,14 +280,6 @@ rules:
   - patch
   - update
   - watch
-- apiGroups:
-  - vmware.infrastructure.cluster.x-k8s.io
-  resources:
-  - vspheremachinetemplates/status
-  verbs:
-  - get
-  - patch
-  - update
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -783,7 +508,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.15.0
+    controller-gen.kubebuilder.io/version: v0.16.3
     exclude.release.openshift.io/internal-openshift-hosted: "true"
     include.release.openshift.io/self-managed-high-availability: "true"
     include.release.openshift.io/single-node-developer: "true"
@@ -834,7 +559,6 @@ spec:
       openAPIV3Schema:
         description: |-
           VSphereMachine is the Schema for the vspheremachines API
-
 
           Deprecated: This type will be removed in one of the next releases.
         properties:
@@ -915,10 +639,8 @@ spec:
                   VM.
                 properties:
                   devices:
-                    description: |-
+                    description: |
                       Devices is the list of network devices used by the virtual machine.
-                      TODO(akutz) Make sure at least one network matches the
-                                  ClusterSpec.CloudProviderConfiguration.Network.Name
                     items:
                       description: |-
                         NetworkDeviceSpec defines the network configuration for a virtual machine's
@@ -1181,7 +903,6 @@ spec:
                   reconciling the Machine and will contain a more verbose string suitable
                   for logging and human consumption.
 
-
                   This field should not be set for transitive errors that a controller
                   faces that are expected to be fixed automatically over
                   time (like service outages), but instead indicate that something is
@@ -1190,7 +911,6 @@ spec:
                   of terminal errors would be invalid combinations of settings in the
                   spec, values that are unsupported by the controller, or the
                   responsible controller itself being critically misconfigured.
-
 
                   Any transient errors that occur during the reconciliation of Machines
                   can be added as events to the Machine object and/or logged in the
@@ -1202,7 +922,6 @@ spec:
                   reconciling the Machine and will contain a succinct value suitable
                   for machine interpretation.
 
-
                   This field should not be set for transitive errors that a controller
                   faces that are expected to be fixed automatically over
                   time (like service outages), but instead indicate that something is
@@ -1211,7 +930,6 @@ spec:
                   of terminal errors would be invalid combinations of settings in the
                   spec, values that are unsupported by the controller, or the
                   responsible controller itself being critically misconfigured.
-
 
                   Any transient errors that occur during the reconciliation of Machines
                   can be added as events to the Machine object and/or logged in the
@@ -1284,7 +1002,6 @@ spec:
         description: |-
           VSphereMachine is the Schema for the vspheremachines API
 
-
           Deprecated: This type will be removed in one of the next releases.
         properties:
           apiVersion:
@@ -1364,10 +1081,8 @@ spec:
                   VM.
                 properties:
                   devices:
-                    description: |-
+                    description: |
                       Devices is the list of network devices used by the virtual machine.
-                      TODO(akutz) Make sure at least one network matches the
-                                  ClusterSpec.CloudProviderConfiguration.Network.Name
                     items:
                       description: |-
                         NetworkDeviceSpec defines the network configuration for a virtual machine's
@@ -1630,7 +1345,6 @@ spec:
                   reconciling the Machine and will contain a more verbose string suitable
                   for logging and human consumption.
 
-
                   This field should not be set for transitive errors that a controller
                   faces that are expected to be fixed automatically over
                   time (like service outages), but instead indicate that something is
@@ -1639,7 +1353,6 @@ spec:
                   of terminal errors would be invalid combinations of settings in the
                   spec, values that are unsupported by the controller, or the
                   responsible controller itself being critically misconfigured.
-
 
                   Any transient errors that occur during the reconciliation of Machines
                   can be added as events to the Machine object and/or logged in the
@@ -1651,7 +1364,6 @@ spec:
                   reconciling the Machine and will contain a succinct value suitable
                   for machine interpretation.
 
-
                   This field should not be set for transitive errors that a controller
                   faces that are expected to be fixed automatically over
                   time (like service outages), but instead indicate that something is
@@ -1660,7 +1372,6 @@ spec:
                   of terminal errors would be invalid combinations of settings in the
                   spec, values that are unsupported by the controller, or the
                   responsible controller itself being critically misconfigured.
-
 
                   Any transient errors that occur during the reconciliation of Machines
                   can be added as events to the Machine object and/or logged in the
@@ -1780,14 +1491,14 @@ spec:
                 type: object
               datacenter:
                 description: |-
-                  Datacenter is the name or inventory path of the datacenter in which the
-                  virtual machine is created/located.
+                  Datacenter is the name, inventory path, managed object reference or the managed
+                  object ID of the datacenter in which the virtual machine is created/located.
                   Defaults to * which selects the default datacenter.
                 type: string
               datastore:
                 description: |-
-                  Datastore is the name or inventory path of the datastore in which the
-                  virtual machine is created/located.
+                  Datastore is the name, inventory path, managed object reference or the managed
+                  object ID of the datastore in which the virtual machine is created/located.
                 type: string
               diskGiB:
                 description: |-
@@ -1803,8 +1514,8 @@ spec:
                 type: string
               folder:
                 description: |-
-                  Folder is the name or inventory path of the folder in which the
-                  virtual machine is created/located.
+                  Folder is the name, inventory path, managed object reference or the managed
+                  object ID of the folder in which the virtual machine is created/located.
                 type: string
               guestSoftPowerOffTimeout:
                 description: |-
@@ -1812,9 +1523,7 @@ spec:
                   The VM will be powered off forcibly after the timeout if the VM is still
                   up and running when the PowerOffMode is set to trySoft.
 
-
                   This parameter only applies when the PowerOffMode is set to trySoft.
-
 
                   If omitted, the timeout defaults to 5 minutes.
                 type: string
@@ -1837,10 +1546,8 @@ spec:
                   VM.
                 properties:
                   devices:
-                    description: |-
+                    description: |
                       Devices is the list of network devices used by the virtual machine.
-                      TODO(akutz) Make sure at least one network matches the
-                                  ClusterSpec.CloudProviderConfiguration.Network.Name
                     items:
                       description: |-
                         NetworkDeviceSpec defines the network configuration for a virtual machine's
@@ -2045,8 +1752,8 @@ spec:
                           type: array
                         networkName:
                           description: |-
-                            NetworkName is the name of the vSphere network to which the device
-                            will be connected.
+                            NetworkName is the name, managed object reference or the managed
+                            object ID of the vSphere network to which the device will be connected.
                           type: string
                         routes:
                           description: Routes is a list of optional, static routes
@@ -2093,7 +1800,6 @@ spec:
                     description: |-
                       PreferredAPIServeCIDR is the preferred CIDR for the Kubernetes API
                       server endpoint on this machine
-
 
                       Deprecated: This field is going to be removed in a future release.
                     type: string
@@ -2188,7 +1894,6 @@ spec:
                 description: |-
                   PowerOffMode describes the desired behavior when powering off a VM.
 
-
                   There are three, supported power off modes: hard, soft, and
                   trySoft. The first mode, hard, is the equivalent of a physical
                   system's power cord being ripped from the wall. The soft mode
@@ -2196,7 +1901,6 @@ spec:
                   gracefully shut down the VM. Its variant, trySoft, first attempts
                   a graceful shutdown, and if that fails or the VM is not in a powered off
                   state after reaching the GuestSoftPowerOffTimeout, the VM is halted.
-
 
                   If omitted, the mode defaults to hard.
                 enum:
@@ -2211,8 +1915,8 @@ spec:
                 type: string
               resourcePool:
                 description: |-
-                  ResourcePool is the name or inventory path of the resource pool in which
-                  the virtual machine is created/located.
+                  ResourcePool is the name, inventory path, managed object reference or the managed
+                  object ID in which the virtual machine is created/located.
                 type: string
               server:
                 description: |-
@@ -2239,8 +1943,8 @@ spec:
                 type: array
               template:
                 description: |-
-                  Template is the name or inventory path of the template used to clone
-                  the virtual machine.
+                  Template is the name, inventory path, managed object reference or the managed
+                  object ID of the template used to clone the virtual machine.
                 minLength: 1
                 type: string
               thumbprint:
@@ -2297,20 +2001,20 @@ spec:
                       description: |-
                         The reason for the condition's last transition in CamelCase.
                         The specific API may choose whether or not this field is considered a guaranteed API.
-                        This field may not be empty.
+                        This field may be empty.
                       type: string
                     severity:
                       description: |-
-                        Severity provides an explicit classification of Reason code, so the users or machines can immediately
+                        severity provides an explicit classification of Reason code, so the users or machines can immediately
                         understand the current situation and act accordingly.
                         The Severity field MUST be set only when Status=False.
                       type: string
                     status:
-                      description: Status of the condition, one of True, False, Unknown.
+                      description: status of the condition, one of True, False, Unknown.
                       type: string
                     type:
                       description: |-
-                        Type of condition in CamelCase or in foo.example.com/CamelCase.
+                        type of condition in CamelCase or in foo.example.com/CamelCase.
                         Many .condition.type values are consistent across resources like Available, but because arbitrary conditions
                         can be useful (see .node.status.conditions), the ability to deconflict is important.
                       type: string
@@ -2326,7 +2030,6 @@ spec:
                   reconciling the Machine and will contain a more verbose string suitable
                   for logging and human consumption.
 
-
                   This field should not be set for transitive errors that a controller
                   faces that are expected to be fixed automatically over
                   time (like service outages), but instead indicate that something is
@@ -2335,7 +2038,6 @@ spec:
                   of terminal errors would be invalid combinations of settings in the
                   spec, values that are unsupported by the controller, or the
                   responsible controller itself being critically misconfigured.
-
 
                   Any transient errors that occur during the reconciliation of Machines
                   can be added as events to the Machine object and/or logged in the
@@ -2347,7 +2049,6 @@ spec:
                   reconciling the Machine and will contain a succinct value suitable
                   for machine interpretation.
 
-
                   This field should not be set for transitive errors that a controller
                   faces that are expected to be fixed automatically over
                   time (like service outages), but instead indicate that something is
@@ -2356,7 +2057,6 @@ spec:
                   of terminal errors would be invalid combinations of settings in the
                   spec, values that are unsupported by the controller, or the
                   responsible controller itself being critically misconfigured.
-
 
                   Any transient errors that occur during the reconciliation of Machines
                   can be added as events to the Machine object and/or logged in the
@@ -2411,7 +2111,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.15.0
+    controller-gen.kubebuilder.io/version: v0.16.3
     exclude.release.openshift.io/internal-openshift-hosted: "true"
     include.release.openshift.io/self-managed-high-availability: "true"
     include.release.openshift.io/single-node-developer: "true"
@@ -2459,7 +2159,6 @@ spec:
         description: |-
           VSphereCluster is the Schema for the vsphereclusters API
 
-
           Deprecated: This type will be removed in one of the next releases.
         properties:
           apiVersion:
@@ -2485,7 +2184,6 @@ spec:
               cloudProviderConfiguration:
                 description: |-
                   CloudProviderConfiguration holds the cluster-wide configuration for the vSphere cloud provider.
-
 
                   Deprecated: will be removed in v1alpha4.
                 properties:
@@ -2725,7 +2423,6 @@ spec:
                   Insecure is a flag that controls whether to validate the
                   vSphere server's certificate.
 
-
                   Deprecated: will be removed in v1alpha4.
                 type: boolean
               loadBalancerRef:
@@ -2735,7 +2432,6 @@ spec:
                   When a LoadBalancerRef is provided, the VSphereCluster.Status.Ready field
                   will not be true until the referenced resource is Status.Ready and has a
                   non-empty Status.Address value.
-
 
                   Deprecated: will be removed in v1alpha4.
                 properties:
@@ -2751,7 +2447,6 @@ spec:
                       the event) or if no container name is specified "spec.containers[2]" (container with
                       index 2 in this pod). This syntax is chosen only to have some well-defined way of
                       referencing a part of an object.
-                      TODO: this design is not final and this field is subject to change in the future.
                     type: string
                   kind:
                     description: |-
@@ -2888,7 +2583,6 @@ spec:
       openAPIV3Schema:
         description: |-
           VSphereCluster is the Schema for the vsphereclusters API
-
 
           Deprecated: This type will be removed in one of the next releases.
         properties:
@@ -3118,6 +2812,12 @@ spec:
                 - host
                 - port
                 type: object
+              disableClusterModule:
+                description: |-
+                  DisableClusterModule is used to explicitly turn off the ClusterModule feature.
+                  This should work along side NodeAntiAffinity feature flag.
+                  If the NodeAntiAffinity feature flag is turned off, this will be disregarded.
+                type: boolean
               failureDomainSelector:
                 description: |-
                   FailureDomainSelector is the label selector to use for failure domain selection
@@ -3222,20 +2922,20 @@ spec:
                       description: |-
                         The reason for the condition's last transition in CamelCase.
                         The specific API may choose whether or not this field is considered a guaranteed API.
-                        This field may not be empty.
+                        This field may be empty.
                       type: string
                     severity:
                       description: |-
-                        Severity provides an explicit classification of Reason code, so the users or machines can immediately
+                        severity provides an explicit classification of Reason code, so the users or machines can immediately
                         understand the current situation and act accordingly.
                         The Severity field MUST be set only when Status=False.
                       type: string
                     status:
-                      description: Status of the condition, one of True, False, Unknown.
+                      description: status of the condition, one of True, False, Unknown.
                       type: string
                     type:
                       description: |-
-                        Type of condition in CamelCase or in foo.example.com/CamelCase.
+                        type of condition in CamelCase or in foo.example.com/CamelCase.
                         Many .condition.type values are consistent across resources like Available, but because arbitrary conditions
                         can be useful (see .node.status.conditions), the ability to deconflict is important.
                       type: string
@@ -3254,11 +2954,11 @@ spec:
                     attributes:
                       additionalProperties:
                         type: string
-                      description: Attributes is a free form map of attributes an
+                      description: attributes is a free form map of attributes an
                         infrastructure provider might use or require.
                       type: object
                     controlPlane:
-                      description: ControlPlane determines if this failure domain
+                      description: controlPlane determines if this failure domain
                         is suitable for use by control plane machines.
                       type: boolean
                   type: object
@@ -3288,7 +2988,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.15.0
+    controller-gen.kubebuilder.io/version: v0.16.3
     exclude.release.openshift.io/internal-openshift-hosted: "true"
     include.release.openshift.io/self-managed-high-availability: "true"
     include.release.openshift.io/single-node-developer: "true"
@@ -3317,7 +3017,6 @@ spec:
       openAPIV3Schema:
         description: |-
           VSphereMachineTemplate is the Schema for the vspheremachinetemplates API
-
 
           Deprecated: This type will be removed in one of the next releases.
         properties:
@@ -3369,16 +3068,13 @@ spec:
                           and may be truncated by the length of the suffix required to make the value
                           unique on the server.
 
-
                           If this field is specified and the generated name exists, the server will
                           NOT return a 409 - instead, it will either return 201 Created or 500 with Reason
                           ServerTimeout indicating a unique name could not be found in the time allotted, and the client
                           should retry (optionally after the time indicated in the Retry-After header).
 
-
                           Applied only if Name is not specified.
                           More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#idempotency
-
 
                           Deprecated: This field has no function and is going to be removed in a next release.
                         type: string
@@ -3400,7 +3096,6 @@ spec:
                           Cannot be updated.
                           More info: http://kubernetes.io/docs/user-guide/identifiers#names
 
-
                           Deprecated: This field has no function and is going to be removed in a next release.
                         type: string
                       namespace:
@@ -3410,11 +3105,9 @@ spec:
                           Not all objects are required to be scoped to a namespace - the value of this field for
                           those objects will be empty.
 
-
                           Must be a DNS_LABEL.
                           Cannot be updated.
                           More info: http://kubernetes.io/docs/user-guide/namespaces
-
 
                           Deprecated: This field has no function and is going to be removed in a next release.
                         type: string
@@ -3424,7 +3117,6 @@ spec:
                           been deleted, this object will be garbage collected. If this object is managed by a controller,
                           then an entry in this list will point to this controller, with the controller field set to true.
                           There cannot be more than one managing controller.
-
 
                           Deprecated: This field has no function and is going to be removed in a next release.
                         items:
@@ -3536,10 +3228,8 @@ spec:
                           machine's VM.
                         properties:
                           devices:
-                            description: |-
+                            description: |
                               Devices is the list of network devices used by the virtual machine.
-                              TODO(akutz) Make sure at least one network matches the
-                                          ClusterSpec.CloudProviderConfiguration.Network.Name
                             items:
                               description: |-
                                 NetworkDeviceSpec defines the network configuration for a virtual machine's
@@ -3749,7 +3439,6 @@ spec:
         description: |-
           VSphereMachineTemplate is the Schema for the vspheremachinetemplates API
 
-
           Deprecated: This type will be removed in one of the next releases.
         properties:
           apiVersion:
@@ -3861,10 +3550,8 @@ spec:
                           machine's VM.
                         properties:
                           devices:
-                            description: |-
+                            description: |
                               Devices is the list of network devices used by the virtual machine.
-                              TODO(akutz) Make sure at least one network matches the
-                                          ClusterSpec.CloudProviderConfiguration.Network.Name
                             items:
                               description: |-
                                 NetworkDeviceSpec defines the network configuration for a virtual machine's
@@ -4106,7 +3793,7 @@ spec:
                         additionalProperties:
                           type: string
                         description: |-
-                          Annotations is an unstructured key value map stored with a resource that may be
+                          annotations is an unstructured key value map stored with a resource that may be
                           set by external tools to store and retrieve arbitrary metadata. They are not
                           queryable and should be preserved when modifying objects.
                           More info: http://kubernetes.io/docs/user-guide/annotations
@@ -4154,14 +3841,14 @@ spec:
                         type: object
                       datacenter:
                         description: |-
-                          Datacenter is the name or inventory path of the datacenter in which the
-                          virtual machine is created/located.
+                          Datacenter is the name, inventory path, managed object reference or the managed
+                          object ID of the datacenter in which the virtual machine is created/located.
                           Defaults to * which selects the default datacenter.
                         type: string
                       datastore:
                         description: |-
-                          Datastore is the name or inventory path of the datastore in which the
-                          virtual machine is created/located.
+                          Datastore is the name, inventory path, managed object reference or the managed
+                          object ID of the datastore in which the virtual machine is created/located.
                         type: string
                       diskGiB:
                         description: |-
@@ -4177,8 +3864,8 @@ spec:
                         type: string
                       folder:
                         description: |-
-                          Folder is the name or inventory path of the folder in which the
-                          virtual machine is created/located.
+                          Folder is the name, inventory path, managed object reference or the managed
+                          object ID of the folder in which the virtual machine is created/located.
                         type: string
                       guestSoftPowerOffTimeout:
                         description: |-
@@ -4186,9 +3873,7 @@ spec:
                           The VM will be powered off forcibly after the timeout if the VM is still
                           up and running when the PowerOffMode is set to trySoft.
 
-
                           This parameter only applies when the PowerOffMode is set to trySoft.
-
 
                           If omitted, the timeout defaults to 5 minutes.
                         type: string
@@ -4211,10 +3896,8 @@ spec:
                           machine's VM.
                         properties:
                           devices:
-                            description: |-
+                            description: |
                               Devices is the list of network devices used by the virtual machine.
-                              TODO(akutz) Make sure at least one network matches the
-                                          ClusterSpec.CloudProviderConfiguration.Network.Name
                             items:
                               description: |-
                                 NetworkDeviceSpec defines the network configuration for a virtual machine's
@@ -4422,8 +4105,8 @@ spec:
                                   type: array
                                 networkName:
                                   description: |-
-                                    NetworkName is the name of the vSphere network to which the device
-                                    will be connected.
+                                    NetworkName is the name, managed object reference or the managed
+                                    object ID of the vSphere network to which the device will be connected.
                                   type: string
                                 routes:
                                   description: Routes is a list of optional, static
@@ -4470,7 +4153,6 @@ spec:
                             description: |-
                               PreferredAPIServeCIDR is the preferred CIDR for the Kubernetes API
                               server endpoint on this machine
-
 
                               Deprecated: This field is going to be removed in a future release.
                             type: string
@@ -4568,7 +4250,6 @@ spec:
                         description: |-
                           PowerOffMode describes the desired behavior when powering off a VM.
 
-
                           There are three, supported power off modes: hard, soft, and
                           trySoft. The first mode, hard, is the equivalent of a physical
                           system's power cord being ripped from the wall. The soft mode
@@ -4576,7 +4257,6 @@ spec:
                           gracefully shut down the VM. Its variant, trySoft, first attempts
                           a graceful shutdown, and if that fails or the VM is not in a powered off
                           state after reaching the GuestSoftPowerOffTimeout, the VM is halted.
-
 
                           If omitted, the mode defaults to hard.
                         enum:
@@ -4591,8 +4271,8 @@ spec:
                         type: string
                       resourcePool:
                         description: |-
-                          ResourcePool is the name or inventory path of the resource pool in which
-                          the virtual machine is created/located.
+                          ResourcePool is the name, inventory path, managed object reference or the managed
+                          object ID in which the virtual machine is created/located.
                         type: string
                       server:
                         description: |-
@@ -4619,8 +4299,8 @@ spec:
                         type: array
                       template:
                         description: |-
-                          Template is the name or inventory path of the template used to clone
-                          the virtual machine.
+                          Template is the name, inventory path, managed object reference or the managed
+                          object ID of the template used to clone the virtual machine.
                         minLength: 1
                         type: string
                       thumbprint:
@@ -4654,7 +4334,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.15.0
+    controller-gen.kubebuilder.io/version: v0.16.3
     exclude.release.openshift.io/internal-openshift-hosted: "true"
     include.release.openshift.io/self-managed-high-availability: "true"
     include.release.openshift.io/single-node-developer: "true"
@@ -4683,7 +4363,6 @@ spec:
       openAPIV3Schema:
         description: |-
           VSphereVM is the Schema for the vspherevms API
-
 
           Deprecated: This type will be removed in one of the next releases.
         properties:
@@ -4733,7 +4412,6 @@ spec:
                       the event) or if no container name is specified "spec.containers[2]" (container with
                       index 2 in this pod). This syntax is chosen only to have some well-defined way of
                       referencing a part of an object.
-                      TODO: this design is not final and this field is subject to change in the future.
                     type: string
                   kind:
                     description: |-
@@ -4814,10 +4492,8 @@ spec:
                   VM.
                 properties:
                   devices:
-                    description: |-
+                    description: |
                       Devices is the list of network devices used by the virtual machine.
-                      TODO(akutz) Make sure at least one network matches the
-                                  ClusterSpec.CloudProviderConfiguration.Network.Name
                     items:
                       description: |-
                         NetworkDeviceSpec defines the network configuration for a virtual machine's
@@ -5072,12 +4748,10 @@ spec:
                   reconciling the vspherevm and will contain a more verbose string suitable
                   for logging and human consumption.
 
-
                   This field should not be set for transitive errors that a controller
                   faces that are expected to be fixed automatically over
                   time (like service outages), but instead indicate that something is
                   fundamentally wrong with the vm.
-
 
                   Any transient errors that occur during the reconciliation of vspherevms
                   can be added as events to the vspherevm object and/or logged in the
@@ -5089,12 +4763,10 @@ spec:
                   reconciling the vspherevm and will contain a succinct value suitable
                   for vm interpretation.
 
-
                   This field should not be set for transitive errors that a controller
                   faces that are expected to be fixed automatically over
                   time (like service outages), but instead indicate that something is
                   fundamentally wrong with the vm.
-
 
                   Any transient errors that occur during the reconciliation of vspherevms
                   can be added as events to the vspherevm object and/or logged in the
@@ -5163,7 +4835,6 @@ spec:
         description: |-
           VSphereVM is the Schema for the vspherevms API
 
-
           Deprecated: This type will be removed in one of the next releases.
         properties:
           apiVersion:
@@ -5212,7 +4883,6 @@ spec:
                       the event) or if no container name is specified "spec.containers[2]" (container with
                       index 2 in this pod). This syntax is chosen only to have some well-defined way of
                       referencing a part of an object.
-                      TODO: this design is not final and this field is subject to change in the future.
                     type: string
                   kind:
                     description: |-
@@ -5293,10 +4963,8 @@ spec:
                   VM.
                 properties:
                   devices:
-                    description: |-
+                    description: |
                       Devices is the list of network devices used by the virtual machine.
-                      TODO(akutz) Make sure at least one network matches the
-                                  ClusterSpec.CloudProviderConfiguration.Network.Name
                     items:
                       description: |-
                         NetworkDeviceSpec defines the network configuration for a virtual machine's
@@ -5551,12 +5219,10 @@ spec:
                   reconciling the vspherevm and will contain a more verbose string suitable
                   for logging and human consumption.
 
-
                   This field should not be set for transitive errors that a controller
                   faces that are expected to be fixed automatically over
                   time (like service outages), but instead indicate that something is
                   fundamentally wrong with the vm.
-
 
                   Any transient errors that occur during the reconciliation of vspherevms
                   can be added as events to the vspherevm object and/or logged in the
@@ -5568,12 +5234,10 @@ spec:
                   reconciling the vspherevm and will contain a succinct value suitable
                   for vm interpretation.
 
-
                   This field should not be set for transitive errors that a controller
                   faces that are expected to be fixed automatically over
                   time (like service outages), but instead indicate that something is
                   fundamentally wrong with the vm.
-
 
                   Any transient errors that occur during the reconciliation of vspherevms
                   can be added as events to the vspherevm object and/or logged in the
@@ -5695,7 +5359,6 @@ spec:
                       the event) or if no container name is specified "spec.containers[2]" (container with
                       index 2 in this pod). This syntax is chosen only to have some well-defined way of
                       referencing a part of an object.
-                      TODO: this design is not final and this field is subject to change in the future.
                     type: string
                   kind:
                     description: |-
@@ -5744,14 +5407,14 @@ spec:
                 type: object
               datacenter:
                 description: |-
-                  Datacenter is the name or inventory path of the datacenter in which the
-                  virtual machine is created/located.
+                  Datacenter is the name, inventory path, managed object reference or the managed
+                  object ID of the datacenter in which the virtual machine is created/located.
                   Defaults to * which selects the default datacenter.
                 type: string
               datastore:
                 description: |-
-                  Datastore is the name or inventory path of the datastore in which the
-                  virtual machine is created/located.
+                  Datastore is the name, inventory path, managed object reference or the managed
+                  object ID of the datastore in which the virtual machine is created/located.
                 type: string
               diskGiB:
                 description: |-
@@ -5762,8 +5425,8 @@ spec:
                 type: integer
               folder:
                 description: |-
-                  Folder is the name or inventory path of the folder in which the
-                  virtual machine is created/located.
+                  Folder is the name, inventory path, managed object reference or the managed
+                  object ID of the folder in which the virtual machine is created/located.
                 type: string
               guestSoftPowerOffTimeout:
                 description: |-
@@ -5771,9 +5434,7 @@ spec:
                   The VM will be powered off forcibly after the timeout if the VM is still
                   up and running when the PowerOffMode is set to trySoft.
 
-
                   This parameter only applies when the PowerOffMode is set to trySoft.
-
 
                   If omitted, the timeout defaults to 5 minutes.
                 type: string
@@ -5796,10 +5457,8 @@ spec:
                   VM.
                 properties:
                   devices:
-                    description: |-
+                    description: |
                       Devices is the list of network devices used by the virtual machine.
-                      TODO(akutz) Make sure at least one network matches the
-                                  ClusterSpec.CloudProviderConfiguration.Network.Name
                     items:
                       description: |-
                         NetworkDeviceSpec defines the network configuration for a virtual machine's
@@ -6004,8 +5663,8 @@ spec:
                           type: array
                         networkName:
                           description: |-
-                            NetworkName is the name of the vSphere network to which the device
-                            will be connected.
+                            NetworkName is the name, managed object reference or the managed
+                            object ID of the vSphere network to which the device will be connected.
                           type: string
                         routes:
                           description: Routes is a list of optional, static routes
@@ -6052,7 +5711,6 @@ spec:
                     description: |-
                       PreferredAPIServeCIDR is the preferred CIDR for the Kubernetes API
                       server endpoint on this machine
-
 
                       Deprecated: This field is going to be removed in a future release.
                     type: string
@@ -6147,7 +5805,6 @@ spec:
                 description: |-
                   PowerOffMode describes the desired behavior when powering off a VM.
 
-
                   There are three, supported power off modes: hard, soft, and
                   trySoft. The first mode, hard, is the equivalent of a physical
                   system's power cord being ripped from the wall. The soft mode
@@ -6155,7 +5812,6 @@ spec:
                   gracefully shut down the VM. Its variant, trySoft, first attempts
                   a graceful shutdown, and if that fails or the VM is not in a powered off
                   state after reaching the GuestSoftPowerOffTimeout, the VM is halted.
-
 
                   If omitted, the mode defaults to hard.
                 enum:
@@ -6165,8 +5821,8 @@ spec:
                 type: string
               resourcePool:
                 description: |-
-                  ResourcePool is the name or inventory path of the resource pool in which
-                  the virtual machine is created/located.
+                  ResourcePool is the name, inventory path, managed object reference or the managed
+                  object ID in which the virtual machine is created/located.
                 type: string
               server:
                 description: |-
@@ -6193,8 +5849,8 @@ spec:
                 type: array
               template:
                 description: |-
-                  Template is the name or inventory path of the template used to clone
-                  the virtual machine.
+                  Template is the name, inventory path, managed object reference or the managed
+                  object ID of the template used to clone the virtual machine.
                 minLength: 1
                 type: string
               thumbprint:
@@ -6248,20 +5904,20 @@ spec:
                       description: |-
                         The reason for the condition's last transition in CamelCase.
                         The specific API may choose whether or not this field is considered a guaranteed API.
-                        This field may not be empty.
+                        This field may be empty.
                       type: string
                     severity:
                       description: |-
-                        Severity provides an explicit classification of Reason code, so the users or machines can immediately
+                        severity provides an explicit classification of Reason code, so the users or machines can immediately
                         understand the current situation and act accordingly.
                         The Severity field MUST be set only when Status=False.
                       type: string
                     status:
-                      description: Status of the condition, one of True, False, Unknown.
+                      description: status of the condition, one of True, False, Unknown.
                       type: string
                     type:
                       description: |-
-                        Type of condition in CamelCase or in foo.example.com/CamelCase.
+                        type of condition in CamelCase or in foo.example.com/CamelCase.
                         Many .condition.type values are consistent across resources like Available, but because arbitrary conditions
                         can be useful (see .node.status.conditions), the ability to deconflict is important.
                       type: string
@@ -6277,12 +5933,10 @@ spec:
                   reconciling the vspherevm and will contain a more verbose string suitable
                   for logging and human consumption.
 
-
                   This field should not be set for transitive errors that a controller
                   faces that are expected to be fixed automatically over
                   time (like service outages), but instead indicate that something is
                   fundamentally wrong with the vm.
-
 
                   Any transient errors that occur during the reconciliation of vspherevms
                   can be added as events to the vspherevm object and/or logged in the
@@ -6294,12 +5948,10 @@ spec:
                   reconciling the vspherevm and will contain a succinct value suitable
                   for vm interpretation.
 
-
                   This field should not be set for transitive errors that a controller
                   faces that are expected to be fixed automatically over
                   time (like service outages), but instead indicate that something is
                   fundamentally wrong with the vm.
-
 
                   Any transient errors that occur during the reconciliation of vspherevms
                   can be added as events to the vspherevm object and/or logged in the
@@ -6390,7 +6042,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.15.0
+    controller-gen.kubebuilder.io/version: v0.16.3
     exclude.release.openshift.io/internal-openshift-hosted: "true"
     include.release.openshift.io/self-managed-high-availability: "true"
     include.release.openshift.io/single-node-developer: "true"
@@ -6419,7 +6071,6 @@ spec:
       openAPIV3Schema:
         description: |-
           VSphereFailureDomain is the Schema for the vspherefailuredomains API
-
 
           Deprecated: This type will be removed in one of the next releases.
         properties:
@@ -6551,7 +6202,6 @@ spec:
       openAPIV3Schema:
         description: |-
           VSphereFailureDomain is the Schema for the vspherefailuredomains API
-
 
           Deprecated: This type will be removed in one of the next releases.
         properties:
@@ -6710,7 +6360,6 @@ spec:
                     description: |-
                       AutoConfigure tags the Type which is specified in the Topology
 
-
                       Deprecated: This field is going to be removed in a future release.
                     type: boolean
                   name:
@@ -6762,6 +6411,190 @@ spec:
                     - hostGroupName
                     - vmGroupName
                     type: object
+                  networkConfigurations:
+                    description: NetworkConfigurations is a list of network configurations
+                      within this failure domain.
+                    items:
+                      description: |-
+                        NetworkConfiguration defines a network configuration that should be used when consuming
+                        a failure domain.
+                      properties:
+                        addressesFromPools:
+                          description: |-
+                            AddressesFromPools is a list of IPAddressPools that should be assigned
+                            to IPAddressClaims. The machine's cloud-init metadata will be populated
+                            with IPAddresses fulfilled by an IPAM provider.
+                          items:
+                            description: |-
+                              TypedLocalObjectReference contains enough information to let you locate the
+                              typed referenced object inside the same namespace.
+                            properties:
+                              apiGroup:
+                                description: |-
+                                  APIGroup is the group for the resource being referenced.
+                                  If APIGroup is not specified, the specified Kind must be in the core API group.
+                                  For any other third-party types, APIGroup is required.
+                                type: string
+                              kind:
+                                description: Kind is the type of resource being referenced
+                                type: string
+                              name:
+                                description: Name is the name of resource being referenced
+                                type: string
+                            required:
+                            - kind
+                            - name
+                            type: object
+                            x-kubernetes-map-type: atomic
+                          type: array
+                        dhcp4:
+                          description: DHCP4 is a flag that indicates whether or not
+                            to use DHCP for IPv4.
+                          type: boolean
+                        dhcp4Overrides:
+                          description: |-
+                            DHCP4Overrides allows for the control over several DHCP behaviors.
+                            Overrides will only be applied when the corresponding DHCP flag is set.
+                            Only configured values will be sent, omitted values will default to
+                            distribution defaults.
+                            Dependent on support in the network stack for your distribution.
+                            For more information see the netplan reference (https://netplan.io/reference#dhcp-overrides)
+                          properties:
+                            hostname:
+                              description: |-
+                                Hostname is the name which will be sent to the DHCP server instead of
+                                the machine's hostname.
+                              type: string
+                            routeMetric:
+                              description: |-
+                                RouteMetric is used to prioritize routes for devices. A lower metric for
+                                an interface will have a higher priority.
+                              type: integer
+                            sendHostname:
+                              description: |-
+                                SendHostname when `true`, the hostname of the machine will be sent to the
+                                DHCP server.
+                              type: boolean
+                            useDNS:
+                              description: |-
+                                UseDNS when `true`, the DNS servers in the DHCP server will be used and
+                                take precedence.
+                              type: boolean
+                            useDomains:
+                              description: |-
+                                UseDomains can take the values `true`, `false`, or `route`. When `true`,
+                                the domain name from the DHCP server will be used as the DNS search
+                                domain for this device. When `route`, the domain name from the DHCP
+                                response will be used for routing DNS only, not for searching.
+                              type: string
+                            useHostname:
+                              description: |-
+                                UseHostname when `true`, the hostname from the DHCP server will be set
+                                as the transient hostname of the machine.
+                              type: boolean
+                            useMTU:
+                              description: |-
+                                UseMTU when `true`, the MTU from the DHCP server will be set as the
+                                MTU of the device.
+                              type: boolean
+                            useNTP:
+                              description: |-
+                                UseNTP when `true`, the NTP servers from the DHCP server will be used
+                                by systemd-timesyncd and take precedence.
+                              type: boolean
+                            useRoutes:
+                              description: |-
+                                UseRoutes when `true`, the routes from the DHCP server will be installed
+                                in the routing table.
+                              type: string
+                          type: object
+                        dhcp6:
+                          description: DHCP6 is a flag that indicates whether or not
+                            to use DHCP for IPv6.
+                          type: boolean
+                        dhcp6Overrides:
+                          description: |-
+                            DHCP6Overrides allows for the control over several DHCP behaviors.
+                            Overrides will only be applied when the corresponding DHCP flag is set.
+                            Only configured values will be sent, omitted values will default to
+                            distribution defaults.
+                            Dependent on support in the network stack for your distribution.
+                            For more information see the netplan reference (https://netplan.io/reference#dhcp-overrides)
+                          properties:
+                            hostname:
+                              description: |-
+                                Hostname is the name which will be sent to the DHCP server instead of
+                                the machine's hostname.
+                              type: string
+                            routeMetric:
+                              description: |-
+                                RouteMetric is used to prioritize routes for devices. A lower metric for
+                                an interface will have a higher priority.
+                              type: integer
+                            sendHostname:
+                              description: |-
+                                SendHostname when `true`, the hostname of the machine will be sent to the
+                                DHCP server.
+                              type: boolean
+                            useDNS:
+                              description: |-
+                                UseDNS when `true`, the DNS servers in the DHCP server will be used and
+                                take precedence.
+                              type: boolean
+                            useDomains:
+                              description: |-
+                                UseDomains can take the values `true`, `false`, or `route`. When `true`,
+                                the domain name from the DHCP server will be used as the DNS search
+                                domain for this device. When `route`, the domain name from the DHCP
+                                response will be used for routing DNS only, not for searching.
+                              type: string
+                            useHostname:
+                              description: |-
+                                UseHostname when `true`, the hostname from the DHCP server will be set
+                                as the transient hostname of the machine.
+                              type: boolean
+                            useMTU:
+                              description: |-
+                                UseMTU when `true`, the MTU from the DHCP server will be set as the
+                                MTU of the device.
+                              type: boolean
+                            useNTP:
+                              description: |-
+                                UseNTP when `true`, the NTP servers from the DHCP server will be used
+                                by systemd-timesyncd and take precedence.
+                              type: boolean
+                            useRoutes:
+                              description: |-
+                                UseRoutes when `true`, the routes from the DHCP server will be installed
+                                in the routing table.
+                              type: string
+                          type: object
+                        nameservers:
+                          description: |-
+                            Nameservers is a list of IPv4 and/or IPv6 addresses used as DNS
+                            nameservers.
+                            Please note that Linux allows only three nameservers (https://linux.die.net/man/5/resolv.conf).
+                          items:
+                            type: string
+                          type: array
+                        networkName:
+                          description: NetworkName is the network name for this machine's
+                            VM.
+                          type: string
+                        searchDomains:
+                          description: |-
+                            SearchDomains is a list of search domains used when resolving IP
+                            addresses with DNS.
+                          items:
+                            type: string
+                          type: array
+                      required:
+                      - networkName
+                      type: object
+                    type: array
+                    x-kubernetes-list-map-keys:
+                    - networkName
+                    x-kubernetes-list-type: map
                   networks:
                     description: Networks is the list of networks within this failure
                       domain
@@ -6777,7 +6610,6 @@ spec:
                   autoConfigure:
                     description: |-
                       AutoConfigure tags the Type which is specified in the Topology
-
 
                       Deprecated: This field is going to be removed in a future release.
                     type: boolean
@@ -6820,7 +6652,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.15.0
+    controller-gen.kubebuilder.io/version: v0.16.3
     exclude.release.openshift.io/internal-openshift-hosted: "true"
     include.release.openshift.io/self-managed-high-availability: "true"
     include.release.openshift.io/single-node-developer: "true"
@@ -6849,7 +6681,6 @@ spec:
       openAPIV3Schema:
         description: |-
           VSphereDeploymentZone is the Schema for the vspheredeploymentzones API
-
 
           Deprecated: This type will be removed in one of the next releases.
         properties:
@@ -6966,7 +6797,6 @@ spec:
       openAPIV3Schema:
         description: |-
           VSphereDeploymentZone is the Schema for the vspheredeploymentzones API
-
 
           Deprecated: This type will be removed in one of the next releases.
         properties:
@@ -7158,20 +6988,20 @@ spec:
                       description: |-
                         The reason for the condition's last transition in CamelCase.
                         The specific API may choose whether or not this field is considered a guaranteed API.
-                        This field may not be empty.
+                        This field may be empty.
                       type: string
                     severity:
                       description: |-
-                        Severity provides an explicit classification of Reason code, so the users or machines can immediately
+                        severity provides an explicit classification of Reason code, so the users or machines can immediately
                         understand the current situation and act accordingly.
                         The Severity field MUST be set only when Status=False.
                       type: string
                     status:
-                      description: Status of the condition, one of True, False, Unknown.
+                      description: status of the condition, one of True, False, Unknown.
                       type: string
                     type:
                       description: |-
-                        Type of condition in CamelCase or in foo.example.com/CamelCase.
+                        type of condition in CamelCase or in foo.example.com/CamelCase.
                         Many .condition.type values are consistent across resources like Available, but because arbitrary conditions
                         can be useful (see .node.status.conditions), the ability to deconflict is important.
                       type: string
@@ -7203,7 +7033,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.15.0
+    controller-gen.kubebuilder.io/version: v0.16.3
     exclude.release.openshift.io/internal-openshift-hosted: "true"
     include.release.openshift.io/self-managed-high-availability: "true"
     include.release.openshift.io/single-node-developer: "true"
@@ -7231,7 +7061,6 @@ spec:
       openAPIV3Schema:
         description: |-
           VSphereClusterIdentity defines the account to be used for reconciling clusters
-
 
           Deprecated: This type will be removed in one of the next releases.
         properties:
@@ -7374,7 +7203,6 @@ spec:
       openAPIV3Schema:
         description: |-
           VSphereClusterIdentity defines the account to be used for reconciling clusters
-
 
           Deprecated: This type will be removed in one of the next releases.
         properties:
@@ -7623,20 +7451,20 @@ spec:
                       description: |-
                         The reason for the condition's last transition in CamelCase.
                         The specific API may choose whether or not this field is considered a guaranteed API.
-                        This field may not be empty.
+                        This field may be empty.
                       type: string
                     severity:
                       description: |-
-                        Severity provides an explicit classification of Reason code, so the users or machines can immediately
+                        severity provides an explicit classification of Reason code, so the users or machines can immediately
                         understand the current situation and act accordingly.
                         The Severity field MUST be set only when Status=False.
                       type: string
                     status:
-                      description: Status of the condition, one of True, False, Unknown.
+                      description: status of the condition, one of True, False, Unknown.
                       type: string
                     type:
                       description: |-
-                        Type of condition in CamelCase or in foo.example.com/CamelCase.
+                        type of condition in CamelCase or in foo.example.com/CamelCase.
                         Many .condition.type values are consistent across resources like Available, but because arbitrary conditions
                         can be useful (see .node.status.conditions), the ability to deconflict is important.
                       type: string
@@ -7665,7 +7493,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.15.0
+    controller-gen.kubebuilder.io/version: v0.16.3
     exclude.release.openshift.io/internal-openshift-hosted: "true"
     include.release.openshift.io/self-managed-high-availability: "true"
     include.release.openshift.io/single-node-developer: "true"
@@ -7694,7 +7522,6 @@ spec:
       openAPIV3Schema:
         description: |-
           VSphereClusterTemplate is the Schema for the vsphereclustertemplates API
-
 
           Deprecated: This type will be removed in one of the next releases.
         properties:
@@ -7853,6 +7680,12 @@ spec:
                         - host
                         - port
                         type: object
+                      disableClusterModule:
+                        description: |-
+                          DisableClusterModule is used to explicitly turn off the ClusterModule feature.
+                          This should work along side NodeAntiAffinity feature flag.
+                          If the NodeAntiAffinity feature flag is turned off, this will be disregarded.
+                        type: boolean
                       failureDomainSelector:
                         description: |-
                           FailureDomainSelector is the label selector to use for failure domain selection
