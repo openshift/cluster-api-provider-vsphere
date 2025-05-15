@@ -1,7 +1,7 @@
 ---
 - name: capv-test-extension
   config:
-    version: v1.12.99
+    version: v1.13.99
     image: gcr.io/k8s-staging-capi-vsphere/cluster-api-vsphere-test-extension
     live_reload_deps:
       - main.go
@@ -9,3 +9,5 @@
     label: CAPV_EXTENSION
     additional_resources:
     - config/tilt/extensionconfig.yaml
+    resource_deps:
+    - "capi_controller"
