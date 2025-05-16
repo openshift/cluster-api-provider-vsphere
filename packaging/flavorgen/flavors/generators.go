@@ -25,10 +25,10 @@ import (
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"
+	addonsv1 "sigs.k8s.io/cluster-api/api/addons/v1beta1"
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	bootstrapv1 "sigs.k8s.io/cluster-api/bootstrap/kubeadm/api/v1beta1"
 	controlplanev1 "sigs.k8s.io/cluster-api/controlplane/kubeadm/api/v1beta1"
-	addonsv1 "sigs.k8s.io/cluster-api/exp/addons/api/v1beta1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	infrav1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/v1beta1"
@@ -370,7 +370,6 @@ func defaultVirtualMachineCloneSpec() infrav1.VirtualMachineCloneSpec {
 		MemoryMiB:         env.DefaultMemoryMiB,
 		Template:          env.VSphereTemplateVar,
 		Server:            env.VSphereServerVar,
-		Thumbprint:        env.VSphereThumbprint,
 		ResourcePool:      env.VSphereResourcePoolVar,
 		Datastore:         env.VSphereDatastoreVar,
 		StoragePolicyName: env.VSphereStoragePolicyVar,
@@ -433,7 +432,6 @@ func nodeIPAMVirtualMachineCloneSpec() infrav1.VirtualMachineCloneSpec {
 		MemoryMiB:         env.DefaultMemoryMiB,
 		Template:          env.VSphereTemplateVar,
 		Server:            env.VSphereServerVar,
-		Thumbprint:        env.VSphereThumbprint,
 		ResourcePool:      env.VSphereResourcePoolVar,
 		Datastore:         env.VSphereDatastoreVar,
 		StoragePolicyName: env.VSphereStoragePolicyVar,
@@ -451,10 +449,11 @@ func defaultKubeadmInitSpec(files []bootstrapv1.File) bootstrapv1.KubeadmConfigS
 			NodeRegistration: defaultNodeRegistrationOptions(),
 		},
 		ClusterConfiguration: &bootstrapv1.ClusterConfiguration{
-			APIServer: bootstrapv1.APIServer{
-				ControlPlaneComponent: defaultControlPlaneComponent(),
+			ControllerManager: bootstrapv1.ControlPlaneComponent{
+				ExtraArgs: map[string]string{
+					"cloud-provider": "external",
+				},
 			},
-			ControllerManager: defaultControlPlaneComponent(),
 		},
 		Users:              defaultUsers(),
 		PreKubeadmCommands: defaultPreKubeadmCommands(),
@@ -480,10 +479,11 @@ func ignitionKubeadmInitSpec(files []bootstrapv1.File) bootstrapv1.KubeadmConfig
 			NodeRegistration: nro,
 		},
 		ClusterConfiguration: &bootstrapv1.ClusterConfiguration{
-			APIServer: bootstrapv1.APIServer{
-				ControlPlaneComponent: defaultControlPlaneComponent(),
+			ControllerManager: bootstrapv1.ControlPlaneComponent{
+				ExtraArgs: map[string]string{
+					"cloud-provider": "external",
+				},
 			},
-			ControllerManager: defaultControlPlaneComponent(),
 		},
 		Users:              flatcarUsers(),
 		PreKubeadmCommands: flatcarPreKubeadmCommands(),
@@ -555,9 +555,11 @@ func newIgnitionKubeadmConfigTemplate() bootstrapv1.KubeadmConfigTemplate {
 
 func defaultNodeRegistrationOptions() bootstrapv1.NodeRegistrationOptions {
 	return bootstrapv1.NodeRegistrationOptions{
-		Name:             "{{ local_hostname }}",
-		CRISocket:        "/var/run/containerd/containerd.sock",
-		KubeletExtraArgs: defaultExtraArgs(),
+		Name:      "{{ local_hostname }}",
+		CRISocket: "/var/run/containerd/containerd.sock",
+		KubeletExtraArgs: map[string]string{
+			"cloud-provider": "external",
+		},
 	}
 }
 
@@ -585,20 +587,8 @@ func flatcarUsers() []bootstrapv1.User {
 	}
 }
 
-func defaultControlPlaneComponent() bootstrapv1.ControlPlaneComponent {
-	return bootstrapv1.ControlPlaneComponent{
-		ExtraArgs: defaultExtraArgs(),
-	}
-}
-
 func defaultCustomVMXKeys() map[string]string {
 	return map[string]string{}
-}
-
-func defaultExtraArgs() map[string]string {
-	return map[string]string{
-		"cloud-provider": "external",
-	}
 }
 
 func defaultPreKubeadmCommands() []string {

@@ -31,7 +31,7 @@ var _ = Describe("When upgrading a workload cluster using ClusterClass with Runt
 	const specName = "k8s-upgrade-with-runtimesdk" // aligned to CAPI
 	Setup(specName, func(testSpecificSettingsGetter func() testSettings) {
 		capi_e2e.ClusterUpgradeWithRuntimeSDKSpec(ctx, func() capi_e2e.ClusterUpgradeWithRuntimeSDKSpecInput {
-			version, err := semver.ParseTolerant(e2eConfig.GetVariable(capi_e2e.KubernetesVersionUpgradeFrom))
+			version, err := semver.ParseTolerant(e2eConfig.MustGetVariable(capi_e2e.KubernetesVersionUpgradeFrom))
 			Expect(err).ToNot(HaveOccurred(), "Invalid argument, KUBERNETES_VERSION_UPGRADE_FROM is not a valid version")
 			if version.LT(semver.MustParse("1.24.0")) {
 				Fail("This test only supports upgrades from Kubernetes >= v1.24.0")
@@ -46,9 +46,12 @@ var _ = Describe("When upgrading a workload cluster using ClusterClass with Runt
 				PostUpgrade: func(proxy framework.ClusterProxy, namespace, clusterName string) {
 					// Dump all Cluster API related resources to artifacts before checking for resource versions being stable.
 					framework.DumpAllResources(ctx, framework.DumpAllResourcesInput{
-						Lister:    proxy.GetClient(),
-						Namespace: namespace,
-						LogPath:   filepath.Join(artifactFolder, "clusters-beforeValidateResourceVersions", proxy.GetName(), "resources")})
+						Lister:               proxy.GetClient(),
+						KubeConfigPath:       proxy.GetKubeconfigPath(),
+						ClusterctlConfigPath: clusterctlConfigPath,
+						Namespace:            namespace,
+						LogPath:              filepath.Join(artifactFolder, "clusters-beforeValidateResourceVersions", proxy.GetName(), "resources"),
+					})
 
 					// This check ensures that the resourceVersions are stable, i.e. it verifies there are no
 					// continuous reconciles when everything should be stable.

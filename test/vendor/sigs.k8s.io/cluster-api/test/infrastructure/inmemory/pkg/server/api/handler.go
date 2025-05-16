@@ -50,6 +50,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	inmemoryruntime "sigs.k8s.io/cluster-api/test/infrastructure/inmemory/pkg/runtime"
+	inmemoryclient "sigs.k8s.io/cluster-api/test/infrastructure/inmemory/pkg/runtime/client"
 	inmemoryportforward "sigs.k8s.io/cluster-api/test/infrastructure/inmemory/pkg/server/api/portforward"
 )
 
@@ -161,7 +162,7 @@ func (h *apiServerHandler) globalLogging(req *restful.Request, resp *restful.Res
 		requestTotalLabelValues := append(baseLabelValues, strconv.Itoa(resp.StatusCode()))
 		requestLatencyLabelValues := baseLabelValues
 
-		// Additional CAPIM specific label values.
+		// Additional label values.
 		wclName, _ := h.resourceGroupResolver(req.Request.Host)
 		userAgent := req.Request.Header.Get("User-Agent")
 		requestTotalLabelValues = append(requestTotalLabelValues, req.Request.Method, req.Request.Host, req.SelectedRoutePath(), wclName, userAgent)
@@ -315,6 +316,25 @@ func (h *apiServerHandler) apiV1List(req *restful.Request, resp *restful.Respons
 		return
 	}
 
+	h.log.V(3).Info(fmt.Sprintf("Serving List for %v", req.Request.URL), "resourceGroup", resourceGroup)
+
+	list, err := h.v1List(ctx, req, *gvk, inmemoryClient)
+	if err != nil {
+		if status, ok := err.(apierrors.APIStatus); ok || errors.As(err, &status) {
+			_ = resp.WriteHeaderAndEntity(int(status.Status().Code), status)
+			return
+		}
+		_ = resp.WriteErrorString(http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	if err := resp.WriteEntity(list); err != nil {
+		_ = resp.WriteErrorString(http.StatusInternalServerError, err.Error())
+		return
+	}
+}
+
+func (h *apiServerHandler) v1List(ctx context.Context, req *restful.Request, gvk schema.GroupVersionKind, inmemoryClient inmemoryclient.Client) (*unstructured.UnstructuredList, error) {
 	// Reads and returns the requested data.
 	list := &unstructured.UnstructuredList{}
 	list.SetAPIVersion(gvk.GroupVersion().String())
@@ -328,8 +348,7 @@ func (h *apiServerHandler) apiV1List(req *restful.Request, resp *restful.Respons
 	// TODO: The only field Selector which works is for `spec.nodeName` on pods.
 	fieldSelector, err := fields.ParseSelector(req.QueryParameter("fieldSelector"))
 	if err != nil {
-		_ = resp.WriteErrorString(http.StatusInternalServerError, err.Error())
-		return
+		return nil, err
 	}
 	if fieldSelector != nil {
 		listOpts = append(listOpts, client.MatchingFieldsSelector{Selector: fieldSelector})
@@ -337,24 +356,15 @@ func (h *apiServerHandler) apiV1List(req *restful.Request, resp *restful.Respons
 
 	labelSelector, err := labels.Parse(req.QueryParameter("labelSelector"))
 	if err != nil {
-		_ = resp.WriteErrorString(http.StatusInternalServerError, err.Error())
-		return
+		return nil, err
 	}
 	if labelSelector != nil {
 		listOpts = append(listOpts, client.MatchingLabelsSelector{Selector: labelSelector})
 	}
 	if err := inmemoryClient.List(ctx, list, listOpts...); err != nil {
-		if status, ok := err.(apierrors.APIStatus); ok || errors.As(err, &status) {
-			_ = resp.WriteHeaderAndEntity(int(status.Status().Code), status)
-			return
-		}
-		_ = resp.WriteHeaderAndEntity(http.StatusInternalServerError, err.Error())
-		return
+		return nil, err
 	}
-	if err := resp.WriteEntity(list); err != nil {
-		_ = resp.WriteErrorString(http.StatusInternalServerError, err.Error())
-		return
-	}
+	return list, nil
 }
 
 func (h *apiServerHandler) apiV1Watch(req *restful.Request, resp *restful.Response) {
@@ -371,6 +381,8 @@ func (h *apiServerHandler) apiV1Watch(req *restful.Request, resp *restful.Respon
 		_ = resp.WriteErrorString(http.StatusInternalServerError, err.Error())
 		return
 	}
+
+	h.log.V(3).Info(fmt.Sprintf("Serving Watch for %v", req.Request.URL), "resourceGroup", resourceGroup)
 
 	// If the request is a Watch handle it using watchForResource.
 	err = h.watchForResource(req, resp, resourceGroup, *gvk)
@@ -614,8 +626,8 @@ func (h *apiServerHandler) apiV1PortForward(req *restful.Request, resp *restful.
 		podName,
 		podNamespace,
 		func(ctx context.Context, _, _, _ string, stream io.ReadWriteCloser) error {
-			// Given that in the in-memory provider there is no real infrastructure, and thus no real workload cluster,
-			// we are going to forward all the connection back to the same server (the CAPIM controller pod).
+			// Given that in the in-memory backend there is no real infrastructure, and thus no real workload cluster,
+			// we are going to forward all the connection back to the same server (the controller pod).
 			return h.doPortForward(ctx, req.Request.Host, stream)
 		},
 	)
@@ -626,7 +638,7 @@ func (h *apiServerHandler) apiV1PortForward(req *restful.Request, resp *restful.
 
 // doPortForward establish a connection to the target of the port forward operation,  and sets up
 // a bidirectional copy of data.
-// In the case of this provider, the target endpoint is always on the same server (the CAPIM controller pod).
+// In the case of the in.memory backend, the target endpoint is always on the same server (the controller pod).
 func (h *apiServerHandler) doPortForward(ctx context.Context, address string, stream io.ReadWriteCloser) error {
 	// Get a connection to the target of the port forward operation.
 	dial, err := net.Dial("tcp", address)

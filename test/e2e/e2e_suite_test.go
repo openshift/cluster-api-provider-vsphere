@@ -310,7 +310,7 @@ var _ = SynchronizedAfterSuite(func() {
 		switch testTarget {
 		case VCenterTestTarget:
 			// Cleanup the in cluster address manager
-			vSphereFolderName := e2eConfig.GetVariable("VSPHERE_FOLDER")
+			vSphereFolderName := e2eConfig.MustGetVariable("VSPHERE_FOLDER")
 			err := inClusterAddressManager.Teardown(ctx, vsphereip.MachineFolder(vSphereFolderName), vsphereip.VSphereClient(vsphereClient))
 			if err != nil {
 				Byf("Ignoring Teardown error: %v", err)
@@ -318,7 +318,9 @@ var _ = SynchronizedAfterSuite(func() {
 
 		case VCSimTestTarget:
 			// Cleanup the vcsim address manager
-			Expect(vcsimAddressManager.Teardown(ctx)).To(Succeed())
+			if vcsimAddressManager != nil {
+				Expect(vcsimAddressManager.Teardown(ctx)).To(Succeed())
+			}
 
 			// cleanup the vcsim server
 			Expect(vspherevcsim.Delete(ctx, bootstrapClusterProxy.GetClient(), skipCleanup)).To(Succeed())
@@ -378,9 +380,11 @@ func cleanupSpecNamespace(namespace *corev1.Namespace) {
 
 	// Dump all Cluster API related resources to artifacts before deleting them.
 	framework.DumpAllResources(ctx, framework.DumpAllResourcesInput{
-		Lister:    bootstrapClusterProxy.GetClient(),
-		Namespace: namespace.Name,
-		LogPath:   filepath.Join(artifactFolder, "clusters", bootstrapClusterProxy.GetName(), "resources"),
+		Lister:               bootstrapClusterProxy.GetClient(),
+		KubeConfigPath:       bootstrapClusterProxy.GetKubeconfigPath(),
+		ClusterctlConfigPath: clusterctlConfigPath,
+		Namespace:            namespace.Name,
+		LogPath:              filepath.Join(artifactFolder, "clusters", bootstrapClusterProxy.GetName(), "resources"),
 	})
 
 	Byf("cleaning up namespace: %s", namespace.Name)
@@ -388,8 +392,10 @@ func cleanupSpecNamespace(namespace *corev1.Namespace) {
 
 	if !skipCleanup {
 		framework.DeleteAllClustersAndWait(ctx, framework.DeleteAllClustersAndWaitInput{
-			Client:    bootstrapClusterProxy.GetClient(),
-			Namespace: namespace.Name,
+			ClusterProxy:         bootstrapClusterProxy,
+			ClusterctlConfigPath: clusterctlConfigPath,
+			Namespace:            namespace.Name,
+			ArtifactFolder:       artifactFolder,
 		}, e2eConfig.GetIntervals("", "wait-delete-cluster")...)
 
 		By("Deleting namespace used for hosting test spec")
