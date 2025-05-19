@@ -17,7 +17,6 @@ limitations under the License.
 package e2e
 
 import (
-	"context"
 	"fmt"
 	"net"
 	"os"
@@ -27,14 +26,15 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/klog/v2"
 	"sigs.k8s.io/cluster-api/test/framework"
+	"sigs.k8s.io/cluster-api/test/framework/clusterctl"
 	. "sigs.k8s.io/cluster-api/test/framework/ginkgoextensions"
 	crclient "sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/yaml"
 
 	vsphereip "sigs.k8s.io/cluster-api-provider-vsphere/test/framework/ip"
 	vspherevcsim "sigs.k8s.io/cluster-api-provider-vsphere/test/framework/vcsim"
@@ -122,7 +122,7 @@ func Setup(specName string, f func(testSpecificSettings func() testSettings), op
 		// Update the CLUSTER_CLASS_NAME variable adding the supervisor suffix.
 		if testMode == SupervisorTestMode {
 			if e2eConfig.HasVariable("CLUSTER_CLASS_NAME") {
-				testSpecificVariables["CLUSTER_CLASS_NAME"] = fmt.Sprintf("%s-supervisor", e2eConfig.GetVariable("CLUSTER_CLASS_NAME"))
+				testSpecificVariables["CLUSTER_CLASS_NAME"] = fmt.Sprintf("%s-supervisor", e2eConfig.MustGetVariable("CLUSTER_CLASS_NAME"))
 			}
 		}
 
@@ -145,11 +145,11 @@ func Setup(specName string, f func(testSpecificSettings func() testSettings), op
 		// may re-write the file to add some variables, but it needs to exist already before that.
 		testSpecificClusterctlConfigPath = fmt.Sprintf("%s-%s.yaml", strings.TrimSuffix(clusterctlConfigPath, ".yaml"), specName)
 		Byf("Writing a new clusterctl config to %s", testSpecificClusterctlConfigPath)
-		copyAndAmendClusterctlConfig(ctx, copyAndAmendClusterctlConfigInput{
+		Expect(clusterctl.CopyAndAmendClusterctlConfig(ctx, clusterctl.CopyAndAmendClusterctlConfigInput{
 			ClusterctlConfigPath: clusterctlConfigPath,
 			OutputPath:           testSpecificClusterctlConfigPath,
 			Variables:            testSpecificVariables,
-		})
+		})).To(Succeed())
 
 		// The setup done in `postNamespaceCreatedFunc` does
 		// 1. Create a VCSim Server (only for additional VCSim at separate management cluster)
@@ -176,11 +176,11 @@ func Setup(specName string, f func(testSpecificSettings func() testSettings), op
 
 			// Re-write the clusterctl config file and add the new variables created above (ip addresses, VCSim variables).
 			Byf("Writing a new clusterctl config to %s", testSpecificClusterctlConfigPath)
-			copyAndAmendClusterctlConfig(ctx, copyAndAmendClusterctlConfigInput{
+			Expect(clusterctl.CopyAndAmendClusterctlConfig(ctx, clusterctl.CopyAndAmendClusterctlConfigInput{
 				ClusterctlConfigPath: testSpecificClusterctlConfigPath,
 				OutputPath:           testSpecificClusterctlConfigPath,
 				Variables:            testSpecificVariables,
-			})
+			})).To(Succeed())
 
 			// Run additional initialization required for supervisor.
 			if testMode == SupervisorTestMode {
@@ -303,14 +303,16 @@ func addVCSimTestVariables(managementClusterProxy framework.ClusterProxy, specNa
 	}
 
 	err = managementClusterProxy.GetClient().Create(ctx, envVar)
-	Expect(err).ToNot(HaveOccurred(), "Failed to create EnvVar")
+	if !apierrors.IsAlreadyExists(err) {
+		Expect(err).ToNot(HaveOccurred(), "Failed to create EnvVar")
+	}
 
 	Eventually(func() bool {
 		if err := managementClusterProxy.GetClient().Get(ctx, crclient.ObjectKeyFromObject(envVar), envVar); err != nil {
 			return false
 		}
 		return len(envVar.Status.Variables) > 0
-	}, 30*time.Second, 5*time.Second).Should(BeTrue(), "Failed to get EnvVar %s", klog.KObj(envVar))
+	}, 60*time.Second, 5*time.Second).Should(BeTrue(), "Failed to get EnvVar %s", klog.KObj(envVar))
 
 	Byf("Setting test variables for %s", specName)
 	for k, v := range envVar.Status.Variables {
@@ -348,7 +350,9 @@ func setupNamespaceWithVMOperatorDependenciesVCSim(managementClusterProxy framew
 		},
 	}
 	err = c.Create(ctx, dependenciesConfig)
-	Expect(err).ToNot(HaveOccurred(), "Failed to create VMOperatorDependencies")
+	if !apierrors.IsAlreadyExists(err) {
+		Expect(err).ToNot(HaveOccurred(), "Failed to create VMOperatorDependencies")
+	}
 
 	Eventually(func() bool {
 		if err := c.Get(ctx, crclient.ObjectKeyFromObject(dependenciesConfig), dependenciesConfig); err != nil {
@@ -378,47 +382,47 @@ func setupNamespaceWithVMOperatorDependenciesVCenter(managementClusterProxy fram
 		Spec: vcsimv1.VMOperatorDependenciesSpec{
 			VCenter: &vcsimv1.VCenterSpec{
 				// NOTE: variables from E2E.sh + presets (or variables overrides when running tests locally)
-				ServerURL:  net.JoinHostPort(e2eConfig.GetVariable("VSPHERE_SERVER"), "443"),
-				Username:   e2eConfig.GetVariable("VSPHERE_USERNAME"),
-				Password:   e2eConfig.GetVariable("VSPHERE_PASSWORD"),
-				Thumbprint: e2eConfig.GetVariable("VSPHERE_TLS_THUMBPRINT"),
+				ServerURL:  net.JoinHostPort(e2eConfig.MustGetVariable("VSPHERE_SERVER"), "443"),
+				Username:   e2eConfig.MustGetVariable("VSPHERE_USERNAME"),
+				Password:   e2eConfig.MustGetVariable("VSPHERE_PASSWORD"),
+				Thumbprint: e2eConfig.MustGetVariable("VSPHERE_TLS_THUMBPRINT"),
 				// NOTE: variables from e2e config (or variables overrides when running tests locally)
-				Datacenter:   e2eConfig.GetVariable("VSPHERE_DATACENTER"),
-				Cluster:      e2eConfig.GetVariable("VSPHERE_COMPUTE_CLUSTER"),
-				Folder:       e2eConfig.GetVariable("VSPHERE_FOLDER"),
-				ResourcePool: e2eConfig.GetVariable("VSPHERE_RESOURCE_POOL"),
+				Datacenter:   e2eConfig.MustGetVariable("VSPHERE_DATACENTER"),
+				Cluster:      e2eConfig.MustGetVariable("VSPHERE_COMPUTE_CLUSTER"),
+				Folder:       e2eConfig.MustGetVariable("VSPHERE_FOLDER"),
+				ResourcePool: e2eConfig.MustGetVariable("VSPHERE_RESOURCE_POOL"),
 				ContentLibrary: vcsimv1.ContentLibraryConfig{
-					Name:      e2eConfig.GetVariable("VSPHERE_CONTENT_LIBRARY"),
-					Datastore: e2eConfig.GetVariable("VSPHERE_DATASTORE"),
+					Name:      e2eConfig.MustGetVariable("VSPHERE_CONTENT_LIBRARY"),
+					Datastore: e2eConfig.MustGetVariable("VSPHERE_DATASTORE"),
 					// NOTE: when running on vCenter the vm-operator automatically creates VirtualMachine objects for the content library.
 					Items: []vcsimv1.ContentLibraryItemConfig{},
 				},
-				DistributedPortGroupName: e2eConfig.GetVariable("VSPHERE_DISTRIBUTED_PORT_GROUP"),
+				DistributedPortGroupName: e2eConfig.MustGetVariable("VSPHERE_DISTRIBUTED_PORT_GROUP"),
 			},
 			StorageClasses: []vcsimv1.StorageClass{
 				{
-					Name:          e2eConfig.GetVariable("VSPHERE_STORAGE_CLASS"),
-					StoragePolicy: e2eConfig.GetVariable("VSPHERE_STORAGE_POLICY"),
+					Name:          e2eConfig.MustGetVariable("VSPHERE_STORAGE_CLASS"),
+					StoragePolicy: e2eConfig.MustGetVariable("VSPHERE_STORAGE_POLICY"),
 				},
 			},
 			VirtualMachineClasses: []vcsimv1.VirtualMachineClass{
 				{
-					Name:   e2eConfig.GetVariable("VSPHERE_MACHINE_CLASS_NAME"),
-					Cpus:   mustParseInt64(e2eConfig.GetVariable("VSPHERE_MACHINE_CLASS_CPU")),
-					Memory: resource.MustParse(e2eConfig.GetVariable("VSPHERE_MACHINE_CLASS_MEMORY")),
+					Name:   e2eConfig.MustGetVariable("VSPHERE_MACHINE_CLASS_NAME"),
+					Cpus:   mustParseInt64(e2eConfig.MustGetVariable("VSPHERE_MACHINE_CLASS_CPU")),
+					Memory: resource.MustParse(e2eConfig.MustGetVariable("VSPHERE_MACHINE_CLASS_MEMORY")),
 				},
 				{
-					Name:   e2eConfig.GetVariable("VSPHERE_MACHINE_CLASS_NAME_CONFORMANCE"),
-					Cpus:   mustParseInt64(e2eConfig.GetVariable("VSPHERE_MACHINE_CLASS_CPU_CONFORMANCE")),
-					Memory: resource.MustParse(e2eConfig.GetVariable("VSPHERE_MACHINE_CLASS_MEMORY_CONFORMANCE")),
+					Name:   e2eConfig.MustGetVariable("VSPHERE_MACHINE_CLASS_NAME_CONFORMANCE"),
+					Cpus:   mustParseInt64(e2eConfig.MustGetVariable("VSPHERE_MACHINE_CLASS_CPU_CONFORMANCE")),
+					Memory: resource.MustParse(e2eConfig.MustGetVariable("VSPHERE_MACHINE_CLASS_MEMORY_CONFORMANCE")),
 				},
 			},
 		},
 	}
 
-	items := e2eConfig.GetVariable("VSPHERE_CONTENT_LIBRARY_ITEMS")
+	items := e2eConfig.MustGetVariable("VSPHERE_CONTENT_LIBRARY_ITEMS")
 	if items != "" {
-		for _, i := range strings.Split(e2eConfig.GetVariable("VSPHERE_CONTENT_LIBRARY_ITEMS"), ",") {
+		for _, i := range strings.Split(e2eConfig.MustGetVariable("VSPHERE_CONTENT_LIBRARY_ITEMS"), ",") {
 			dependenciesConfig.Spec.VCenter.ContentLibrary.Items = append(dependenciesConfig.Spec.VCenter.ContentLibrary.Items, vcsimv1.ContentLibraryItemConfig{
 				Name:     i,
 				ItemType: "ovf",
@@ -428,57 +432,4 @@ func setupNamespaceWithVMOperatorDependenciesVCenter(managementClusterProxy fram
 
 	err := vmoperator.ReconcileDependencies(ctx, c, dependenciesConfig)
 	Expect(err).ToNot(HaveOccurred(), "Failed to reconcile VMOperatorDependencies")
-}
-
-// Note: Copy-paste from CAPI below.
-
-// copyAndAmendClusterctlConfigInput is the input for copyAndAmendClusterctlConfig.
-type copyAndAmendClusterctlConfigInput struct {
-	ClusterctlConfigPath string
-	OutputPath           string
-	Variables            map[string]string
-}
-
-// copyAndAmendClusterctlConfig copies the clusterctl-config from ClusterctlConfigPath to
-// OutputPath and adds the given Variables.
-func copyAndAmendClusterctlConfig(_ context.Context, input copyAndAmendClusterctlConfigInput) {
-	// Read clusterctl config from ClusterctlConfigPath.
-	clusterctlConfigFile := &clusterctlConfig{
-		Path: input.ClusterctlConfigPath,
-	}
-	clusterctlConfigFile.read()
-
-	// Overwrite variables.
-	if clusterctlConfigFile.Values == nil {
-		clusterctlConfigFile.Values = map[string]interface{}{}
-	}
-	for key, value := range input.Variables {
-		clusterctlConfigFile.Values[key] = value
-	}
-
-	// Write clusterctl config to OutputPath.
-	clusterctlConfigFile.Path = input.OutputPath
-	clusterctlConfigFile.write()
-}
-
-type clusterctlConfig struct {
-	Path   string
-	Values map[string]interface{}
-}
-
-// write writes a clusterctl config file to disk.
-func (c *clusterctlConfig) write() {
-	data, err := yaml.Marshal(c.Values)
-	Expect(err).ToNot(HaveOccurred(), "Failed to marshal the clusterctl config file")
-
-	Expect(os.WriteFile(c.Path, data, 0600)).To(Succeed(), "Failed to write the clusterctl config file")
-}
-
-// read reads a clusterctl config file from disk.
-func (c *clusterctlConfig) read() {
-	data, err := os.ReadFile(c.Path)
-	Expect(err).ToNot(HaveOccurred())
-
-	err = yaml.Unmarshal(data, &c.Values)
-	Expect(err).ToNot(HaveOccurred(), "Failed to unmarshal the clusterctl config file")
 }
