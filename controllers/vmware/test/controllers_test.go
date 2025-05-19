@@ -37,6 +37,7 @@ import (
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/config"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	ctrlmgr "sigs.k8s.io/controller-runtime/pkg/manager"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
@@ -46,6 +47,7 @@ import (
 	vmwarev1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/vmware/v1beta1"
 	"sigs.k8s.io/cluster-api-provider-vsphere/controllers"
 	"sigs.k8s.io/cluster-api-provider-vsphere/controllers/vmware"
+	"sigs.k8s.io/cluster-api-provider-vsphere/feature"
 	vmwarewebhooks "sigs.k8s.io/cluster-api-provider-vsphere/internal/webhooks/vmware"
 	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/constants"
 	capvcontext "sigs.k8s.io/cluster-api-provider-vsphere/pkg/context"
@@ -73,6 +75,9 @@ func newInfraCluster(namespace string, cluster *clusterv1.Cluster) client.Object
 func newAnonInfraCluster(namespace string) client.Object {
 	return &vmwarev1.VSphereCluster{
 		ObjectMeta: metav1.ObjectMeta{
+			Finalizers: []string{
+				vmwarev1.ClusterFinalizer,
+			},
 			GenerateName: "test-",
 			Namespace:    namespace,
 		},
@@ -222,6 +227,9 @@ func getManager(cfg *rest.Config, networkProvider string, withWebhooks bool) man
 
 	opts := manager.Options{
 		Options: ctrlmgr.Options{
+			Controller: config.Controller{
+				UsePriorityQueue: ptr.To[bool](feature.Gates.Enabled(feature.PriorityQueue)),
+			},
 			Scheme: localScheme,
 			NewCache: func(config *rest.Config, opts cache.Options) (cache.Cache, error) {
 				syncPeriod := 1 * time.Second
@@ -521,12 +529,7 @@ var _ = Describe("Reconciliation tests", func() {
 			Expect(k8sClient.Create(ctx, infraCluster)).To(Succeed())
 			infraClusterKey := client.ObjectKey{Namespace: infraCluster.GetNamespace(), Name: infraCluster.GetName()}
 
-			// We add the finalizer here to simulate an observed situation where
-			// there was no Cluster OwnerRef, but there _was_ a finalizer. This
-			// _shouldn't_ ever happen during normal operation, but it can happen
-			// if users muck with things.
-			infraCluster.SetFinalizers([]string{vmwarev1.ClusterFinalizer})
-			Expect(k8sClient.Update(ctx, infraCluster)).To(Succeed())
+			By("Waiting until the controller sets the finalizer")
 			assertEventuallyFinalizers(infraClusterKey, infraCluster)
 
 			By("Deleting the infrastructure cluster and waiting for it to be removed")

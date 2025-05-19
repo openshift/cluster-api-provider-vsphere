@@ -45,16 +45,19 @@ import (
 	"k8s.io/component-base/logs"
 	logsv1 "k8s.io/component-base/logs/api/v1"
 	"k8s.io/klog/v2"
+	"k8s.io/utils/ptr"
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	"sigs.k8s.io/cluster-api/util/kubeconfig"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/config"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 	ctrlmgr "sigs.k8s.io/controller-runtime/pkg/manager"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
 	infrav1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/v1beta1"
+	"sigs.k8s.io/cluster-api-provider-vsphere/feature"
 	"sigs.k8s.io/cluster-api-provider-vsphere/internal/test/helpers/vcsim"
 	"sigs.k8s.io/cluster-api-provider-vsphere/internal/webhooks"
 	capvcontext "sigs.k8s.io/cluster-api-provider-vsphere/pkg/context"
@@ -75,8 +78,8 @@ func init() {
 }
 
 var (
-	scheme = runtime.NewScheme()
-	env    *envtest.Environment
+	scheme   = runtime.NewScheme()
+	crdPaths []string
 )
 
 func init() {
@@ -94,7 +97,7 @@ func init() {
 	}
 	root := path.Join(path.Dir(filename), "..", "..", "..")
 
-	crdPaths := []string{
+	crdPaths = []string{
 		filepath.Join(root, "config", "default", "crd", "bases"),
 		filepath.Join(root, "config", "supervisor", "crd", "bases"),
 	}
@@ -102,12 +105,6 @@ func init() {
 	// append CAPI CRDs path
 	if capiPaths := getFilePathToCAPICRDs(); capiPaths != nil {
 		crdPaths = append(crdPaths, capiPaths...)
-	}
-
-	// Create the test environment.
-	env = &envtest.Environment{
-		ErrorIfCRDPathMissing: true,
-		CRDDirectoryPaths:     crdPaths,
 	}
 }
 
@@ -127,6 +124,7 @@ type (
 		client.Client
 		Config    *rest.Config
 		Simulator *vcsim.Simulator
+		env       *envtest.Environment
 
 		cancel context.CancelFunc
 	}
@@ -134,6 +132,12 @@ type (
 
 // NewTestEnvironment creates a new environment spinning up a local api-server.
 func NewTestEnvironment(ctx context.Context) *TestEnvironment {
+	// Create the test environment.
+	env := &envtest.Environment{
+		ErrorIfCRDPathMissing: true,
+		CRDDirectoryPaths:     crdPaths,
+	}
+
 	// Get the root of the current file to use in CRD paths.
 	_, filename, _, ok := goruntime.Caller(0)
 	if !ok {
@@ -171,6 +175,9 @@ func NewTestEnvironment(ctx context.Context) *TestEnvironment {
 
 	managerOpts := manager.Options{
 		Options: ctrl.Options{
+			Controller: config.Controller{
+				UsePriorityQueue: ptr.To[bool](feature.Gates.Enabled(feature.PriorityQueue)),
+			},
 			Scheme: scheme,
 			Metrics: metricsserver.Options{
 				BindAddress: "0",
@@ -221,6 +228,7 @@ func NewTestEnvironment(ctx context.Context) *TestEnvironment {
 		Client:    mgr.GetClient(),
 		Config:    mgr.GetConfig(),
 		Simulator: simr,
+		env:       env,
 	}
 }
 
@@ -235,7 +243,7 @@ func (t *TestEnvironment) StartManager(ctx context.Context) error {
 func (t *TestEnvironment) Stop() error {
 	t.cancel()
 	t.Simulator.Destroy()
-	return env.Stop()
+	return t.env.Stop()
 }
 
 // Cleanup removes objects from the TestEnvironment.

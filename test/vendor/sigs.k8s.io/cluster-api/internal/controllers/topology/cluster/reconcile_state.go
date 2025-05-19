@@ -61,9 +61,6 @@ const (
 // the entire reconcile operation will fail. This might be improved in the future if support for reconciling
 // subset of a topology will be implemented.
 func (r *Reconciler) reconcileState(ctx context.Context, s *scope.Scope) error {
-	log := ctrl.LoggerFrom(ctx)
-	log.Info("Reconciling state for topology owned objects")
-
 	// Reconcile the Cluster shim, a temporary object used a mean to collect
 	// objects/templates that can be orphaned in case of errors during the
 	// remaining part of the reconcile process.
@@ -680,6 +677,10 @@ func (r *Reconciler) updateMachineDeployment(ctx context.Context, s *scope.Scope
 		}
 	}
 
+	if !currentMD.Object.DeletionTimestamp.IsZero() {
+		return nil
+	}
+
 	// Return early if the MachineDeployment is pending an upgrade.
 	// Do not reconcile the MachineDeployment yet to avoid updating the MachineDeployment while it is still pending a
 	// version upgrade. This will prevent the MachineDeployment from performing a double rollout.
@@ -812,11 +813,13 @@ func (r *Reconciler) deleteMachineDeployment(ctx context.Context, cluster *clust
 			return err
 		}
 	}
-	log.Info("Deleting MachineDeployment")
-	if err := r.Client.Delete(ctx, md.Object); err != nil && !apierrors.IsNotFound(err) {
-		return errors.Wrapf(err, "failed to delete MachineDeployment %s", klog.KObj(md.Object))
+	if md.Object.DeletionTimestamp.IsZero() {
+		log.Info("Deleting MachineDeployment")
+		if err := r.Client.Delete(ctx, md.Object); err != nil && !apierrors.IsNotFound(err) {
+			return errors.Wrapf(err, "failed to delete MachineDeployment %s", klog.KObj(md.Object))
+		}
+		r.recorder.Eventf(cluster, corev1.EventTypeNormal, deleteEventReason, "Deleted MachineDeployment %q", klog.KObj(md.Object))
 	}
-	r.recorder.Eventf(cluster, corev1.EventTypeNormal, deleteEventReason, "Deleted MachineDeployment %q", klog.KObj(md.Object))
 	return nil
 }
 
