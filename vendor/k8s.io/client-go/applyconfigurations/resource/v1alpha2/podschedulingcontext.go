@@ -27,7 +27,11 @@ import (
 	v1 "k8s.io/client-go/applyconfigurations/meta/v1"
 )
 
+<<<<<<< HEAD:vendor/k8s.io/client-go/applyconfigurations/resource/v1alpha2/podschedulingcontext.go
 // PodSchedulingContextApplyConfiguration represents an declarative configuration of the PodSchedulingContext type for use
+=======
+// ValidatingAdmissionPolicyApplyConfiguration represents a declarative configuration of the ValidatingAdmissionPolicy type for use
+>>>>>>> 5cb54c60b (UPSTREAM: <drop>: Update manifests-gen dependency):openshift/tools/vendor/k8s.io/client-go/applyconfigurations/admissionregistration/v1/validatingadmissionpolicy.go
 // with apply.
 type PodSchedulingContextApplyConfiguration struct {
 	v1.TypeMetaApplyConfiguration    `json:",inline"`
@@ -36,7 +40,11 @@ type PodSchedulingContextApplyConfiguration struct {
 	Status                           *PodSchedulingContextStatusApplyConfiguration `json:"status,omitempty"`
 }
 
+<<<<<<< HEAD:vendor/k8s.io/client-go/applyconfigurations/resource/v1alpha2/podschedulingcontext.go
 // PodSchedulingContext constructs an declarative configuration of the PodSchedulingContext type for use with
+=======
+// ValidatingAdmissionPolicy constructs a declarative configuration of the ValidatingAdmissionPolicy type for use with
+>>>>>>> 5cb54c60b (UPSTREAM: <drop>: Update manifests-gen dependency):openshift/tools/vendor/k8s.io/client-go/applyconfigurations/admissionregistration/v1/validatingadmissionpolicy.go
 // apply.
 func PodSchedulingContext(name, namespace string) *PodSchedulingContextApplyConfiguration {
 	b := &PodSchedulingContextApplyConfiguration{}
@@ -255,4 +263,10 @@ func (b *PodSchedulingContextApplyConfiguration) WithSpec(value *PodSchedulingCo
 func (b *PodSchedulingContextApplyConfiguration) WithStatus(value *PodSchedulingContextStatusApplyConfiguration) *PodSchedulingContextApplyConfiguration {
 	b.Status = value
 	return b
+}
+
+// GetName retrieves the value of the Name field in the declarative configuration.
+func (b *ValidatingAdmissionPolicyApplyConfiguration) GetName() *string {
+	b.ensureObjectMetaApplyConfigurationExists()
+	return b.Name
 }

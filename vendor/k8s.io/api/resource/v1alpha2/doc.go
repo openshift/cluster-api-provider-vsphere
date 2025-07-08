@@ -17,8 +17,14 @@ limitations under the License.
 // +k8s:openapi-gen=true
 // +k8s:deepcopy-gen=package
 // +k8s:protobuf-gen=package
+<<<<<<< HEAD:vendor/k8s.io/api/resource/v1alpha2/doc.go
 
 // +groupName=resource.k8s.io
+=======
+// +k8s:openapi-gen=true
+// +k8s:prerelease-lifecycle-gen=true
+// +groupName=apidiscovery.k8s.io
+>>>>>>> 5cb54c60b (UPSTREAM: <drop>: Update manifests-gen dependency):openshift/tools/vendor/k8s.io/api/apidiscovery/v2/doc.go
 
 // Package v1alpha2 is the v1alpha2 version of the resource API.
 package v1alpha2 // import "k8s.io/api/resource/v1alpha2"

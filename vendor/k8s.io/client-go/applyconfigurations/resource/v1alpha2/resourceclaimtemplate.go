@@ -27,7 +27,11 @@ import (
 	v1 "k8s.io/client-go/applyconfigurations/meta/v1"
 )
 
+<<<<<<< HEAD:vendor/k8s.io/client-go/applyconfigurations/resource/v1alpha2/resourceclaimtemplate.go
 // ResourceClaimTemplateApplyConfiguration represents an declarative configuration of the ResourceClaimTemplate type for use
+=======
+// ValidatingAdmissionPolicyBindingApplyConfiguration represents a declarative configuration of the ValidatingAdmissionPolicyBinding type for use
+>>>>>>> 5cb54c60b (UPSTREAM: <drop>: Update manifests-gen dependency):openshift/tools/vendor/k8s.io/client-go/applyconfigurations/admissionregistration/v1/validatingadmissionpolicybinding.go
 // with apply.
 type ResourceClaimTemplateApplyConfiguration struct {
 	v1.TypeMetaApplyConfiguration    `json:",inline"`
@@ -35,7 +39,11 @@ type ResourceClaimTemplateApplyConfiguration struct {
 	Spec                             *ResourceClaimTemplateSpecApplyConfiguration `json:"spec,omitempty"`
 }
 
+<<<<<<< HEAD:vendor/k8s.io/client-go/applyconfigurations/resource/v1alpha2/resourceclaimtemplate.go
 // ResourceClaimTemplate constructs an declarative configuration of the ResourceClaimTemplate type for use with
+=======
+// ValidatingAdmissionPolicyBinding constructs a declarative configuration of the ValidatingAdmissionPolicyBinding type for use with
+>>>>>>> 5cb54c60b (UPSTREAM: <drop>: Update manifests-gen dependency):openshift/tools/vendor/k8s.io/client-go/applyconfigurations/admissionregistration/v1/validatingadmissionpolicybinding.go
 // apply.
 func ResourceClaimTemplate(name, namespace string) *ResourceClaimTemplateApplyConfiguration {
 	b := &ResourceClaimTemplateApplyConfiguration{}
@@ -246,4 +254,10 @@ func (b *ResourceClaimTemplateApplyConfiguration) ensureObjectMetaApplyConfigura
 func (b *ResourceClaimTemplateApplyConfiguration) WithSpec(value *ResourceClaimTemplateSpecApplyConfiguration) *ResourceClaimTemplateApplyConfiguration {
 	b.Spec = value
 	return b
+}
+
+// GetName retrieves the value of the Name field in the declarative configuration.
+func (b *ValidatingAdmissionPolicyBindingApplyConfiguration) GetName() *string {
+	b.ensureObjectMetaApplyConfigurationExists()
+	return b.Name
 }
