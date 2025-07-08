@@ -27,7 +27,11 @@ import (
 	v1 "k8s.io/client-go/applyconfigurations/meta/v1"
 )
 
+<<<<<<< HEAD:vendor/k8s.io/client-go/applyconfigurations/resource/v1alpha2/resourceclaim.go
 // ResourceClaimApplyConfiguration represents an declarative configuration of the ResourceClaim type for use
+=======
+// StorageVersionMigrationApplyConfiguration represents a declarative configuration of the StorageVersionMigration type for use
+>>>>>>> 5cb54c60b (UPSTREAM: <drop>: Update manifests-gen dependency):openshift/tools/vendor/k8s.io/client-go/applyconfigurations/storagemigration/v1alpha1/storageversionmigration.go
 // with apply.
 type ResourceClaimApplyConfiguration struct {
 	v1.TypeMetaApplyConfiguration    `json:",inline"`
@@ -36,7 +40,11 @@ type ResourceClaimApplyConfiguration struct {
 	Status                           *ResourceClaimStatusApplyConfiguration `json:"status,omitempty"`
 }
 
+<<<<<<< HEAD:vendor/k8s.io/client-go/applyconfigurations/resource/v1alpha2/resourceclaim.go
 // ResourceClaim constructs an declarative configuration of the ResourceClaim type for use with
+=======
+// StorageVersionMigration constructs a declarative configuration of the StorageVersionMigration type for use with
+>>>>>>> 5cb54c60b (UPSTREAM: <drop>: Update manifests-gen dependency):openshift/tools/vendor/k8s.io/client-go/applyconfigurations/storagemigration/v1alpha1/storageversionmigration.go
 // apply.
 func ResourceClaim(name, namespace string) *ResourceClaimApplyConfiguration {
 	b := &ResourceClaimApplyConfiguration{}
@@ -255,4 +263,10 @@ func (b *ResourceClaimApplyConfiguration) WithSpec(value *ResourceClaimSpecApply
 func (b *ResourceClaimApplyConfiguration) WithStatus(value *ResourceClaimStatusApplyConfiguration) *ResourceClaimApplyConfiguration {
 	b.Status = value
 	return b
+}
+
+// GetName retrieves the value of the Name field in the declarative configuration.
+func (b *StorageVersionMigrationApplyConfiguration) GetName() *string {
+	b.ensureObjectMetaApplyConfigurationExists()
+	return b.Name
 }
