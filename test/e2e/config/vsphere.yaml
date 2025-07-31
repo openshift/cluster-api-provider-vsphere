@@ -26,8 +26,8 @@ providers:
   - name: cluster-api
     type: CoreProvider
     versions:
-      - name: "v1.10.99"
-        value: "https://storage.googleapis.com/k8s-staging-cluster-api/components/v1.10.1/core-components.yaml"
+      - name: "{go://sigs.k8s.io/cluster-api@v1.10}"
+        value: "https://github.com/kubernetes-sigs/cluster-api/releases/download/{go://sigs.k8s.io/cluster-api@v1.10}/core-components.yaml"
         type: "url"
         contract: v1beta1
         files:
@@ -75,8 +75,8 @@ providers:
   - name: kubeadm
     type: BootstrapProvider
     versions:
-      - name: "v1.10.99"
-        value: "https://storage.googleapis.com/k8s-staging-cluster-api/components/v1.10.1/bootstrap-components.yaml"
+      - name: "{go://sigs.k8s.io/cluster-api@v1.10}"
+        value: "https://github.com/kubernetes-sigs/cluster-api/releases/download/{go://sigs.k8s.io/cluster-api@v1.10}/bootstrap-components.yaml"
         type: "url"
         contract: v1beta1
         files:
@@ -124,8 +124,8 @@ providers:
   - name: kubeadm
     type: ControlPlaneProvider
     versions:
-      - name: "v1.10.99"
-        value: "https://storage.googleapis.com/k8s-staging-cluster-api/components/v1.10.1/control-plane-components.yaml"
+      - name: "{go://sigs.k8s.io/cluster-api@v1.10}"
+        value: "https://github.com/kubernetes-sigs/cluster-api/releases/download/{go://sigs.k8s.io/cluster-api@v1.10}/control-plane-components.yaml"
         type: "url"
         contract: v1beta1
         files:
@@ -316,12 +316,12 @@ variables:
   WORKER_MACHINE_COUNT: 1
   IP_FAMILY: "IPv4"
   CLUSTER_CLASS_NAME: "quick-start"
-  VSPHERE_COMPUTE_CLUSTER: "Cluster-1"
-  VSPHERE_DATACENTER:  "SDDC-Datacenter"
-  VSPHERE_FOLDER: "/SDDC-Datacenter/vm/Workloads/cluster-api-provider-vsphere"
-  VSPHERE_RESOURCE_POOL: "/SDDC-Datacenter/host/Cluster-1/Resources/Compute-ResourcePool/cluster-api-provider-vsphere"
-  VSPHERE_DATASTORE: "WorkloadDatastore"
-  VSPHERE_STORAGE_POLICY: "Cluster API vSphere Storage Policy"
+  VSPHERE_COMPUTE_CLUSTER: "k8s-gcve-cluster"
+  VSPHERE_DATACENTER:  "Datacenter"
+  VSPHERE_FOLDER: "/Datacenter/vm/Workloads/prow"
+  VSPHERE_RESOURCE_POOL: "/Datacenter/host/k8s-gcve-cluster/Resources/prow"
+  VSPHERE_DATASTORE: "vsanDatastore"
+  VSPHERE_STORAGE_POLICY: "vSAN Default Storage Policy"
   VSPHERE_STORAGE_CLASS: "test-storageclass"
   VSPHERE_MACHINE_CLASS_NAME: "test-machine-class"
   # CI runs vm-operator v1.8.6 on vCenter 8, setting CPU and Memory does not work and defaults to 2 CPUs / 2Gi memory.
@@ -336,8 +336,8 @@ variables:
   VSPHERE_CONTENT_LIBRARY: "capv"
   VSPHERE_CONTENT_LIBRARY_ITEMS: "ubuntu-2204-kube-v1.28.0,ubuntu-2204-kube-v1.29.0,ubuntu-2204-kube-v1.30.0,ubuntu-2404-kube-v1.31.0,ubuntu-2404-kube-v1.32.0,ubuntu-2404-kube-v1.33.0"
   VSPHERE_IMAGE_NAME: "ubuntu-2404-kube-v1.33.0"
-  VSPHERE_NETWORK: "sddc-cgw-network-10"
-  VSPHERE_DISTRIBUTED_PORT_GROUP: "/SDDC-Datacenter/network/sddc-cgw-network-10"
+  VSPHERE_NETWORK: "k8s-ci"
+  VSPHERE_DISTRIBUTED_PORT_GROUP: "/Datacenter/network/k8s-ci"
   VSPHERE_TEMPLATE: "ubuntu-2404-kube-v1.33.0"
   FLATCAR_VSPHERE_TEMPLATE: "flatcar-stable-4152.2.2-kube-v1.33.0"
   KUBETEST_CONFIGURATION: "./data/kubetest/conformance.yaml"
