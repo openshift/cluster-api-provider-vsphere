@@ -17,7 +17,9 @@ limitations under the License.
 package collections
 
 import (
-	"github.com/blang/semver"
+	"time"
+
+	"github.com/blang/semver/v4"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/selection"
@@ -146,14 +148,59 @@ func HasDeletionTimestamp(machine *clusterv1.Machine) bool {
 	return !machine.DeletionTimestamp.IsZero()
 }
 
-// HasUnhealthyCondition returns a filter to find all machines that have a MachineHealthCheckSucceeded condition set to False,
-// indicating a problem was detected on the machine, and the MachineOwnerRemediated condition set, indicating that KCP is
-// responsible of performing remediation as owner of the machine.
-func HasUnhealthyCondition(machine *clusterv1.Machine) bool {
+// IsUnhealthyAndOwnerRemediated returns a filter to find all machines that have a MachineHealthCheckSucceeded condition set to False,
+// indicating a problem was detected on the machine, and the MachineOwnerRemediated condition set to False, indicating that the machine owner is
+// responsible for performing remediation for the machine.
+func IsUnhealthyAndOwnerRemediated(machine *clusterv1.Machine) bool {
 	if machine == nil {
 		return false
 	}
 	return conditions.IsFalse(machine, clusterv1.MachineHealthCheckSucceededCondition) && conditions.IsFalse(machine, clusterv1.MachineOwnerRemediatedCondition)
+}
+
+// IsUnhealthy returns a filter to find all machines that have a MachineHealthCheckSucceeded condition set to False,
+// indicating a problem was detected on the machine.
+func IsUnhealthy(machine *clusterv1.Machine) bool {
+	if machine == nil {
+		return false
+	}
+	return conditions.IsFalse(machine, clusterv1.MachineHealthCheckSucceededCondition)
+}
+
+// HasUnhealthyControlPlaneComponents returns a filter to find all unhealthy control plane machines that
+// have any of the following control plane component conditions set to False:
+// APIServerPodHealthy, ControllerManagerPodHealthy, SchedulerPodHealthy, EtcdPodHealthy & EtcdMemberHealthy (if using managed etcd).
+// It is different from the HasUnhealthyCondition func which checks MachineHealthCheck conditions.
+func HasUnhealthyControlPlaneComponents(isEtcdManaged bool) Func {
+	controlPlaneMachineHealthConditions := []clusterv1.ConditionType{
+		controlplanev1.MachineAPIServerPodHealthyCondition,
+		controlplanev1.MachineControllerManagerPodHealthyCondition,
+		controlplanev1.MachineSchedulerPodHealthyCondition,
+	}
+	if isEtcdManaged {
+		controlPlaneMachineHealthConditions = append(controlPlaneMachineHealthConditions,
+			controlplanev1.MachineEtcdPodHealthyCondition,
+			controlplanev1.MachineEtcdMemberHealthyCondition,
+		)
+	}
+	return func(machine *clusterv1.Machine) bool {
+		if machine == nil {
+			return false
+		}
+
+		// The machine without a node could be in failure status due to the kubelet config error, or still provisioning components (including etcd).
+		// So do not treat it as unhealthy.
+
+		for _, condition := range controlPlaneMachineHealthConditions {
+			// Do not return true when the condition is not set or is set to Unknown because
+			// it means a transient state and can not be considered as unhealthy.
+			// preflightCheckCondition() can cover these two cases and skip the scaling up/down.
+			if conditions.IsFalse(machine, condition) {
+				return true
+			}
+		}
+		return false
+	}
 }
 
 // IsReady returns a filter to find all machines with the ReadyCondition equals to True.
@@ -173,7 +220,25 @@ func ShouldRolloutAfter(reconciliationTime, rolloutAfter *metav1.Time) Func {
 		if machine == nil {
 			return false
 		}
+		if reconciliationTime == nil || rolloutAfter == nil {
+			return false
+		}
 		return machine.CreationTimestamp.Before(rolloutAfter) && rolloutAfter.Before(reconciliationTime)
+	}
+}
+
+// ShouldRolloutBefore returns a filter to find all machine whose
+// certificates will expire within the specified days.
+func ShouldRolloutBefore(reconciliationTime *metav1.Time, rolloutBefore *controlplanev1.RolloutBefore) Func {
+	return func(machine *clusterv1.Machine) bool {
+		if rolloutBefore == nil || rolloutBefore.CertificatesExpiryDays == nil {
+			return false
+		}
+		if machine == nil || machine.Status.CertificatesExpiryDate == nil {
+			return false
+		}
+		certsExpiryTime := machine.Status.CertificatesExpiryDate.Time
+		return reconciliationTime.Add(time.Duration(*rolloutBefore.CertificatesExpiryDays) * 24 * time.Hour).After(certsExpiryTime)
 	}
 }
 
@@ -200,8 +265,8 @@ func ControlPlaneSelectorForCluster(clusterName string) labels.Selector {
 		return *r
 	}
 	return labels.NewSelector().Add(
-		must(labels.NewRequirement(clusterv1.ClusterLabelName, selection.Equals, []string{clusterName})),
-		must(labels.NewRequirement(clusterv1.MachineControlPlaneLabelName, selection.Exists, []string{})),
+		must(labels.NewRequirement(clusterv1.ClusterNameLabel, selection.Equals, []string{clusterName})),
+		must(labels.NewRequirement(clusterv1.MachineControlPlaneLabel, selection.Exists, []string{})),
 	)
 }
 
@@ -234,13 +299,12 @@ func WithVersion() Func {
 	}
 }
 
-// HealthyAPIServer returns a filter to find all machines that have a MachineAPIServerPodHealthyCondition
-// set to true.
-func HealthyAPIServer() Func {
+// HasNode returns a filter to find all machines that have a corresponding Kubernetes node.
+func HasNode() Func {
 	return func(machine *clusterv1.Machine) bool {
 		if machine == nil {
 			return false
 		}
-		return conditions.IsTrue(machine, controlplanev1.MachineAPIServerPodHealthyCondition)
+		return machine.Status.NodeRef != nil
 	}
 }
