@@ -8676,6 +8676,6 @@ metadata:
   labels:
     provider.cluster.x-k8s.io/name: vsphere
     provider.cluster.x-k8s.io/type: infrastructure
-    provider.cluster.x-k8s.io/version: v1.13.0
+    provider.cluster.x-k8s.io/version: v1.13.1
   name: vsphere
   namespace: openshift-cluster-api
