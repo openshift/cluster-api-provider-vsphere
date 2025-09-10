@@ -11,4 +11,4 @@ if [ $HOME == "/" ]; then
   export HOME=/tmp/kubebuilder/testing
 fi
 
-GOFLAGS='-mod=readonly' make go-test
+GOFLAGS='-mod=readonly' make test
