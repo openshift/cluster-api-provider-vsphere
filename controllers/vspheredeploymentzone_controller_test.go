@@ -27,9 +27,9 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
-	bootstrapv1 "sigs.k8s.io/cluster-api/bootstrap/kubeadm/api/v1beta1"
-	"sigs.k8s.io/cluster-api/util/conditions"
+	bootstrapv1 "sigs.k8s.io/cluster-api/api/bootstrap/kubeadm/v1beta2"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
+	v1beta1conditions "sigs.k8s.io/cluster-api/util/deprecated/v1beta1/conditions"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	infrav1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/v1beta1"
@@ -137,9 +137,9 @@ var _ = Describe("VSphereDeploymentZoneReconciler", func() {
 			if err := testEnv.Get(ctx, deploymentZoneKey, vsphereDeploymentZone); err != nil {
 				return false
 			}
-			return conditions.IsTrue(vsphereDeploymentZone, infrav1.VCenterAvailableCondition) &&
-				conditions.IsTrue(vsphereDeploymentZone, infrav1.PlacementConstraintMetCondition) &&
-				conditions.IsTrue(vsphereDeploymentZone, infrav1.VSphereFailureDomainValidatedCondition)
+			return v1beta1conditions.IsTrue(vsphereDeploymentZone, infrav1.VCenterAvailableCondition) &&
+				v1beta1conditions.IsTrue(vsphereDeploymentZone, infrav1.PlacementConstraintMetCondition) &&
+				v1beta1conditions.IsTrue(vsphereDeploymentZone, infrav1.VSphereFailureDomainValidatedCondition)
 		}, timeout).Should(BeTrue())
 
 		Expect(testEnv.Get(ctx, failureDomainKey, vsphereFailureDomain)).To(Succeed())
@@ -204,7 +204,7 @@ var _ = Describe("VSphereDeploymentZoneReconciler", func() {
 				if err := testEnv.Get(ctx, deploymentZoneKey, vsphereDeploymentZone); err != nil {
 					return false
 				}
-				return conditions.IsFalse(vsphereDeploymentZone, infrav1.PlacementConstraintMetCondition)
+				return v1beta1conditions.IsFalse(vsphereDeploymentZone, infrav1.PlacementConstraintMetCondition)
 			}, timeout).Should(BeTrue())
 		})
 	})
@@ -250,7 +250,7 @@ var _ = Describe("VSphereDeploymentZoneReconciler", func() {
 			Context("when machines are using Deployment Zone", func() {
 				It("should block deletion", func() {
 					machineUsingDeplZone := createMachine("machine-using-zone", "cluster-using-zone", machineNamespace.Name, false)
-					machineUsingDeplZone.Spec.FailureDomain = ptr.To(vsphereDeploymentZone.Name)
+					machineUsingDeplZone.Spec.FailureDomain = vsphereDeploymentZone.Name
 					Expect(testEnv.Create(ctx, machineUsingDeplZone)).To(Succeed())
 
 					Expect(testEnv.Delete(ctx, vsphereDeploymentZone)).To(Succeed())
@@ -266,7 +266,7 @@ var _ = Describe("VSphereDeploymentZoneReconciler", func() {
 
 				It("should not block deletion if machines are being deleted", func() {
 					machineBeingDeleted := createMachine("machine-deleted", "cluster-deleted", machineNamespace.Name, false)
-					machineBeingDeleted.Spec.FailureDomain = ptr.To(vsphereDeploymentZone.Name)
+					machineBeingDeleted.Spec.FailureDomain = vsphereDeploymentZone.Name
 					machineBeingDeleted.Finalizers = []string{clusterv1.MachineFinalizer}
 					Expect(testEnv.Create(ctx, machineBeingDeleted)).To(Succeed())
 
@@ -381,9 +381,9 @@ func TestVSphereDeploymentZone_Reconcile(t *testing.T) {
 			if err := testEnv.Get(ctx, client.ObjectKeyFromObject(vsphereDeploymentZone), vsphereDeploymentZone); err != nil {
 				return false
 			}
-			return conditions.IsTrue(vsphereDeploymentZone, infrav1.VCenterAvailableCondition) &&
-				conditions.IsTrue(vsphereDeploymentZone, infrav1.PlacementConstraintMetCondition) &&
-				conditions.IsTrue(vsphereDeploymentZone, infrav1.VSphereFailureDomainValidatedCondition)
+			return v1beta1conditions.IsTrue(vsphereDeploymentZone, infrav1.VCenterAvailableCondition) &&
+				v1beta1conditions.IsTrue(vsphereDeploymentZone, infrav1.PlacementConstraintMetCondition) &&
+				v1beta1conditions.IsTrue(vsphereDeploymentZone, infrav1.VSphereFailureDomainValidatedCondition)
 		}, timeout).Should(BeTrue())
 
 		g.Expect(testEnv.Get(ctx, client.ObjectKeyFromObject(vsphereFailureDomain), vsphereFailureDomain)).To(Succeed())
@@ -545,17 +545,18 @@ func createMachine(machineName, clusterName, namespace string, isControlPlane bo
 			},
 		},
 		Spec: clusterv1.MachineSpec{
-			Version: ptr.To("v1.22.0"),
+			Version: "v1.22.0",
 			Bootstrap: clusterv1.Bootstrap{
-				ConfigRef: &corev1.ObjectReference{
-					APIVersion: bootstrapv1.GroupVersion.String(),
-					Name:       machineName,
+				ConfigRef: clusterv1.ContractVersionedObjectReference{
+					APIGroup: bootstrapv1.GroupVersion.Group,
+					Kind:     "KubeadmConfig",
+					Name:     machineName,
 				},
 			},
-			InfrastructureRef: corev1.ObjectReference{
-				APIVersion: infrav1.GroupVersion.String(),
-				Kind:       "VSphereMachine",
-				Name:       machineName,
+			InfrastructureRef: clusterv1.ContractVersionedObjectReference{
+				APIGroup: infrav1.GroupVersion.Group,
+				Kind:     "VSphereMachine",
+				Name:     machineName,
 			},
 			ClusterName: clusterName,
 		},
@@ -668,7 +669,7 @@ func TestVSphereDeploymentZoneReconciler_ReconcileDelete(t *testing.T) {
 
 	t.Run("when machines are using deployment zone", func(t *testing.T) {
 		machineUsingDeplZone := createMachine("machine-1", "cluster-1", "ns", false)
-		machineUsingDeplZone.Spec.FailureDomain = ptr.To("blah")
+		machineUsingDeplZone.Spec.FailureDomain = "blah"
 
 		t.Run("should block deletion", func(t *testing.T) {
 			controllerManagerContext := fake.NewControllerManagerContext(machineUsingDeplZone, vsphereFailureDomain)

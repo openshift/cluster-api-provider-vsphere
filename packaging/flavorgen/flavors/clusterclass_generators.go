@@ -20,12 +20,10 @@ import (
 	"fmt"
 	"strings"
 
-	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/utils/ptr"
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
-	bootstrapv1 "sigs.k8s.io/cluster-api/bootstrap/kubeadm/api/v1beta1"
-	controlplanev1 "sigs.k8s.io/cluster-api/controlplane/kubeadm/api/v1beta1"
+	bootstrapv1 "sigs.k8s.io/cluster-api/api/bootstrap/kubeadm/v1beta2"
+	controlplanev1 "sigs.k8s.io/cluster-api/api/controlplane/kubeadm/v1beta2"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/yaml"
 
 	infrav1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/v1beta1"
@@ -46,11 +44,10 @@ func newClusterClass() clusterv1.ClusterClass {
 			Name: env.ClusterClassNameVar,
 		},
 		Spec: clusterv1.ClusterClassSpec{
-			Infrastructure: clusterv1.LocalObjectTemplate{
-				Ref: &corev1.ObjectReference{
+			Infrastructure: clusterv1.InfrastructureClass{
+				TemplateRef: clusterv1.ClusterClassTemplateReference{
 					APIVersion: infrav1.GroupVersion.String(),
 					Kind:       util.TypeToKind(&infrav1.VSphereClusterTemplate{}),
-					Namespace:  env.NamespaceVar,
 					Name:       env.ClusterClassNameVar,
 				},
 			},
@@ -72,11 +69,10 @@ func newVMWareClusterClass() clusterv1.ClusterClass {
 			Name: env.ClusterClassNameVar,
 		},
 		Spec: clusterv1.ClusterClassSpec{
-			Infrastructure: clusterv1.LocalObjectTemplate{
-				Ref: &corev1.ObjectReference{
+			Infrastructure: clusterv1.InfrastructureClass{
+				TemplateRef: clusterv1.ClusterClassTemplateReference{
 					APIVersion: vmwarev1.GroupVersion.String(),
 					Kind:       util.TypeToKind(&vmwarev1.VSphereClusterTemplate{}),
-					Namespace:  env.NamespaceVar,
 					Name:       env.ClusterClassNameVar,
 				},
 			},
@@ -90,19 +86,15 @@ func newVMWareClusterClass() clusterv1.ClusterClass {
 
 func getControlPlaneClass() clusterv1.ControlPlaneClass {
 	return clusterv1.ControlPlaneClass{
-		LocalObjectTemplate: clusterv1.LocalObjectTemplate{
-			Ref: &corev1.ObjectReference{
-				Kind:       util.TypeToKind(&controlplanev1.KubeadmControlPlaneTemplate{}),
-				Namespace:  env.NamespaceVar,
-				Name:       fmt.Sprintf("%s-controlplane", env.ClusterClassNameVar),
-				APIVersion: controlplanev1.GroupVersion.String(),
-			},
+		TemplateRef: clusterv1.ClusterClassTemplateReference{
+			Kind:       util.TypeToKind(&controlplanev1.KubeadmControlPlaneTemplate{}),
+			Name:       fmt.Sprintf("%s-controlplane", env.ClusterClassNameVar),
+			APIVersion: controlplanev1.GroupVersion.String(),
 		},
-		MachineInfrastructure: &clusterv1.LocalObjectTemplate{
-			Ref: &corev1.ObjectReference{
+		MachineInfrastructure: clusterv1.ControlPlaneClassMachineInfrastructureTemplate{
+			TemplateRef: clusterv1.ClusterClassTemplateReference{
 				APIVersion: infrav1.GroupVersion.String(),
 				Kind:       util.TypeToKind(&infrav1.VSphereMachineTemplate{}),
-				Namespace:  env.NamespaceVar,
 				Name:       fmt.Sprintf("%s-template", env.ClusterClassNameVar),
 			},
 		},
@@ -111,19 +103,15 @@ func getControlPlaneClass() clusterv1.ControlPlaneClass {
 
 func getVMWareControlPlaneClass() clusterv1.ControlPlaneClass {
 	return clusterv1.ControlPlaneClass{
-		LocalObjectTemplate: clusterv1.LocalObjectTemplate{
-			Ref: &corev1.ObjectReference{
-				Kind:       util.TypeToKind(&controlplanev1.KubeadmControlPlaneTemplate{}),
-				Namespace:  env.NamespaceVar,
-				Name:       fmt.Sprintf("%s-controlplane", env.ClusterClassNameVar),
-				APIVersion: controlplanev1.GroupVersion.String(),
-			},
+		TemplateRef: clusterv1.ClusterClassTemplateReference{
+			Kind:       util.TypeToKind(&controlplanev1.KubeadmControlPlaneTemplate{}),
+			Name:       fmt.Sprintf("%s-controlplane", env.ClusterClassNameVar),
+			APIVersion: controlplanev1.GroupVersion.String(),
 		},
-		MachineInfrastructure: &clusterv1.LocalObjectTemplate{
-			Ref: &corev1.ObjectReference{
+		MachineInfrastructure: clusterv1.ControlPlaneClassMachineInfrastructureTemplate{
+			TemplateRef: clusterv1.ClusterClassTemplateReference{
 				APIVersion: vmwarev1.GroupVersion.String(),
 				Kind:       util.TypeToKind(&vmwarev1.VSphereMachineTemplate{}),
-				Namespace:  env.NamespaceVar,
 				Name:       fmt.Sprintf("%s-template", env.ClusterClassNameVar),
 			},
 		},
@@ -135,22 +123,18 @@ func getWorkersClass() clusterv1.WorkersClass {
 		MachineDeployments: []clusterv1.MachineDeploymentClass{
 			{
 				Class: fmt.Sprintf("%s-worker", env.ClusterClassNameVar),
-				Template: clusterv1.MachineDeploymentClassTemplate{
-					Bootstrap: clusterv1.LocalObjectTemplate{
-						Ref: &corev1.ObjectReference{
-							APIVersion: bootstrapv1.GroupVersion.String(),
-							Kind:       util.TypeToKind(&bootstrapv1.KubeadmConfigTemplate{}),
-							Namespace:  env.NamespaceVar,
-							Name:       fmt.Sprintf("%s-worker-bootstrap-template", env.ClusterClassNameVar),
-						},
+				Bootstrap: clusterv1.MachineDeploymentClassBootstrapTemplate{
+					TemplateRef: clusterv1.ClusterClassTemplateReference{
+						APIVersion: bootstrapv1.GroupVersion.String(),
+						Kind:       util.TypeToKind(&bootstrapv1.KubeadmConfigTemplate{}),
+						Name:       fmt.Sprintf("%s-worker-bootstrap-template", env.ClusterClassNameVar),
 					},
-					Infrastructure: clusterv1.LocalObjectTemplate{
-						Ref: &corev1.ObjectReference{
-							Kind:       util.TypeToKind(&infrav1.VSphereMachineTemplate{}),
-							Namespace:  env.NamespaceVar,
-							Name:       fmt.Sprintf("%s-worker-machinetemplate", env.ClusterClassNameVar),
-							APIVersion: infrav1.GroupVersion.String(),
-						},
+				},
+				Infrastructure: clusterv1.MachineDeploymentClassInfrastructureTemplate{
+					TemplateRef: clusterv1.ClusterClassTemplateReference{
+						Kind:       util.TypeToKind(&infrav1.VSphereMachineTemplate{}),
+						Name:       fmt.Sprintf("%s-worker-machinetemplate", env.ClusterClassNameVar),
+						APIVersion: infrav1.GroupVersion.String(),
 					},
 				},
 			},
@@ -163,22 +147,18 @@ func getVMWareWorkersClass() clusterv1.WorkersClass {
 		MachineDeployments: []clusterv1.MachineDeploymentClass{
 			{
 				Class: fmt.Sprintf("%s-worker", env.ClusterClassNameVar),
-				Template: clusterv1.MachineDeploymentClassTemplate{
-					Bootstrap: clusterv1.LocalObjectTemplate{
-						Ref: &corev1.ObjectReference{
-							APIVersion: bootstrapv1.GroupVersion.String(),
-							Kind:       util.TypeToKind(&bootstrapv1.KubeadmConfigTemplate{}),
-							Namespace:  env.NamespaceVar,
-							Name:       fmt.Sprintf("%s-worker-bootstrap-template", env.ClusterClassNameVar),
-						},
+				Bootstrap: clusterv1.MachineDeploymentClassBootstrapTemplate{
+					TemplateRef: clusterv1.ClusterClassTemplateReference{
+						APIVersion: bootstrapv1.GroupVersion.String(),
+						Kind:       util.TypeToKind(&bootstrapv1.KubeadmConfigTemplate{}),
+						Name:       fmt.Sprintf("%s-worker-bootstrap-template", env.ClusterClassNameVar),
 					},
-					Infrastructure: clusterv1.LocalObjectTemplate{
-						Ref: &corev1.ObjectReference{
-							Kind:       util.TypeToKind(&vmwarev1.VSphereMachineTemplate{}),
-							Namespace:  env.NamespaceVar,
-							Name:       fmt.Sprintf("%s-worker-machinetemplate", env.ClusterClassNameVar),
-							APIVersion: vmwarev1.GroupVersion.String(),
-						},
+				},
+				Infrastructure: clusterv1.MachineDeploymentClassInfrastructureTemplate{
+					TemplateRef: clusterv1.ClusterClassTemplateReference{
+						Kind:       util.TypeToKind(&vmwarev1.VSphereMachineTemplate{}),
+						Name:       fmt.Sprintf("%s-worker-machinetemplate", env.ClusterClassNameVar),
+						APIVersion: vmwarev1.GroupVersion.String(),
 					},
 				},
 			},
@@ -204,16 +184,16 @@ func getVMWareClusterClassPatches() []clusterv1.ClusterClassPatch {
 	}
 }
 
-func getCredSecretNameTemplate() *string {
+func getCredSecretNameTemplate() string {
 	template := map[string]interface{}{
 		"name": "{{ .credsSecretName }}",
 		"kind": "Secret",
 	}
 	templateStr, _ := yaml.Marshal(template)
-	return ptr.To(string(templateStr))
+	return string(templateStr)
 }
 
-func getControlPlaneEndpointTemplate() *string {
+func getControlPlaneEndpointTemplate() string {
 	template := map[string]interface{}{
 		"host": "{{ .controlPlaneIpAddr }}",
 		"port": "{{ .controlPlanePort }}",
@@ -221,11 +201,11 @@ func getControlPlaneEndpointTemplate() *string {
 	templateStr, _ := yaml.Marshal(template)
 
 	fixTemplateStr := string(templateStr)
-	fixTemplateStr = strings.Replace(fixTemplateStr, "'{{ .controlPlanePort }}'", "{{ .controlPlanePort }}", -1)
-	return ptr.To(fixTemplateStr)
+	fixTemplateStr = strings.ReplaceAll(fixTemplateStr, "'{{ .controlPlanePort }}'", "{{ .controlPlanePort }}")
+	return fixTemplateStr
 }
 
-func getEnableSSHIntoNodesTemplate() *string {
+func getEnableSSHIntoNodesTemplate() string {
 	template := []map[string]interface{}{
 		{
 			"name": "capv",
@@ -236,7 +216,7 @@ func getEnableSSHIntoNodesTemplate() *string {
 		},
 	}
 	templateStr, _ := yaml.Marshal(template)
-	return ptr.To(string(templateStr))
+	return string(templateStr)
 }
 
 func newVSphereClusterTemplate() infrav1.VSphereClusterTemplate {

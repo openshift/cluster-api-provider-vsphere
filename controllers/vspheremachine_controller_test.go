@@ -22,12 +22,14 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
+	clusterv1beta1 "sigs.k8s.io/cluster-api/api/core/v1beta1"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	capiutil "sigs.k8s.io/cluster-api/util"
-	"sigs.k8s.io/cluster-api/util/conditions"
-	"sigs.k8s.io/cluster-api/util/patch"
+	v1beta1conditions "sigs.k8s.io/cluster-api/util/deprecated/v1beta1/conditions"
+	"sigs.k8s.io/cluster-api/util/deprecated/v1beta1/patch"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	ctrlutil "sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
@@ -46,12 +48,12 @@ var _ = Describe("VsphereMachineReconciler", func() {
 		key    client.ObjectKey
 	)
 
-	isPresentAndFalseWithReason := func(getter conditions.Getter, condition clusterv1.ConditionType, reason string) bool {
+	isPresentAndFalseWithReason := func(getter v1beta1conditions.Getter, condition clusterv1beta1.ConditionType, reason string) bool {
 		ExpectWithOffset(1, testEnv.Get(ctx, key, getter)).To(Succeed())
-		if !conditions.Has(getter, condition) {
+		if !v1beta1conditions.Has(getter, condition) {
 			return false
 		}
-		objectCondition := conditions.Get(getter, condition)
+		objectCondition := v1beta1conditions.Get(getter, condition)
 		return objectCondition.Status == corev1.ConditionFalse &&
 			objectCondition.Reason == reason
 	}
@@ -67,10 +69,10 @@ var _ = Describe("VsphereMachineReconciler", func() {
 				Namespace:    testNs.Name,
 			},
 			Spec: clusterv1.ClusterSpec{
-				InfrastructureRef: &corev1.ObjectReference{
-					APIVersion: "infrastructure.cluster.x-k8s.io/v1beta1",
-					Kind:       "VSphereCluster",
-					Name:       "vsphere-test1",
+				InfrastructureRef: clusterv1.ContractVersionedObjectReference{
+					APIGroup: "infrastructure.cluster.x-k8s.io",
+					Kind:     "VSphereCluster",
+					Name:     "vsphere-test1",
 				},
 			},
 		}
@@ -104,10 +106,17 @@ var _ = Describe("VsphereMachineReconciler", func() {
 			},
 			Spec: clusterv1.MachineSpec{
 				ClusterName: capiCluster.Name,
-				InfrastructureRef: corev1.ObjectReference{
-					APIVersion: "infrastructure.cluster.x-k8s.io/v1beta1",
-					Kind:       "VSphereMachine",
-					Name:       "vsphere-machine-1",
+				Bootstrap: clusterv1.Bootstrap{
+					ConfigRef: clusterv1.ContractVersionedObjectReference{
+						APIGroup: "bootstrap.cluster.x-k8s.io",
+						Kind:     "BootstrapConfig",
+						Name:     "does-no-ext", // Does not have to exist for these tests.
+					},
+				},
+				InfrastructureRef: clusterv1.ContractVersionedObjectReference{
+					APIGroup: "infrastructure.cluster.x-k8s.io",
+					Kind:     "VSphereMachine",
+					Name:     "vsphere-machine-1",
 				},
 			},
 		}
@@ -164,9 +173,9 @@ var _ = Describe("VsphereMachineReconciler", func() {
 		Eventually(func() error {
 			ph, err := patch.NewHelper(capiCluster, testEnv)
 			Expect(err).ShouldNot(HaveOccurred())
-			capiCluster.Status.InfrastructureReady = true
+			capiCluster.Status.Initialization.InfrastructureProvisioned = ptr.To(true)
 			return ph.Patch(ctx, capiCluster, patch.WithStatusObservedGeneration{})
-		}, timeout).Should(BeNil())
+		}, timeout).Should(Succeed())
 
 		Eventually(func() bool {
 			return isPresentAndFalseWithReason(infraMachine, infrav1.VMProvisionedCondition, infrav1.WaitingForClusterInfrastructureReason)
@@ -177,7 +186,7 @@ var _ = Describe("VsphereMachineReconciler", func() {
 		BeforeEach(func() {
 			ph, err := patch.NewHelper(capiCluster, testEnv)
 			Expect(err).ShouldNot(HaveOccurred())
-			capiCluster.Status.InfrastructureReady = true
+			capiCluster.Status.Initialization.InfrastructureProvisioned = ptr.To(true)
 			Expect(ph.Patch(ctx, capiCluster, patch.WithStatusObservedGeneration{})).To(Succeed())
 		})
 
@@ -199,7 +208,7 @@ var _ = Describe("VsphereMachineReconciler", func() {
 					DataSecretName: ptr.To("some-secret"),
 				}
 				return ph.Patch(ctx, capiMachine, patch.WithStatusObservedGeneration{})
-			}, timeout).Should(BeNil())
+			}, timeout).Should(Succeed())
 
 			Eventually(func() int {
 				vms := infrav1.VSphereVMList{}
@@ -230,10 +239,10 @@ func Test_machineReconciler_Metadata(t *testing.T) {
 			Namespace: ns.Name,
 		},
 		Spec: clusterv1.ClusterSpec{
-			InfrastructureRef: &corev1.ObjectReference{
-				APIVersion: "infrastructure.cluster.x-k8s.io/v1beta1",
-				Kind:       "VSphereCluster",
-				Name:       "vsphere-test1",
+			InfrastructureRef: clusterv1.ContractVersionedObjectReference{
+				APIGroup: "infrastructure.cluster.x-k8s.io",
+				Kind:     "VSphereCluster",
+				Name:     "vsphere-test1",
 			},
 		},
 	}
@@ -273,10 +282,11 @@ func Test_machineReconciler_Metadata(t *testing.T) {
 		},
 		Spec: clusterv1.MachineSpec{
 			ClusterName: capiCluster.Name,
-			InfrastructureRef: corev1.ObjectReference{
-				APIVersion: "infrastructure.cluster.x-k8s.io/v1beta1",
-				Kind:       "VSphereMachine",
-				Name:       "vsphere-machine-1",
+			Bootstrap:   clusterv1.Bootstrap{DataSecretName: ptr.To("data")},
+			InfrastructureRef: clusterv1.ContractVersionedObjectReference{
+				APIGroup: "infrastructure.cluster.x-k8s.io",
+				Kind:     "VSphereMachine",
+				Name:     "vsphere-machine-1",
 			},
 		},
 	}
@@ -346,5 +356,43 @@ func Test_machineReconciler_Metadata(t *testing.T) {
 				capiutil.HasOwner(vSphereMachine.GetOwnerReferences(), clusterv1.GroupVersion.String(), []string{"Machine"}) &&
 				!capiutil.HasOwner(vSphereMachine.GetOwnerReferences(), infrav1.GroupVersion.String(), []string{"VSphereCluster"})
 		}, timeout).Should(BeTrue())
+	})
+
+	t.Run("Should complete deletion even without Machine owner", func(t *testing.T) {
+		g := NewWithT(t)
+
+		vSphereMachine := &infrav1.VSphereMachine{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "vsphere-machine-no-ownerrefs",
+				Namespace: ns.Name,
+				// no ownerRefs
+			},
+			Spec: infrav1.VSphereMachineSpec{
+				VirtualMachineCloneSpec: infrav1.VirtualMachineCloneSpec{
+					Template: "ubuntu-k9s-1.19",
+					Network: infrav1.NetworkSpec{
+						Devices: []infrav1.NetworkDeviceSpec{
+							{NetworkName: "network-1", DHCP4: true},
+						},
+					},
+				},
+			},
+		}
+
+		g.Expect(testEnv.Create(ctx, vSphereMachine)).To(Succeed())
+
+		// Make sure the VSphereMachine has the finalizer.
+		g.Eventually(func(g Gomega) {
+			g.Expect(testEnv.Get(ctx, client.ObjectKeyFromObject(vSphereMachine), vSphereMachine)).To(Succeed())
+			g.Expect(ctrlutil.ContainsFinalizer(vSphereMachine, infrav1.MachineFinalizer)).To(BeTrue())
+		}, timeout).Should(Succeed())
+
+		g.Expect(testEnv.Delete(ctx, vSphereMachine)).To(Succeed())
+
+		// Make sure the VSphereMachine is gone.
+		g.Eventually(func(g Gomega) {
+			err := testEnv.Get(ctx, client.ObjectKeyFromObject(vSphereMachine), vSphereMachine)
+			g.Expect(apierrors.IsNotFound(err)).To(BeTrue())
+		}, timeout).Should(Succeed())
 	})
 }

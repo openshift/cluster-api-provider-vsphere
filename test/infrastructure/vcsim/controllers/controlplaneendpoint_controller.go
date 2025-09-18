@@ -25,8 +25,8 @@ import (
 	"k8s.io/klog/v2"
 	inmemoryruntime "sigs.k8s.io/cluster-api/test/infrastructure/inmemory/pkg/runtime"
 	inmemoryserver "sigs.k8s.io/cluster-api/test/infrastructure/inmemory/pkg/server"
+	"sigs.k8s.io/cluster-api/util/deprecated/v1beta1/patch"
 	"sigs.k8s.io/cluster-api/util/finalizers"
-	"sigs.k8s.io/cluster-api/util/patch"
 	"sigs.k8s.io/cluster-api/util/predicates"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -101,7 +101,7 @@ func (r *ControlPlaneEndpointReconciler) reconcileNormal(ctx context.Context, co
 	}
 
 	controlPlaneEndpoint.Status.Host = r.PodIP // NOTE: we are replacing the listener ip with the pod ip so it will be accessible from other pods as well
-	controlPlaneEndpoint.Status.Port = int32(listener.Port())
+	controlPlaneEndpoint.Status.Port = listener.Port()
 
 	return nil
 }

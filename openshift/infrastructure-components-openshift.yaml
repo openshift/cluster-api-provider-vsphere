@@ -473,7 +473,7 @@ spec:
         - --diagnostics-address=${CAPI_DIAGNOSTICS_ADDRESS:=:8443}
         - --insecure-diagnostics=${CAPI_INSECURE_DIAGNOSTICS:=false}
         - --v=4
-        - --feature-gates=NodeAntiAffinity=${EXP_NODE_ANTI_AFFINITY:=false},NamespaceScopedZones=${EXP_NAMESPACE_SCOPED_ZONES:=false},PriorityQueue=${EXP_PRIORITY_QUEUE:=false}
+        - --feature-gates=MultiNetworks=${EXP_MULTI_NETWORKS:=false},NodeAntiAffinity=${EXP_NODE_ANTI_AFFINITY:=false},NamespaceScopedZones=${EXP_NAMESPACE_SCOPED_ZONES:=false},PriorityQueue=${EXP_PRIORITY_QUEUE:=false}
         env:
         - name: POD_NAMESPACE
           valueFrom:
@@ -552,7 +552,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.17.0
+    controller-gen.kubebuilder.io/version: v0.18.0
     exclude.release.openshift.io/internal-openshift-hosted: "true"
     include.release.openshift.io/self-managed-high-availability: "true"
     include.release.openshift.io/single-node-developer: "true"
@@ -1938,7 +1938,7 @@ spec:
                 type: integer
               numCoresPerSocket:
                 description: |-
-                  NumCPUs is the number of cores among which to distribute CPUs in this
+                  NumCoresPerSocket is the number of cores among which to distribute CPUs in this
                   virtual machine.
                   Defaults to the eponymous property value in the template from which the
                   virtual machine is cloned.
@@ -2295,7 +2295,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.17.0
+    controller-gen.kubebuilder.io/version: v0.18.0
     exclude.release.openshift.io/internal-openshift-hosted: "true"
     include.release.openshift.io/self-managed-high-availability: "true"
     include.release.openshift.io/single-node-developer: "true"
@@ -2328,7 +2328,7 @@ spec:
       name: Server
       type: string
     - description: API Endpoint
-      jsonPath: .spec.controlPlaneEndpoint[0]
+      jsonPath: .spec.controlPlaneEndpoint.host
       name: ControlPlaneEndpoint
       priority: 1
       type: string
@@ -2753,7 +2753,7 @@ spec:
       name: Server
       type: string
     - description: API Endpoint
-      jsonPath: .spec.controlPlaneEndpoint[0]
+      jsonPath: .spec.controlPlaneEndpoint.host
       name: ControlPlaneEndpoint
       priority: 1
       type: string
@@ -2918,7 +2918,7 @@ spec:
       name: Server
       type: string
     - description: API Endpoint
-      jsonPath: .spec.controlPlaneEndpoint[0]
+      jsonPath: .spec.controlPlaneEndpoint.host
       name: ControlPlaneEndpoint
       priority: 1
       type: string
@@ -3248,7 +3248,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.17.0
+    controller-gen.kubebuilder.io/version: v0.18.0
     exclude.release.openshift.io/internal-openshift-hosted: "true"
     include.release.openshift.io/self-managed-high-availability: "true"
     include.release.openshift.io/single-node-developer: "true"
@@ -4509,7 +4509,7 @@ spec:
                         type: integer
                       numCoresPerSocket:
                         description: |-
-                          NumCPUs is the number of cores among which to distribute CPUs in this
+                          NumCoresPerSocket is the number of cores among which to distribute CPUs in this
                           virtual machine.
                           Defaults to the eponymous property value in the template from which the
                           virtual machine is cloned.
@@ -4650,7 +4650,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.17.0
+    controller-gen.kubebuilder.io/version: v0.18.0
     exclude.release.openshift.io/internal-openshift-hosted: "true"
     include.release.openshift.io/self-managed-high-availability: "true"
     include.release.openshift.io/single-node-developer: "true"
@@ -6099,7 +6099,7 @@ spec:
                 type: integer
               numCoresPerSocket:
                 description: |-
-                  NumCPUs is the number of cores among which to distribute CPUs in this
+                  NumCoresPerSocket is the number of cores among which to distribute CPUs in this
                   virtual machine.
                   Defaults to the eponymous property value in the template from which the
                   virtual machine is cloned.
@@ -6469,7 +6469,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.17.0
+    controller-gen.kubebuilder.io/version: v0.18.0
     exclude.release.openshift.io/internal-openshift-hosted: "true"
     include.release.openshift.io/self-managed-high-availability: "true"
     include.release.openshift.io/single-node-developer: "true"
@@ -7079,7 +7079,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.17.0
+    controller-gen.kubebuilder.io/version: v0.18.0
     exclude.release.openshift.io/internal-openshift-hosted: "true"
     include.release.openshift.io/self-managed-high-availability: "true"
     include.release.openshift.io/single-node-developer: "true"
@@ -7536,7 +7536,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.17.0
+    controller-gen.kubebuilder.io/version: v0.18.0
     exclude.release.openshift.io/internal-openshift-hosted: "true"
     include.release.openshift.io/self-managed-high-availability: "true"
     include.release.openshift.io/single-node-developer: "true"
@@ -8072,7 +8072,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.17.0
+    controller-gen.kubebuilder.io/version: v0.18.0
     exclude.release.openshift.io/internal-openshift-hosted: "true"
     include.release.openshift.io/self-managed-high-availability: "true"
     include.release.openshift.io/single-node-developer: "true"

@@ -475,7 +475,7 @@ data:
             - --diagnostics-address=${CAPI_DIAGNOSTICS_ADDRESS:=:8443}
             - --insecure-diagnostics=${CAPI_INSECURE_DIAGNOSTICS:=false}
             - --v=4
-            - --feature-gates=NodeAntiAffinity=${EXP_NODE_ANTI_AFFINITY:=false},NamespaceScopedZones=${EXP_NAMESPACE_SCOPED_ZONES:=false},PriorityQueue=${EXP_PRIORITY_QUEUE:=false}
+            - --feature-gates=MultiNetworks=${EXP_MULTI_NETWORKS:=false},NodeAntiAffinity=${EXP_NODE_ANTI_AFFINITY:=false},NamespaceScopedZones=${EXP_NAMESPACE_SCOPED_ZONES:=false},PriorityQueue=${EXP_PRIORITY_QUEUE:=false}
             env:
             - name: POD_NAMESPACE
               valueFrom:
@@ -554,7 +554,7 @@ data:
     kind: CustomResourceDefinition
     metadata:
       annotations:
-        controller-gen.kubebuilder.io/version: v0.17.0
+        controller-gen.kubebuilder.io/version: v0.18.0
         exclude.release.openshift.io/internal-openshift-hosted: "true"
         include.release.openshift.io/self-managed-high-availability: "true"
         include.release.openshift.io/single-node-developer: "true"
@@ -1940,7 +1940,7 @@ data:
                     type: integer
                   numCoresPerSocket:
                     description: |-
-                      NumCPUs is the number of cores among which to distribute CPUs in this
+                      NumCoresPerSocket is the number of cores among which to distribute CPUs in this
                       virtual machine.
                       Defaults to the eponymous property value in the template from which the
                       virtual machine is cloned.
@@ -2297,7 +2297,7 @@ data:
     kind: CustomResourceDefinition
     metadata:
       annotations:
-        controller-gen.kubebuilder.io/version: v0.17.0
+        controller-gen.kubebuilder.io/version: v0.18.0
         exclude.release.openshift.io/internal-openshift-hosted: "true"
         include.release.openshift.io/self-managed-high-availability: "true"
         include.release.openshift.io/single-node-developer: "true"
@@ -2330,7 +2330,7 @@ data:
           name: Server
           type: string
         - description: API Endpoint
-          jsonPath: .spec.controlPlaneEndpoint[0]
+          jsonPath: .spec.controlPlaneEndpoint.host
           name: ControlPlaneEndpoint
           priority: 1
           type: string
@@ -2755,7 +2755,7 @@ data:
           name: Server
           type: string
         - description: API Endpoint
-          jsonPath: .spec.controlPlaneEndpoint[0]
+          jsonPath: .spec.controlPlaneEndpoint.host
           name: ControlPlaneEndpoint
           priority: 1
           type: string
@@ -2920,7 +2920,7 @@ data:
           name: Server
           type: string
         - description: API Endpoint
-          jsonPath: .spec.controlPlaneEndpoint[0]
+          jsonPath: .spec.controlPlaneEndpoint.host
           name: ControlPlaneEndpoint
           priority: 1
           type: string
@@ -3250,7 +3250,7 @@ data:
     kind: CustomResourceDefinition
     metadata:
       annotations:
-        controller-gen.kubebuilder.io/version: v0.17.0
+        controller-gen.kubebuilder.io/version: v0.18.0
         exclude.release.openshift.io/internal-openshift-hosted: "true"
         include.release.openshift.io/self-managed-high-availability: "true"
         include.release.openshift.io/single-node-developer: "true"
@@ -4511,7 +4511,7 @@ data:
                             type: integer
                           numCoresPerSocket:
                             description: |-
-                              NumCPUs is the number of cores among which to distribute CPUs in this
+                              NumCoresPerSocket is the number of cores among which to distribute CPUs in this
                               virtual machine.
                               Defaults to the eponymous property value in the template from which the
                               virtual machine is cloned.
@@ -4652,7 +4652,7 @@ data:
     kind: CustomResourceDefinition
     metadata:
       annotations:
-        controller-gen.kubebuilder.io/version: v0.17.0
+        controller-gen.kubebuilder.io/version: v0.18.0
         exclude.release.openshift.io/internal-openshift-hosted: "true"
         include.release.openshift.io/self-managed-high-availability: "true"
         include.release.openshift.io/single-node-developer: "true"
@@ -6101,7 +6101,7 @@ data:
                     type: integer
                   numCoresPerSocket:
                     description: |-
-                      NumCPUs is the number of cores among which to distribute CPUs in this
+                      NumCoresPerSocket is the number of cores among which to distribute CPUs in this
                       virtual machine.
                       Defaults to the eponymous property value in the template from which the
                       virtual machine is cloned.
@@ -6471,7 +6471,7 @@ data:
     kind: CustomResourceDefinition
     metadata:
       annotations:
-        controller-gen.kubebuilder.io/version: v0.17.0
+        controller-gen.kubebuilder.io/version: v0.18.0
         exclude.release.openshift.io/internal-openshift-hosted: "true"
         include.release.openshift.io/self-managed-high-availability: "true"
         include.release.openshift.io/single-node-developer: "true"
@@ -7081,7 +7081,7 @@ data:
     kind: CustomResourceDefinition
     metadata:
       annotations:
-        controller-gen.kubebuilder.io/version: v0.17.0
+        controller-gen.kubebuilder.io/version: v0.18.0
         exclude.release.openshift.io/internal-openshift-hosted: "true"
         include.release.openshift.io/self-managed-high-availability: "true"
         include.release.openshift.io/single-node-developer: "true"
@@ -7538,7 +7538,7 @@ data:
     kind: CustomResourceDefinition
     metadata:
       annotations:
-        controller-gen.kubebuilder.io/version: v0.17.0
+        controller-gen.kubebuilder.io/version: v0.18.0
         exclude.release.openshift.io/internal-openshift-hosted: "true"
         include.release.openshift.io/self-managed-high-availability: "true"
         include.release.openshift.io/single-node-developer: "true"
@@ -8074,7 +8074,7 @@ data:
     kind: CustomResourceDefinition
     metadata:
       annotations:
-        controller-gen.kubebuilder.io/version: v0.17.0
+        controller-gen.kubebuilder.io/version: v0.18.0
         exclude.release.openshift.io/internal-openshift-hosted: "true"
         include.release.openshift.io/self-managed-high-availability: "true"
         include.release.openshift.io/single-node-developer: "true"
@@ -8665,6 +8665,9 @@ data:
       - major: 1
         minor: 13
         contract: v1beta1
+      - major: 1
+        minor: 14
+        contract: v1beta1
 kind: ConfigMap
 metadata:
   annotations:
@@ -8676,6 +8679,6 @@ metadata:
   labels:
     provider.cluster.x-k8s.io/name: vsphere
     provider.cluster.x-k8s.io/type: infrastructure
-    provider.cluster.x-k8s.io/version: v1.13.0
+    provider.cluster.x-k8s.io/version: v1.14.0
   name: vsphere
   namespace: openshift-cluster-api

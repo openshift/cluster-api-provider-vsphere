@@ -25,6 +25,7 @@ import (
 	. "github.com/onsi/gomega"
 	gomegatypes "github.com/onsi/gomega/types"
 	vmoprv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha2"
+	vmoprv1common "github.com/vmware-tanzu/vm-operator/api/v1alpha2/common"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -32,8 +33,9 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/ptr"
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
-	"sigs.k8s.io/cluster-api/util/conditions"
+	clusterv1beta1 "sigs.k8s.io/cluster-api/api/core/v1beta1"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
+	v1beta1conditions "sigs.k8s.io/cluster-api/util/deprecated/v1beta1/conditions"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	infrav1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/v1beta1"
@@ -92,7 +94,7 @@ var _ = Describe("VirtualMachine tests", func() {
 		expectReconcileError bool
 		expectVMOpVM         bool
 		expectedState        vmwarev1.VirtualMachineState
-		expectedConditions   clusterv1.Conditions
+		expectedConditions   clusterv1beta1.Conditions
 		expectedRequeue      bool
 
 		cluster                  *clusterv1.Cluster
@@ -166,7 +168,7 @@ var _ = Describe("VirtualMachine tests", func() {
 			}
 
 			for _, expectedCondition := range expectedConditions {
-				c := conditions.Get(machineContext.VSphereMachine, expectedCondition.Type)
+				c := v1beta1conditions.Get(machineContext.VSphereMachine, expectedCondition.Type)
 				Expect(c).NotTo(BeNil())
 				Expect(c.Status).To(Equal(expectedCondition.Status))
 				Expect(c.Reason).To(Equal(expectedCondition.Reason))
@@ -193,7 +195,7 @@ var _ = Describe("VirtualMachine tests", func() {
 			//             bootstrap data resource, but VM Operator is not
 			//             running in this test domain, and so the condition
 			//             will not be set on the VM Operator VM.
-			expectedConditions = append(expectedConditions, clusterv1.Condition{
+			expectedConditions = append(expectedConditions, clusterv1beta1.Condition{
 				Type:    infrav1.VMProvisionedCondition,
 				Status:  corev1.ConditionFalse,
 				Reason:  vmwarev1.VMProvisionStartedReason,
@@ -257,13 +259,51 @@ var _ = Describe("VirtualMachine tests", func() {
 			requeue, err = vmService.ReconcileNormal(ctx, supervisorMachineContext)
 			verifyOutput(supervisorMachineContext)
 
-			// Simulate VMOperator assigning an IP address
-			By("VirtualMachine has an IP address")
+			// Simulate VMOperator assigning an IP address with detailed network information
+			By("VirtualMachine has an IP address and detailed network information")
 			vmopVM = getReconciledVM(ctx, vmService, supervisorMachineContext)
 			if vmopVM.Status.Network == nil {
 				vmopVM.Status.Network = &vmoprv1.VirtualMachineNetworkStatus{}
 			}
 			vmopVM.Status.Network.PrimaryIP4 = vmIP
+			vmopVM.Status.Network.Interfaces = []vmoprv1.VirtualMachineNetworkInterfaceStatus{
+				{
+					Name:      "eth0",
+					DeviceKey: 4000,
+					IP: &vmoprv1.VirtualMachineNetworkInterfaceIPStatus{
+						AutoConfigurationEnabled: ptr.To(true),
+						MACAddr:                  "00:50:56:00:00:01",
+						DHCP: &vmoprv1.VirtualMachineNetworkDHCPStatus{
+							IP4: vmoprv1.VirtualMachineNetworkDHCPOptionsStatus{
+								Enabled: true,
+								Config: []vmoprv1common.KeyValuePair{
+									{Key: "1", Value: "timeout 60;"},
+									{Key: "2", Value: "reboot 10;"},
+								},
+							},
+							IP6: vmoprv1.VirtualMachineNetworkDHCPOptionsStatus{
+								Enabled: false,
+								Config:  []vmoprv1common.KeyValuePair{},
+							},
+						},
+						Addresses: []vmoprv1.VirtualMachineNetworkInterfaceIPAddrStatus{
+							{
+								Address:  vmIP + "/24",
+								Lifetime: metav1.NewTime(time.Now().UTC().Truncate(time.Second)),
+								Origin:   "dhcp",
+								State:    "preferred",
+							},
+						},
+					},
+					DNS: &vmoprv1.VirtualMachineNetworkDNSStatus{
+						DHCP:          true,
+						DomainName:    "test.local",
+						HostName:      "test-vm",
+						Nameservers:   []string{"8.8.8.8", "8.8.4.4"},
+						SearchDomains: []string{"test.local", "local"},
+					},
+				},
+			}
 			updateReconciledVMStatus(ctx, vmService, vmopVM)
 			// we expect the reconciliation waiting for VM to have a BIOS UUID
 			expectedConditions[0].Reason = vmwarev1.WaitingForBIOSUUIDReason
@@ -286,6 +326,47 @@ var _ = Describe("VirtualMachine tests", func() {
 			expectedConditions[0].Reason = ""
 			requeue, err = vmService.ReconcileNormal(ctx, supervisorMachineContext)
 			verifyOutput(supervisorMachineContext)
+
+			// Verify that the network status was properly propagated
+			By("Verify network status propagation")
+			Expect(supervisorMachineContext.VSphereMachine.Status.Network).NotTo(BeNil())
+			Expect(supervisorMachineContext.VSphereMachine.Status.Network.Interfaces).To(HaveLen(1))
+
+			iface := supervisorMachineContext.VSphereMachine.Status.Network.Interfaces[0]
+			Expect(iface.Name).To(Equal("eth0"))
+			Expect(iface.DeviceKey).To(Equal(int32(4000)))
+
+			// Verify IP configuration
+			Expect(*iface.IP.AutoConfigurationEnabled).To(BeTrue())
+			Expect(iface.IP.MACAddr).To(Equal("00:50:56:00:00:01"))
+
+			// Verify DHCP configuration
+			Expect(*iface.IP.DHCP.IP4.Enabled).To(BeTrue())
+			Expect(iface.IP.DHCP.IP4.Config).To(HaveLen(2))
+			Expect(iface.IP.DHCP.IP4.Config[0].Key).To(Equal("1"))
+			Expect(iface.IP.DHCP.IP4.Config[0].Value).To(Equal("timeout 60;"))
+			Expect(iface.IP.DHCP.IP4.Config[1].Key).To(Equal("2"))
+			Expect(iface.IP.DHCP.IP4.Config[1].Value).To(Equal("reboot 10;"))
+			Expect(*iface.IP.DHCP.IP6.Enabled).To(BeFalse())
+
+			// Verify IP addresses
+			Expect(iface.IP.Addresses).To(HaveLen(1))
+			Expect(iface.IP.Addresses[0].Address).To(Equal(vmIP + "/24"))
+			Expect(iface.IP.Addresses[0].Origin).To(Equal("dhcp"))
+			Expect(iface.IP.Addresses[0].State).To(Equal("preferred"))
+
+			// Verify DNS configuration
+			Expect(*iface.DNS.DHCP).To(BeTrue())
+			Expect(iface.DNS.DomainName).To(Equal("test.local"))
+			Expect(iface.DNS.HostName).To(Equal("test-vm"))
+			Expect(iface.DNS.Nameservers).To(Equal([]string{"8.8.8.8", "8.8.4.4"}))
+			Expect(iface.DNS.SearchDomains).To(Equal([]string{"test.local", "local"}))
+
+			// Verify that Cluster API addresses are set
+			By("Verify Cluster API addresses")
+			Expect(supervisorMachineContext.VSphereMachine.Status.Addresses).To(HaveLen(1))
+			Expect(supervisorMachineContext.VSphereMachine.Status.Addresses[0].Type).To(Equal(corev1.NodeInternalIP))
+			Expect(supervisorMachineContext.VSphereMachine.Status.Addresses[0].Address).To(Equal(vmIP))
 
 			Expect(vmopVM.Spec.ReadinessProbe).To(BeNil())
 
@@ -340,7 +421,7 @@ var _ = Describe("VirtualMachine tests", func() {
 			Expect(vmService.Client.Create(ctx, secret)).To(Succeed())
 
 			machine.Spec.Bootstrap.DataSecretName = &secretName
-			expectedConditions = append(expectedConditions, clusterv1.Condition{
+			expectedConditions = append(expectedConditions, clusterv1beta1.Condition{
 				Type:    infrav1.VMProvisionedCondition,
 				Status:  corev1.ConditionFalse,
 				Reason:  vmwarev1.VMProvisionStartedReason,
@@ -405,7 +486,7 @@ var _ = Describe("VirtualMachine tests", func() {
 
 			By("Setting cluster.Status.ControlPlaneReady to true")
 			// Set the control plane to be ready so that the new VM will have a probe
-			cluster.Status.ControlPlaneReady = true
+			cluster.Status.Initialization.ControlPlaneInitialized = ptr.To(true)
 
 			vmopVM = getReconciledVM(ctx, vmService, supervisorMachineContext)
 			if vmopVM.Status.Network == nil {
@@ -425,8 +506,8 @@ var _ = Describe("VirtualMachine tests", func() {
 			expectedImageName = imageName
 
 			By("Machine doens't have a K8S version")
-			machine.Spec.Version = nil
-			expectedConditions = append(expectedConditions, clusterv1.Condition{
+			machine.Spec.Version = ""
+			expectedConditions = append(expectedConditions, clusterv1beta1.Condition{
 				Type:    infrav1.VMProvisionedCondition,
 				Status:  corev1.ConditionFalse,
 				Reason:  vmwarev1.VMCreationFailedReason,
@@ -467,10 +548,10 @@ var _ = Describe("VirtualMachine tests", func() {
 			expectedImageName = imageName
 			expectReconcileError = true
 			expectVMOpVM = true
-			expectedConditions = append(expectedConditions, clusterv1.Condition{
+			expectedConditions = append(expectedConditions, clusterv1beta1.Condition{
 				Type:     infrav1.VMProvisionedCondition,
 				Status:   corev1.ConditionFalse,
-				Severity: clusterv1.ConditionSeverityError,
+				Severity: clusterv1beta1.ConditionSeverityError,
 				Reason:   "NotFound",
 				Message:  errMessage,
 			})

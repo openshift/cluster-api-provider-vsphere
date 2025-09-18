@@ -30,7 +30,6 @@ import (
 	"github.com/vmware/govmomi"
 	"github.com/vmware/govmomi/find"
 	"github.com/vmware/govmomi/vim25/mo"
-	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -40,7 +39,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/klog/v2"
 	"k8s.io/utils/ptr"
-	ipamv1 "sigs.k8s.io/cluster-api/exp/ipam/api/v1beta1"
+	ipamv1 "sigs.k8s.io/cluster-api/api/ipam/v1beta2"
 	. "sigs.k8s.io/cluster-api/test/framework/ginkgoextensions"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -173,7 +172,7 @@ func (h *inCluster) ClaimIPs(ctx context.Context, opts ...ClaimOption) (AddressC
 			if options.prefixVariableName != "" {
 				// Set the prefix variable if requested to the prefix of the control plane IP.
 				Byf("Setting clusterctl variable %s to %s", options.prefixVariableName, ip.Spec.Gateway)
-				variables[options.prefixVariableName] = strconv.Itoa(ip.Spec.Prefix)
+				variables[options.prefixVariableName] = strconv.Itoa(int(ptr.Deref(ip.Spec.Prefix, 0)))
 			}
 		}
 	}
@@ -342,14 +341,14 @@ func getVirtualMachineIPAddresses(ctx context.Context, folderName string, vSpher
 func (h *inCluster) claimIPAddress(ctx context.Context) (_ *ipamv1.IPAddress, _ *ipamv1.IPAddressClaim, err error) {
 	claim := &ipamv1.IPAddressClaim{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:        "ipclaim-" + rand.String(32),
-			Namespace:   metav1.NamespaceDefault,
-			Labels:      h.labels,
-			Annotations: map[string]string{},
+			GenerateName: "ipclaim-",
+			Namespace:    metav1.NamespaceDefault,
+			Labels:       h.labels,
+			Annotations:  map[string]string{},
 		},
 		Spec: ipamv1.IPAddressClaimSpec{
-			PoolRef: corev1.TypedLocalObjectReference{
-				APIGroup: ptr.To(h.ipPool.GroupVersionKind().Group),
+			PoolRef: ipamv1.IPPoolReference{
+				APIGroup: h.ipPool.GroupVersionKind().Group,
 				Kind:     h.ipPool.GroupVersionKind().Kind,
 				Name:     h.ipPool.GetName(),
 			},

@@ -26,7 +26,7 @@ import (
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/cluster-api/test/framework"
 	"sigs.k8s.io/cluster-api/test/framework/clusterctl"
 	. "sigs.k8s.io/cluster-api/test/framework/ginkgoextensions"
@@ -138,11 +138,11 @@ func VerifyMultiVC(ctx context.Context, input MultiVCenterSpecInput) {
 	Consistently(func() error {
 		kubeSystem := &corev1.Namespace{}
 		return input.Global.BootstrapClusterProxy.GetClient().Get(ctx, client.ObjectKey{Name: "kube-system"}, kubeSystem)
-	}, "5s", "100ms").Should(BeNil(), "Failed to assert bootstrap API server stability")
+	}, "5s", "100ms").Should(Succeed(), "Failed to assert bootstrap API server stability")
 	Consistently(func() error {
 		kubeSystem := &corev1.Namespace{}
 		return mgmtClusterProxy.GetClient().Get(ctx, client.ObjectKey{Name: "kube-system"}, kubeSystem)
-	}, "5s", "100ms").Should(BeNil(), "Failed to assert self-hosted API server stability")
+	}, "5s", "100ms").Should(Succeed(), "Failed to assert self-hosted API server stability")
 
 	// Get the machines of the workloadCluster before it is moved to become self-hosted to make sure that the move did not trigger
 	// any unexpected rollouts.
