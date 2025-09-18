@@ -27,14 +27,15 @@ import (
 	kerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/klog/v2"
 	"k8s.io/utils/ptr"
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
+	clusterv1beta1 "sigs.k8s.io/cluster-api/api/core/v1beta1"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	clusterutilv1 "sigs.k8s.io/cluster-api/util"
 	"sigs.k8s.io/cluster-api/util/collections"
-	"sigs.k8s.io/cluster-api/util/conditions"
-	v1beta2conditions "sigs.k8s.io/cluster-api/util/conditions/v1beta2"
+	v1beta1conditions "sigs.k8s.io/cluster-api/util/deprecated/v1beta1/conditions"
+	v1beta2conditions "sigs.k8s.io/cluster-api/util/deprecated/v1beta1/conditions/v1beta2"
+	"sigs.k8s.io/cluster-api/util/deprecated/v1beta1/patch"
+	"sigs.k8s.io/cluster-api/util/deprecated/v1beta1/paused"
 	"sigs.k8s.io/cluster-api/util/finalizers"
-	"sigs.k8s.io/cluster-api/util/patch"
-	"sigs.k8s.io/cluster-api/util/paused"
 	"sigs.k8s.io/cluster-api/util/predicates"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -137,8 +138,8 @@ func (r vsphereDeploymentZoneReconciler) Reconcile(ctx context.Context, request 
 
 // Patch patches the VSphereDeploymentZone.
 func (r vsphereDeploymentZoneReconciler) patch(ctx context.Context, vsphereDeploymentZoneContext *capvcontext.VSphereDeploymentZoneContext) error {
-	conditions.SetSummary(vsphereDeploymentZoneContext.VSphereDeploymentZone,
-		conditions.WithConditions(
+	v1beta1conditions.SetSummary(vsphereDeploymentZoneContext.VSphereDeploymentZone,
+		v1beta1conditions.WithConditions(
 			infrav1.VCenterAvailableCondition,
 			infrav1.VSphereFailureDomainValidatedCondition,
 			infrav1.PlacementConstraintMetCondition,
@@ -168,7 +169,7 @@ func (r vsphereDeploymentZoneReconciler) patch(ctx context.Context, vsphereDeplo
 
 	return vsphereDeploymentZoneContext.PatchHelper.Patch(ctx, vsphereDeploymentZoneContext.VSphereDeploymentZone,
 		patch.WithOwnedV1Beta2Conditions{Conditions: []string{
-			clusterv1.PausedV1Beta2Condition,
+			clusterv1beta1.PausedV1Beta2Condition,
 			infrav1.VSphereDeploymentZoneReadyV1Beta2Condition,
 			infrav1.VSphereDeploymentZonePlacementConstraintReadyV1Beta2Condition,
 			infrav1.VSphereDeploymentZoneVCenterAvailableV1Beta2Condition,
@@ -186,7 +187,7 @@ func (r vsphereDeploymentZoneReconciler) reconcileNormal(ctx context.Context, de
 
 	authSession, err := r.getVCenterSession(ctx, deploymentZoneCtx, failureDomain.Spec.Topology.Datacenter)
 	if err != nil {
-		conditions.MarkFalse(deploymentZoneCtx.VSphereDeploymentZone, infrav1.VCenterAvailableCondition, infrav1.VCenterUnreachableReason, clusterv1.ConditionSeverityError, err.Error())
+		v1beta1conditions.MarkFalse(deploymentZoneCtx.VSphereDeploymentZone, infrav1.VCenterAvailableCondition, infrav1.VCenterUnreachableReason, clusterv1beta1.ConditionSeverityError, "%v", err)
 		v1beta2conditions.Set(deploymentZoneCtx.VSphereDeploymentZone, metav1.Condition{
 			Type:    infrav1.VSphereDeploymentZoneVCenterAvailableV1Beta2Condition,
 			Status:  metav1.ConditionFalse,
@@ -198,7 +199,7 @@ func (r vsphereDeploymentZoneReconciler) reconcileNormal(ctx context.Context, de
 	}
 
 	deploymentZoneCtx.AuthSession = authSession
-	conditions.MarkTrue(deploymentZoneCtx.VSphereDeploymentZone, infrav1.VCenterAvailableCondition)
+	v1beta1conditions.MarkTrue(deploymentZoneCtx.VSphereDeploymentZone, infrav1.VCenterAvailableCondition)
 	v1beta2conditions.Set(deploymentZoneCtx.VSphereDeploymentZone, metav1.Condition{
 		Type:   infrav1.VSphereDeploymentZoneVCenterAvailableV1Beta2Condition,
 		Status: metav1.ConditionTrue,
@@ -226,7 +227,7 @@ func (r vsphereDeploymentZoneReconciler) reconcilePlacementConstraint(ctx contex
 
 	if resourcePool := placementConstraint.ResourcePool; resourcePool != "" {
 		if _, err := deploymentZoneCtx.AuthSession.Finder.ResourcePool(ctx, resourcePool); err != nil {
-			conditions.MarkFalse(deploymentZoneCtx.VSphereDeploymentZone, infrav1.PlacementConstraintMetCondition, infrav1.ResourcePoolNotFoundReason, clusterv1.ConditionSeverityError, "resource pool %s is misconfigured", resourcePool)
+			v1beta1conditions.MarkFalse(deploymentZoneCtx.VSphereDeploymentZone, infrav1.PlacementConstraintMetCondition, infrav1.ResourcePoolNotFoundReason, clusterv1beta1.ConditionSeverityError, "resource pool %s is misconfigured", resourcePool)
 			v1beta2conditions.Set(deploymentZoneCtx.VSphereDeploymentZone, metav1.Condition{
 				Type:    infrav1.VSphereDeploymentZonePlacementConstraintReadyV1Beta2Condition,
 				Status:  metav1.ConditionFalse,
@@ -239,7 +240,7 @@ func (r vsphereDeploymentZoneReconciler) reconcilePlacementConstraint(ctx contex
 
 	if folder := placementConstraint.Folder; folder != "" {
 		if _, err := deploymentZoneCtx.AuthSession.Finder.Folder(ctx, placementConstraint.Folder); err != nil {
-			conditions.MarkFalse(deploymentZoneCtx.VSphereDeploymentZone, infrav1.PlacementConstraintMetCondition, infrav1.FolderNotFoundReason, clusterv1.ConditionSeverityError, "folder %s is misconfigured", folder)
+			v1beta1conditions.MarkFalse(deploymentZoneCtx.VSphereDeploymentZone, infrav1.PlacementConstraintMetCondition, infrav1.FolderNotFoundReason, clusterv1beta1.ConditionSeverityError, "folder %s is misconfigured", folder)
 			v1beta2conditions.Set(deploymentZoneCtx.VSphereDeploymentZone, metav1.Condition{
 				Type:    infrav1.VSphereDeploymentZonePlacementConstraintReadyV1Beta2Condition,
 				Status:  metav1.ConditionFalse,
@@ -250,7 +251,7 @@ func (r vsphereDeploymentZoneReconciler) reconcilePlacementConstraint(ctx contex
 		}
 	}
 
-	conditions.MarkTrue(deploymentZoneCtx.VSphereDeploymentZone, infrav1.PlacementConstraintMetCondition)
+	v1beta1conditions.MarkTrue(deploymentZoneCtx.VSphereDeploymentZone, infrav1.PlacementConstraintMetCondition)
 	v1beta2conditions.Set(deploymentZoneCtx.VSphereDeploymentZone, metav1.Condition{
 		Type:   infrav1.VSphereDeploymentZonePlacementConstraintReadyV1Beta2Condition,
 		Status: metav1.ConditionTrue,
@@ -324,10 +325,7 @@ func (r vsphereDeploymentZoneReconciler) reconcileDelete(ctx context.Context, de
 	}
 
 	machinesUsingDeploymentZone := collections.FromMachineList(machines).Filter(collections.ActiveMachines, func(machine *clusterv1.Machine) bool {
-		if machine.Spec.FailureDomain != nil {
-			return *machine.Spec.FailureDomain == deploymentZoneCtx.VSphereDeploymentZone.Name
-		}
-		return false
+		return machine.Spec.FailureDomain == deploymentZoneCtx.VSphereDeploymentZone.Name
 	})
 	if len(machinesUsingDeploymentZone) > 0 {
 		machineNamesStr := util.MachinesAsString(machinesUsingDeploymentZone.SortedByCreationTimestamp())

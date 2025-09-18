@@ -29,7 +29,8 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/tools/clientcmd/api"
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
+	"k8s.io/utils/ptr"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/cluster-api/controllers/clustercache"
 	capiutil "sigs.k8s.io/cluster-api/util"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -170,11 +171,11 @@ func CreateAndWait(ctx context.Context, integrationTestClient client.Client, obj
 	}).Should(Succeed())
 }
 
-// ClusterInfrastructureReady sets InfrastructureReady to true so ClusterCache creates the clusterAccessor.
-func ClusterInfrastructureReady(ctx context.Context, c client.Client, clusterCache clustercache.ClusterCache, cluster *clusterv1.Cluster) {
+// ClusterInfrastructureProvisioned sets InfrastructureReady to true so ClusterCache creates the clusterAccessor.
+func ClusterInfrastructureProvisioned(ctx context.Context, c client.Client, clusterCache clustercache.ClusterCache, cluster *clusterv1.Cluster) {
 	GinkgoHelper()
 	patch := client.MergeFrom(cluster.DeepCopy())
-	cluster.Status.InfrastructureReady = true
+	cluster.Status.Initialization.InfrastructureProvisioned = ptr.To(true)
 	Expect(c.Status().Patch(ctx, cluster, patch)).To(Succeed())
 
 	// Ensure the ClusterCache reconciled at least once (and if possible created a clusterAccessor).
@@ -192,17 +193,18 @@ func generateCluster(namespace, name string) *clusterv1.Cluster {
 			Name:      fmt.Sprintf("%s-%s", name, capiutil.RandomString(6)),
 		},
 		Spec: clusterv1.ClusterSpec{
-			ClusterNetwork: &clusterv1.ClusterNetwork{
-				Pods: &clusterv1.NetworkRanges{
+			ClusterNetwork: clusterv1.ClusterNetwork{
+				Pods: clusterv1.NetworkRanges{
 					CIDRBlocks: []string{"1.0.0.0/16"},
 				},
-				Services: &clusterv1.NetworkRanges{
+				Services: clusterv1.NetworkRanges{
 					CIDRBlocks: []string{"2.0.0.0/16"},
 				},
 			},
-			InfrastructureRef: &corev1.ObjectReference{
-				Name:      name,
-				Namespace: namespace,
+			InfrastructureRef: clusterv1.ContractVersionedObjectReference{
+				APIGroup: vmwarev1.GroupVersion.Group,
+				Kind:     "VSphereCluster",
+				Name:     name,
 			},
 		},
 	}

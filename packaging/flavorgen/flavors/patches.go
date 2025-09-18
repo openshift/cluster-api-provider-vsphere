@@ -21,9 +21,9 @@ import (
 
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/utils/ptr"
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
-	bootstrapv1 "sigs.k8s.io/cluster-api/bootstrap/kubeadm/api/v1beta1"
-	controlplanev1 "sigs.k8s.io/cluster-api/controlplane/kubeadm/api/v1beta1"
+	bootstrapv1 "sigs.k8s.io/cluster-api/api/bootstrap/kubeadm/v1beta2"
+	controlplanev1 "sigs.k8s.io/cluster-api/api/controlplane/kubeadm/v1beta2"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 
 	infrav1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/v1beta1"
 	vmwarev1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/vmware/v1beta1"
@@ -40,20 +40,13 @@ func createEmptyArraysPatch() clusterv1.ClusterClassPatch {
 					APIVersion: controlplanev1.GroupVersion.String(),
 					Kind:       util.TypeToKind(&controlplanev1.KubeadmControlPlaneTemplate{}),
 					MatchResources: clusterv1.PatchSelectorMatch{
-						ControlPlane: true,
+						ControlPlane: ptr.To(true),
 					},
 				},
 				JSONPatches: []clusterv1.JSONPatch{
 					{
 						Op:   "add",
 						Path: "/spec/template/spec/kubeadmConfigSpec/files",
-						Value: &apiextensionsv1.JSON{
-							Raw: []byte("[]"),
-						},
-					},
-					{
-						Op:   "add",
-						Path: "/spec/template/spec/kubeadmConfigSpec/postKubeadmCommands",
 						Value: &apiextensionsv1.JSON{
 							Raw: []byte("[]"),
 						},
@@ -78,13 +71,6 @@ func createEmptyArraysPatch() clusterv1.ClusterClassPatch {
 							Raw: []byte("[]"),
 						},
 					},
-					{
-						Op:   "add",
-						Path: "/spec/template/spec/postKubeadmCommands",
-						Value: &apiextensionsv1.JSON{
-							Raw: []byte("[]"),
-						},
-					},
 				},
 			},
 		},
@@ -94,14 +80,14 @@ func createEmptyArraysPatch() clusterv1.ClusterClassPatch {
 func enableSSHPatch() clusterv1.ClusterClassPatch {
 	return clusterv1.ClusterClassPatch{
 		Name:      "enableSSHIntoNodes",
-		EnabledIf: ptr.To("{{ if .sshKey }}true{{end}}"),
+		EnabledIf: "{{ if .sshKey }}true{{end}}",
 		Definitions: []clusterv1.PatchDefinition{
 			{
 				Selector: clusterv1.PatchSelector{
 					APIVersion: controlplanev1.GroupVersion.String(),
 					Kind:       util.TypeToKind(&controlplanev1.KubeadmControlPlaneTemplate{}),
 					MatchResources: clusterv1.PatchSelectorMatch{
-						ControlPlane: true,
+						ControlPlane: ptr.To(true),
 					},
 				},
 				JSONPatches: []clusterv1.JSONPatch{
@@ -148,7 +134,7 @@ func infraClusterPatch() clusterv1.ClusterClassPatch {
 					APIVersion: infrav1.GroupVersion.String(),
 					Kind:       util.TypeToKind(&infrav1.VSphereClusterTemplate{}),
 					MatchResources: clusterv1.PatchSelectorMatch{
-						InfrastructureCluster: true,
+						InfrastructureCluster: ptr.To(true),
 					},
 				},
 				JSONPatches: []clusterv1.JSONPatch{
@@ -170,14 +156,14 @@ func infraClusterPatch() clusterv1.ClusterClassPatch {
 						Op:   "add",
 						Path: "/spec/template/spec/server",
 						ValueFrom: &clusterv1.JSONPatchValue{
-							Variable: ptr.To("infraServer.url"),
+							Variable: "infraServer.url",
 						},
 					},
 					{
 						Op:   "add",
 						Path: "/spec/template/spec/thumbprint",
 						ValueFrom: &clusterv1.JSONPatchValue{
-							Variable: ptr.To("infraServer.thumbprint"),
+							Variable: "infraServer.thumbprint",
 						},
 					},
 				},
@@ -195,7 +181,7 @@ func vmWareInfraClusterPatch() clusterv1.ClusterClassPatch {
 					APIVersion: vmwarev1.GroupVersion.String(),
 					Kind:       util.TypeToKind(&vmwarev1.VSphereClusterTemplate{}),
 					MatchResources: clusterv1.PatchSelectorMatch{
-						InfrastructureCluster: true,
+						InfrastructureCluster: ptr.To(true),
 					},
 				},
 				JSONPatches: []clusterv1.JSONPatch{

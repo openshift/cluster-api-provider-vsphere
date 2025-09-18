@@ -28,14 +28,14 @@ import (
 	kerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/klog/v2"
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
+	clusterv1beta1 "sigs.k8s.io/cluster-api/api/core/v1beta1"
 	clusterutilv1 "sigs.k8s.io/cluster-api/util"
 	"sigs.k8s.io/cluster-api/util/collections"
-	"sigs.k8s.io/cluster-api/util/conditions"
-	v1beta2conditions "sigs.k8s.io/cluster-api/util/conditions/v1beta2"
+	v1beta1conditions "sigs.k8s.io/cluster-api/util/deprecated/v1beta1/conditions"
+	v1beta2conditions "sigs.k8s.io/cluster-api/util/deprecated/v1beta1/conditions/v1beta2"
+	"sigs.k8s.io/cluster-api/util/deprecated/v1beta1/patch"
+	"sigs.k8s.io/cluster-api/util/deprecated/v1beta1/paused"
 	"sigs.k8s.io/cluster-api/util/finalizers"
-	"sigs.k8s.io/cluster-api/util/patch"
-	"sigs.k8s.io/cluster-api/util/paused"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -141,8 +141,8 @@ func (r *ClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request) (_ 
 
 func (r *ClusterReconciler) patch(ctx context.Context, clusterCtx *vmware.ClusterContext) error {
 	// always update the readyCondition.
-	conditions.SetSummary(clusterCtx.VSphereCluster,
-		conditions.WithConditions(
+	v1beta1conditions.SetSummary(clusterCtx.VSphereCluster,
+		v1beta1conditions.WithConditions(
 			vmwarev1.ResourcePolicyReadyCondition,
 			vmwarev1.ClusterNetworkReadyCondition,
 			vmwarev1.LoadBalancerReadyCondition,
@@ -179,13 +179,13 @@ func (r *ClusterReconciler) patch(ctx context.Context, clusterCtx *vmware.Cluste
 	}
 
 	return clusterCtx.PatchHelper.Patch(ctx, clusterCtx.VSphereCluster,
-		patch.WithOwnedConditions{Conditions: []clusterv1.ConditionType{
+		patch.WithOwnedConditions{Conditions: []clusterv1beta1.ConditionType{
 			vmwarev1.ResourcePolicyReadyCondition,
 			vmwarev1.ClusterNetworkReadyCondition,
 			vmwarev1.LoadBalancerReadyCondition,
 		}},
 		patch.WithOwnedV1Beta2Conditions{Conditions: []string{
-			clusterv1.PausedV1Beta2Condition,
+			clusterv1beta1.PausedV1Beta2Condition,
 			vmwarev1.VSphereClusterReadyV1Beta2Condition,
 			vmwarev1.VSphereClusterResourcePolicyReadyV1Beta2Condition,
 			vmwarev1.VSphereClusterNetworkReadyV1Beta2Condition,
@@ -196,15 +196,15 @@ func (r *ClusterReconciler) patch(ctx context.Context, clusterCtx *vmware.Cluste
 }
 
 func (r *ClusterReconciler) reconcileDelete(clusterCtx *vmware.ClusterContext) {
-	deletingConditionTypes := []clusterv1.ConditionType{
+	deletingConditionTypes := []clusterv1beta1.ConditionType{
 		vmwarev1.ResourcePolicyReadyCondition,
 		vmwarev1.ClusterNetworkReadyCondition,
 		vmwarev1.LoadBalancerReadyCondition,
 	}
 
 	for _, t := range deletingConditionTypes {
-		if c := conditions.Get(clusterCtx.VSphereCluster, t); c != nil {
-			conditions.MarkFalse(clusterCtx.VSphereCluster, t, clusterv1.DeletingReason, clusterv1.ConditionSeverityInfo, "")
+		if c := v1beta1conditions.Get(clusterCtx.VSphereCluster, t); c != nil {
+			v1beta1conditions.MarkFalse(clusterCtx.VSphereCluster, t, clusterv1beta1.DeletingReason, clusterv1beta1.ConditionSeverityInfo, "")
 		}
 	}
 
@@ -245,7 +245,7 @@ func (r *ClusterReconciler) reconcileNormal(ctx context.Context, clusterCtx *vmw
 	// Reconciling the ResourcePolicy early potentially saves us the extra relocate operation.
 	resourcePolicyName, err := r.ResourcePolicyService.ReconcileResourcePolicy(ctx, clusterCtx)
 	if err != nil {
-		conditions.MarkFalse(clusterCtx.VSphereCluster, vmwarev1.ResourcePolicyReadyCondition, vmwarev1.ResourcePolicyCreationFailedReason, clusterv1.ConditionSeverityWarning, err.Error())
+		v1beta1conditions.MarkFalse(clusterCtx.VSphereCluster, vmwarev1.ResourcePolicyReadyCondition, vmwarev1.ResourcePolicyCreationFailedReason, clusterv1beta1.ConditionSeverityWarning, "%v", err)
 		v1beta2conditions.Set(clusterCtx.VSphereCluster, metav1.Condition{
 			Type:    vmwarev1.VSphereClusterResourcePolicyReadyV1Beta2Condition,
 			Status:  metav1.ConditionFalse,
@@ -256,7 +256,7 @@ func (r *ClusterReconciler) reconcileNormal(ctx context.Context, clusterCtx *vmw
 			"failed to configure resource policy for vsphereCluster %s/%s",
 			clusterCtx.VSphereCluster.Namespace, clusterCtx.VSphereCluster.Name)
 	}
-	conditions.MarkTrue(clusterCtx.VSphereCluster, vmwarev1.ResourcePolicyReadyCondition)
+	v1beta1conditions.MarkTrue(clusterCtx.VSphereCluster, vmwarev1.ResourcePolicyReadyCondition)
 	v1beta2conditions.Set(clusterCtx.VSphereCluster, metav1.Condition{
 		Type:   vmwarev1.VSphereClusterResourcePolicyReadyV1Beta2Condition,
 		Status: metav1.ConditionTrue,
@@ -293,7 +293,7 @@ func (r *ClusterReconciler) reconcileControlPlaneEndpoint(ctx context.Context, c
 			Reason: vmwarev1.VSphereClusterLoadBalancerReadyV1Beta2Reason,
 		})
 		if r.NetworkProvider.HasLoadBalancer() {
-			conditions.MarkTrue(clusterCtx.VSphereCluster, vmwarev1.LoadBalancerReadyCondition)
+			v1beta1conditions.MarkTrue(clusterCtx.VSphereCluster, vmwarev1.LoadBalancerReadyCondition)
 		}
 		log.Info("Skipping control plane endpoint reconciliation",
 			"reason", "ControlPlaneEndpoint already set on Cluster",
@@ -308,7 +308,7 @@ func (r *ClusterReconciler) reconcileControlPlaneEndpoint(ctx context.Context, c
 			Reason: vmwarev1.VSphereClusterLoadBalancerReadyV1Beta2Reason,
 		})
 		if r.NetworkProvider.HasLoadBalancer() {
-			conditions.MarkTrue(clusterCtx.VSphereCluster, vmwarev1.LoadBalancerReadyCondition)
+			v1beta1conditions.MarkTrue(clusterCtx.VSphereCluster, vmwarev1.LoadBalancerReadyCondition)
 		}
 		log.Info("Skipping control plane endpoint reconciliation",
 			"reason", "ControlPlaneEndpoint already set on VSphereCluster",
@@ -370,7 +370,7 @@ func (r *ClusterReconciler) reconcileAPIEndpoints(ctx context.Context, clusterCt
 
 	// Define a variable to assign the API endpoints of control plane
 	// machines as they are discovered.
-	apiEndpointList := []clusterv1.APIEndpoint{}
+	apiEndpointList := []clusterv1beta1.APIEndpoint{}
 
 	// Iterate over the cluster's control plane CAPI machines.
 	for _, machine := range machines {
@@ -401,7 +401,7 @@ func (r *ClusterReconciler) reconcileAPIEndpoints(ctx context.Context, clusterCt
 		// Append the control plane machine's IP address to the list of API
 		// endpoints for this cluster so that they can be read into the
 		// analogous CAPI cluster via an unstructured reader.
-		apiEndpoint := clusterv1.APIEndpoint{
+		apiEndpoint := clusterv1beta1.APIEndpoint{
 			Host: vsphereMachine.Status.IPAddr,
 			Port: apiEndpointPort,
 		}
@@ -499,8 +499,8 @@ func (r *ClusterReconciler) ZoneToVSphereClusters(ctx context.Context, o client.
 
 // Returns the failure domain information discovered on the cluster
 // hosting this controller.
-func (r *ClusterReconciler) getFailureDomains(ctx context.Context, namespace string) (clusterv1.FailureDomains, error) {
-	failureDomains := clusterv1.FailureDomains{}
+func (r *ClusterReconciler) getFailureDomains(ctx context.Context, namespace string) (clusterv1beta1.FailureDomains, error) {
+	failureDomains := clusterv1beta1.FailureDomains{}
 	// Determine the source of failure domain based on feature gates NamespaceScopedZones.
 	// If NamespaceScopedZones is enabled, use Zone which is Namespace scoped,otherwise use
 	// Availability Zone which is Cluster scoped.
@@ -516,7 +516,7 @@ func (r *ClusterReconciler) getFailureDomains(ctx context.Context, namespace str
 			if !zone.DeletionTimestamp.IsZero() {
 				continue
 			}
-			failureDomains[zone.Name] = clusterv1.FailureDomainSpec{ControlPlane: true}
+			failureDomains[zone.Name] = clusterv1beta1.FailureDomainSpec{ControlPlane: true}
 		}
 
 		if len(failureDomains) == 0 {
@@ -534,7 +534,7 @@ func (r *ClusterReconciler) getFailureDomains(ctx context.Context, namespace str
 		return nil, nil
 	}
 	for _, az := range availabilityZoneList.Items {
-		failureDomains[az.Name] = clusterv1.FailureDomainSpec{
+		failureDomains[az.Name] = clusterv1beta1.FailureDomainSpec{
 			ControlPlane: true,
 		}
 	}

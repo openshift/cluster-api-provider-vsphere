@@ -25,9 +25,9 @@ import (
 	"github.com/pkg/errors"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/utils/ptr"
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
-	bootstrapv1 "sigs.k8s.io/cluster-api/bootstrap/kubeadm/api/v1beta1"
-	controlplanev1 "sigs.k8s.io/cluster-api/controlplane/kubeadm/api/v1beta1"
+	bootstrapv1 "sigs.k8s.io/cluster-api/api/bootstrap/kubeadm/v1beta2"
+	controlplanev1 "sigs.k8s.io/cluster-api/api/controlplane/kubeadm/v1beta2"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/yaml"
 
 	"sigs.k8s.io/cluster-api-provider-vsphere/internal/kubevip"
@@ -68,13 +68,13 @@ func TopologyPatch() clusterv1.ClusterClassPatch {
 				`content: {{ printf "%q" (regexReplaceAll "(name: address\n +value:).*" .kubeVipPodManifest (printf "$1 %s" .controlPlaneIpAddr)) }}`,
 				fmt.Sprintf("permissions: %q", f.Permissions),
 			}
-			p.ValueFrom.Template = ptr.To(strings.Join(lines, "\n"))
+			p.ValueFrom.Template = strings.Join(lines, "\n")
 			patches = append(patches, p)
 			continue
 		}
 
 		tpl, _ := fileToTemplate(f)
-		p.ValueFrom.Template = ptr.To(tpl)
+		p.ValueFrom.Template = tpl
 		patches = append(patches, p)
 	}
 
@@ -87,7 +87,7 @@ func TopologyPatch() clusterv1.ClusterClassPatch {
 					APIVersion: controlplanev1.GroupVersion.String(),
 					Kind:       util.TypeToKind(&controlplanev1.KubeadmControlPlaneTemplate{}),
 					MatchResources: clusterv1.PatchSelectorMatch{
-						ControlPlane: true,
+						ControlPlane: ptr.To(true),
 					},
 				},
 				JSONPatches: patches,
