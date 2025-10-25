@@ -164,6 +164,10 @@ func (vms *VMService) ReconcileVM(ctx context.Context, vmCtx *capvcontext.VMCont
 		return vm, err
 	}
 
+	if err := vms.reconcileVirtualTPM(ctx, virtualMachineCtx); err != nil {
+		return vm, err
+	}
+
 	if err := vms.reconcileNetworkStatus(ctx, virtualMachineCtx); err != nil {
 		return vm, err
 	}
@@ -600,6 +604,54 @@ func (vms *VMService) reconcilePCIDevices(ctx context.Context, virtualMachineCtx
 			return errors.Wrapf(err, "error adding pci devices for %q", virtualMachineCtx)
 		}
 	}
+	return nil
+}
+
+func (vms *VMService) reconcileVirtualTPM(ctx context.Context, virtualMachineCtx *virtualMachineContext) error {
+	log := ctrl.LoggerFrom(ctx)
+
+	// Check if VirtualTPM is configured in the spec
+	virtualTPMSpec := virtualMachineCtx.VSphereVM.Spec.VirtualTPM
+	if virtualTPMSpec == nil || !virtualTPMSpec.Enabled {
+		// VirtualTPM is not configured, check if it exists and remove it if needed
+		devices, err := virtualMachineCtx.Obj.Device(ctx)
+		if err != nil {
+			return errors.Wrapf(err, "error getting devices for %q", virtualMachineCtx)
+		}
+
+		for _, dev := range devices.SelectByType((*types.VirtualTPM)(nil)) {
+			log.Info("Removing VirtualTPM device as it's not configured in spec")
+			if err := virtualMachineCtx.Obj.RemoveDevice(ctx, false, dev); err != nil {
+				return errors.Wrapf(err, "error removing VirtualTPM device for %q", virtualMachineCtx)
+			}
+		}
+		return nil
+	}
+
+	// VirtualTPM is enabled, check if it exists
+	devices, err := virtualMachineCtx.Obj.Device(ctx)
+	if err != nil {
+		return errors.Wrapf(err, "error getting devices for %q", virtualMachineCtx)
+	}
+
+	// Check if VirtualTPM already exists
+	for range devices.SelectByType((*types.VirtualTPM)(nil)) {
+		log.V(5).Info("VirtualTPM device already exists")
+		return nil
+	}
+
+	// VirtualTPM doesn't exist but is configured, add it
+	log.Info("Adding VirtualTPM device")
+	virtualTPM := &types.VirtualTPM{
+		VirtualDevice: types.VirtualDevice{
+			Key: -1, // Let vSphere assign a unique key
+		},
+	}
+
+	if err := virtualMachineCtx.Obj.AddDevice(ctx, virtualTPM); err != nil {
+		return errors.Wrapf(err, "error adding VirtualTPM device for %q", virtualMachineCtx)
+	}
+
 	return nil
 }
 

@@ -1553,6 +1553,23 @@ spec:
                   without TLS certificate validation of the communication between Cluster API Provider vSphere
                   and the VMware vCenter server.
                 type: string
+              virtualTPM:
+                description: |-
+                  VirtualTPM is the configuration for the virtual Trusted Platform Module device.
+                  Here are the requirements for VirtualTPM:
+                  - VirtualTPM requires UEFI firmware and hardware version 14 or higher on the VM.
+                  - VirtualTPM requires ESXi Host Encryption Mode to be enabled.
+                  - VirtualTPM requires a Key Provider to be configured.
+                  For more details on the requirements see:
+                  https://techdocs.broadcom.com/us/en/vmware-cis/vsphere/vsphere/8-0/vsphere-security-8-0/securing-virtual-machines-with-virtual-trusted-platform-module/vtpm-overview.html
+                  and  https://techdocs.broadcom.com/us/en/vmware-cis/vsphere/vsphere/8-0/vsphere-security-8-0/securing-virtual-machines-with-virtual-trusted-platform-module/add-a-virtual-trusted-platform-module-to-a-virtual-machine.html
+                properties:
+                  enabled:
+                    description: |-
+                      Enabled indicates whether the virtual TPM device should be enabled.
+                      When enabled, the VM will have a virtual TPM 2.0 device attached.
+                    type: boolean
+                type: object
             required:
             - network
             - template

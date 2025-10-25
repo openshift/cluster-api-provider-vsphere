@@ -167,6 +167,18 @@ func Clone(ctx context.Context, vmCtx *capvcontext.VMContext, bootstrapData []by
 
 	deviceSpecs = append(deviceSpecs, networkSpecs...)
 
+	// Add VirtualTPM device if configured
+	if vmCtx.VSphereVM.Spec.VirtualTPM != nil && vmCtx.VSphereVM.Spec.VirtualTPM.Enabled {
+		virtualTPMSpec, err := getVirtualTPMSpec(ctx, vmCtx, devices)
+		if err != nil {
+			return errors.Wrapf(err, "error getting virtual TPM spec for %q", vmCtx)
+		}
+		if virtualTPMSpec != nil {
+			deviceSpecs = append(deviceSpecs, virtualTPMSpec)
+			log.V(4).Info("Added virtual TPM device")
+		}
+	}
+
 	numCPUs := vmCtx.VSphereVM.Spec.NumCPUs
 	if numCPUs < 2 {
 		numCPUs = 2
@@ -588,4 +600,29 @@ func getNetworkSpecs(ctx context.Context, vmCtx *capvcontext.VMContext, devices 
 	}
 
 	return deviceSpecs, nil
+}
+
+// getVirtualTPMSpec creates a VirtualTPM device configuration spec.
+func getVirtualTPMSpec(ctx context.Context, vmCtx *capvcontext.VMContext, devices object.VirtualDeviceList) (types.BaseVirtualDeviceConfigSpec, error) {
+	log := ctrl.LoggerFrom(ctx)
+
+	// Check if VirtualTPM is already present
+	for _, dev := range devices.SelectByType((*types.VirtualTPM)(nil)) {
+		log.V(4).Info("VirtualTPM device already exists", "device", dev)
+		return nil, nil
+	}
+
+	// Create VirtualTPM device
+	virtualTPM := &types.VirtualTPM{
+		VirtualDevice: types.VirtualDevice{
+			Key: -1, // Let vSphere assign a unique key
+		},
+	}
+
+	log.V(4).Info("Creating VirtualTPM device")
+
+	return &types.VirtualDeviceConfigSpec{
+		Device:    virtualTPM,
+		Operation: types.VirtualDeviceConfigSpecOperationAdd,
+	}, nil
 }
