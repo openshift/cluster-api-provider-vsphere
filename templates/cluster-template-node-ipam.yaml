@@ -1,4 +1,4 @@
-apiVersion: cluster.x-k8s.io/v1beta1
+apiVersion: cluster.x-k8s.io/v1beta2
 kind: Cluster
 metadata:
   labels:
@@ -11,11 +11,11 @@ spec:
       cidrBlocks:
       - 192.168.0.0/16
   controlPlaneRef:
-    apiVersion: controlplane.cluster.x-k8s.io/v1beta1
+    apiGroup: controlplane.cluster.x-k8s.io
     kind: KubeadmControlPlane
     name: '${CLUSTER_NAME}'
   infrastructureRef:
-    apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
+    apiGroup: infrastructure.cluster.x-k8s.io
     kind: VSphereCluster
     name: '${CLUSTER_NAME}'
 ---
@@ -96,7 +96,7 @@ spec:
       storagePolicyName: '${VSPHERE_STORAGE_POLICY}'
       template: '${VSPHERE_TEMPLATE}'
 ---
-apiVersion: controlplane.cluster.x-k8s.io/v1beta1
+apiVersion: controlplane.cluster.x-k8s.io/v1beta2
 kind: KubeadmControlPlane
 metadata:
   name: '${CLUSTER_NAME}'
@@ -106,13 +106,13 @@ spec:
     clusterConfiguration:
       controllerManager:
         extraArgs:
-          cloud-provider: external
+        - name: cloud-provider
+          value: external
     files:
     - content: |
         apiVersion: v1
         kind: Pod
         metadata:
-          creationTimestamp: null
           name: kube-vip
           namespace: kube-system
         spec:
@@ -236,13 +236,15 @@ spec:
       nodeRegistration:
         criSocket: /var/run/containerd/containerd.sock
         kubeletExtraArgs:
-          cloud-provider: external
+        - name: cloud-provider
+          value: external
         name: '{{ local_hostname }}'
     joinConfiguration:
       nodeRegistration:
         criSocket: /var/run/containerd/containerd.sock
         kubeletExtraArgs:
-          cloud-provider: external
+        - name: cloud-provider
+          value: external
         name: '{{ local_hostname }}'
     preKubeadmCommands:
     - hostnamectl set-hostname "{{ ds.meta_data.hostname }}"
@@ -259,14 +261,15 @@ spec:
       - '${VSPHERE_SSH_AUTHORIZED_KEY}'
       sudo: ALL=(ALL) NOPASSWD:ALL
   machineTemplate:
-    infrastructureRef:
-      apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
-      kind: VSphereMachineTemplate
-      name: '${CLUSTER_NAME}'
+    spec:
+      infrastructureRef:
+        apiGroup: infrastructure.cluster.x-k8s.io
+        kind: VSphereMachineTemplate
+        name: '${CLUSTER_NAME}'
   replicas: ${CONTROL_PLANE_MACHINE_COUNT}
   version: '${KUBERNETES_VERSION}'
 ---
-apiVersion: bootstrap.cluster.x-k8s.io/v1beta1
+apiVersion: bootstrap.cluster.x-k8s.io/v1beta2
 kind: KubeadmConfigTemplate
 metadata:
   name: '${CLUSTER_NAME}-md-0'
@@ -278,7 +281,8 @@ spec:
         nodeRegistration:
           criSocket: /var/run/containerd/containerd.sock
           kubeletExtraArgs:
-            cloud-provider: external
+          - name: cloud-provider
+            value: external
           name: '{{ local_hostname }}'
       preKubeadmCommands:
       - hostnamectl set-hostname "{{ ds.meta_data.hostname }}"
@@ -295,7 +299,7 @@ spec:
         - '${VSPHERE_SSH_AUTHORIZED_KEY}'
         sudo: ALL=(ALL) NOPASSWD:ALL
 ---
-apiVersion: cluster.x-k8s.io/v1beta1
+apiVersion: cluster.x-k8s.io/v1beta2
 kind: MachineDeployment
 metadata:
   labels:
@@ -314,17 +318,17 @@ spec:
     spec:
       bootstrap:
         configRef:
-          apiVersion: bootstrap.cluster.x-k8s.io/v1beta1
+          apiGroup: bootstrap.cluster.x-k8s.io
           kind: KubeadmConfigTemplate
           name: '${CLUSTER_NAME}-md-0'
       clusterName: '${CLUSTER_NAME}'
       infrastructureRef:
-        apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
+        apiGroup: infrastructure.cluster.x-k8s.io
         kind: VSphereMachineTemplate
         name: ${CLUSTER_NAME}-worker
       version: '${KUBERNETES_VERSION}'
 ---
-apiVersion: addons.cluster.x-k8s.io/v1beta1
+apiVersion: addons.cluster.x-k8s.io/v1beta2
 kind: ClusterResourceSet
 metadata:
   labels:

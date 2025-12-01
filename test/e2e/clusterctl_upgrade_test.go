@@ -24,7 +24,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
+	clusterv1beta1 "sigs.k8s.io/cluster-api/api/core/v1beta1"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	clusterctlcluster "sigs.k8s.io/cluster-api/cmd/clusterctl/client/cluster"
 	capi_e2e "sigs.k8s.io/cluster-api/test/e2e"
 	"sigs.k8s.io/cluster-api/test/framework"
@@ -44,14 +45,14 @@ var (
 )
 
 // Note: This test should be changed during "prepare main branch", it should test CAPV n-1 => current (and then corresponding CAPI versions if already available).
-var _ = Describe("When testing clusterctl upgrades using ClusterClass (CAPV 1.12=>current, CAPI 1.9=>1.10) on K8S latest ci mgmt cluster [vcsim] [supervisor] [ClusterClass]", func() {
+var _ = Describe("When testing clusterctl upgrades using ClusterClass (CAPV 1.13=>current, CAPI 1.10=>1.11) on K8S latest ci mgmt cluster [vcsim] [supervisor] [ClusterClass]", func() {
 	const specName = "clusterctl-upgrade-1.12-current-latest-ci" // prefix (clusterctl-upgrade) copied from CAPI
 	Setup(specName, func(testSpecificSettingsGetter func() testSettings) {
 		capi_e2e.ClusterctlUpgradeSpec(ctx, func() capi_e2e.ClusterctlUpgradeSpecInput {
-			capiVersion := "1.9"
+			capiVersion := "1.10"
 			capiStableRelease, err := getStableReleaseOfMinor(ctx, capiReleaseMarkerPrefix, capiVersion)
 			Expect(err).ToNot(HaveOccurred(), "Failed to get stable version for minor release : %s", capiVersion)
-			capvVersion := "1.12"
+			capvVersion := "1.13"
 			capvStableRelease, err := getStableReleaseOfMinor(ctx, capvReleaseMarkerPrefix, capvVersion)
 			Expect(err).ToNot(HaveOccurred(), "Failed to get stable version for minor release : %s", capvVersion)
 			initKubernetesVersion, err := kubernetesversions.ResolveVersion(ctx, e2eConfig.MustGetVariable("KUBERNETES_VERSION_MANAGEMENT_LATEST_CI"))
@@ -84,7 +85,7 @@ var _ = Describe("When testing clusterctl upgrades using ClusterClass (CAPV 1.12
 				// This is to guarantee that both, the old and new CAPI version, support the defined version.
 				// Ensure all Kubernetes versions used here are covered in patch-vsphere-template.yaml
 				InitWithKubernetesVersion: initKubernetesVersion,
-				WorkloadKubernetesVersion: "v1.32.0",
+				WorkloadKubernetesVersion: "v1.33.0",
 				WorkloadFlavor:            testSpecificSettingsGetter().FlavorForMode("workload"),
 				// We are using a separate management cluster. For running in VCSim we also have to pass WithAdditionalVCSimServer
 				// below otherwise there will be no VCSim instance created in the management cluster.
@@ -100,8 +101,62 @@ var _ = Describe("When testing clusterctl upgrades using ClusterClass (CAPV 1.12
 })
 
 // Note: This test should be changed during "prepare main branch", it should test CAPV n-1 => current (and then corresponding CAPI versions if already available).
-var _ = Describe("When testing clusterctl upgrades using ClusterClass (CAPV 1.12=>current, CAPI 1.9=>1.10) [vcsim] [supervisor] [ClusterClass]", func() {
+var _ = Describe("When testing clusterctl upgrades using ClusterClass (CAPV 1.13=>current, CAPI 1.10=>1.11) [vcsim] [supervisor] [ClusterClass]", func() {
 	const specName = "clusterctl-upgrade-1.12-current" // prefix (clusterctl-upgrade) copied from CAPI
+	Setup(specName, func(testSpecificSettingsGetter func() testSettings) {
+		capi_e2e.ClusterctlUpgradeSpec(ctx, func() capi_e2e.ClusterctlUpgradeSpecInput {
+			capiVersion := "1.10"
+			capiStableRelease, err := getStableReleaseOfMinor(ctx, capiReleaseMarkerPrefix, capiVersion)
+			Expect(err).ToNot(HaveOccurred(), "Failed to get stable version for minor release : %s", capiVersion)
+			capvVersion := "1.13"
+			capvStableRelease, err := getStableReleaseOfMinor(ctx, capvReleaseMarkerPrefix, capvVersion)
+			Expect(err).ToNot(HaveOccurred(), "Failed to get stable version for minor release : %s", capvVersion)
+			return capi_e2e.ClusterctlUpgradeSpecInput{
+				E2EConfig:                         e2eConfig,
+				ClusterctlConfigPath:              testSpecificSettingsGetter().ClusterctlConfigPath,
+				BootstrapClusterProxy:             bootstrapClusterProxy,
+				ArtifactFolder:                    artifactFolder,
+				SkipCleanup:                       skipCleanup,
+				MgmtFlavor:                        testSpecificSettingsGetter().FlavorForMode("topology"),
+				PostNamespaceCreated:              testSpecificSettingsGetter().PostNamespaceCreatedFunc,
+				InitWithBinary:                    fmt.Sprintf(clusterctlDownloadURL, capiStableRelease),
+				InitWithCoreProvider:              fmt.Sprintf(providerCAPIPrefix, capiStableRelease),
+				InitWithBootstrapProviders:        []string{fmt.Sprintf(providerKubeadmPrefix, capiStableRelease)},
+				InitWithControlPlaneProviders:     []string{fmt.Sprintf(providerKubeadmPrefix, capiStableRelease)},
+				InitWithInfrastructureProviders:   []string{fmt.Sprintf(providerVSpherePrefix, capvStableRelease)},
+				InitWithRuntimeExtensionProviders: testSpecificSettingsGetter().RuntimeExtensionProviders,
+				InitWithIPAMProviders:             []string{},
+				Upgrades: []capi_e2e.ClusterctlUpgradeSpecInputUpgrade{
+					{ // Upgrade to latest v1beta1.
+						Contract: clusterv1.GroupVersion.Version,
+						PostUpgrade: func(proxy framework.ClusterProxy, namespace, clusterName string) {
+							framework.ValidateCRDMigration(ctx, proxy, namespace, clusterName,
+								crdShouldBeMigrated, clusterctlcluster.FilterClusterObjectsWithNameFilter(clusterName))
+						},
+					},
+				},
+				// InitWithKubernetesVersion should be the highest kubernetes version supported by the init Cluster API version.
+				// This is to guarantee that both, the old and new CAPI version, support the defined version.
+				// Ensure all Kubernetes versions used here are covered in patch-vsphere-template.yaml
+				InitWithKubernetesVersion: "v1.33.0",
+				WorkloadKubernetesVersion: "v1.33.0",
+				WorkloadFlavor:            testSpecificSettingsGetter().FlavorForMode("workload"),
+				// We are using a separate management cluster. For running in VCSim we also have to pass WithAdditionalVCSimServer
+				// below otherwise there will be no VCSim instance created in the management cluster.
+				UseKindForManagementCluster:              true,
+				KindManagementClusterNewClusterProxyFunc: kindManagementClusterNewClusterProxyFunc,
+			}
+		})
+	},
+		WithIP("WORKLOAD_CONTROL_PLANE_ENDPOINT_IP"),
+		// This is required because we are using a separate management cluster with kind by passing `UseKindForManagementCluster` above.
+		WithAdditionalVCSimServer(true),
+	)
+})
+
+// Note: This test should be changed during "prepare main branch", it should test CAPV n-2 => current (and then corresponding CAPI versions if already available).
+var _ = Describe("When testing clusterctl upgrades using ClusterClass (CAPV 1.12=>current, CAPI 1.9=>1.11) [vcsim] [supervisor] [ClusterClass]", func() {
+	const specName = "clusterctl-upgrade-1.11-current" // prefix (clusterctl-upgrade) copied from CAPI
 	Setup(specName, func(testSpecificSettingsGetter func() testSettings) {
 		capi_e2e.ClusterctlUpgradeSpec(ctx, func() capi_e2e.ClusterctlUpgradeSpecInput {
 			capiVersion := "1.9"
@@ -153,9 +208,9 @@ var _ = Describe("When testing clusterctl upgrades using ClusterClass (CAPV 1.12
 	)
 })
 
-// Note: This test should be changed during "prepare main branch", it should test CAPV n-2 => current (and then corresponding CAPI versions if already available).
-var _ = Describe("When testing clusterctl upgrades using ClusterClass (CAPV 1.11=>current, CAPI 1.8=>1.10) [vcsim] [supervisor] [ClusterClass]", func() {
-	const specName = "clusterctl-upgrade-1.11-current" // prefix (clusterctl-upgrade) copied from CAPI
+// Note: This test should be changed during "prepare main branch", it should test CAPV n-3 => current (and then corresponding CAPI versions if already available).
+var _ = Describe("When testing clusterctl upgrades using ClusterClass (CAPV 1.11=>current, CAPI 1.8=>1.11) [vcsim] [supervisor] [ClusterClass]", func() {
+	const specName = "clusterctl-upgrade-1.10-current" // prefix (clusterctl-upgrade) copied from CAPI
 	Setup(specName, func(testSpecificSettingsGetter func() testSettings) {
 		capi_e2e.ClusterctlUpgradeSpec(ctx, func() capi_e2e.ClusterctlUpgradeSpecInput {
 			capiVersion := "1.8"
@@ -207,60 +262,6 @@ var _ = Describe("When testing clusterctl upgrades using ClusterClass (CAPV 1.11
 	)
 })
 
-// Note: This test should be changed during "prepare main branch", it should test CAPV n-3 => current (and then corresponding CAPI versions if already available).
-var _ = Describe("When testing clusterctl upgrades using ClusterClass (CAPV 1.10=>current, CAPI 1.7=>1.10) [vcsim] [supervisor] [ClusterClass]", func() {
-	const specName = "clusterctl-upgrade-1.10-current" // prefix (clusterctl-upgrade) copied from CAPI
-	Setup(specName, func(testSpecificSettingsGetter func() testSettings) {
-		capi_e2e.ClusterctlUpgradeSpec(ctx, func() capi_e2e.ClusterctlUpgradeSpecInput {
-			capiVersion := "1.7"
-			capiStableRelease, err := getStableReleaseOfMinor(ctx, capiReleaseMarkerPrefix, capiVersion)
-			Expect(err).ToNot(HaveOccurred(), "Failed to get stable version for minor release : %s", capiVersion)
-			capvVersion := "1.10"
-			capvStableRelease, err := getStableReleaseOfMinor(ctx, capvReleaseMarkerPrefix, capvVersion)
-			Expect(err).ToNot(HaveOccurred(), "Failed to get stable version for minor release : %s", capvVersion)
-			return capi_e2e.ClusterctlUpgradeSpecInput{
-				E2EConfig:                         e2eConfig,
-				ClusterctlConfigPath:              testSpecificSettingsGetter().ClusterctlConfigPath,
-				BootstrapClusterProxy:             bootstrapClusterProxy,
-				ArtifactFolder:                    artifactFolder,
-				SkipCleanup:                       skipCleanup,
-				MgmtFlavor:                        testSpecificSettingsGetter().FlavorForMode("topology"),
-				PostNamespaceCreated:              testSpecificSettingsGetter().PostNamespaceCreatedFunc,
-				InitWithBinary:                    fmt.Sprintf(clusterctlDownloadURL, capiStableRelease),
-				InitWithCoreProvider:              fmt.Sprintf(providerCAPIPrefix, capiStableRelease),
-				InitWithBootstrapProviders:        []string{fmt.Sprintf(providerKubeadmPrefix, capiStableRelease)},
-				InitWithControlPlaneProviders:     []string{fmt.Sprintf(providerKubeadmPrefix, capiStableRelease)},
-				InitWithInfrastructureProviders:   []string{fmt.Sprintf(providerVSpherePrefix, capvStableRelease)},
-				InitWithRuntimeExtensionProviders: testSpecificSettingsGetter().RuntimeExtensionProviders,
-				InitWithIPAMProviders:             []string{},
-				Upgrades: []capi_e2e.ClusterctlUpgradeSpecInputUpgrade{
-					{ // Upgrade to latest v1beta1.
-						Contract: clusterv1.GroupVersion.Version,
-						PostUpgrade: func(proxy framework.ClusterProxy, namespace, clusterName string) {
-							framework.ValidateCRDMigration(ctx, proxy, namespace, clusterName,
-								crdShouldBeMigrated, clusterctlcluster.FilterClusterObjectsWithNameFilter(clusterName))
-						},
-					},
-				},
-				// InitWithKubernetesVersion should be the highest kubernetes version supported by the init Cluster API version.
-				// This is to guarantee that both, the old and new CAPI version, support the defined version.
-				// Ensure all Kubernetes versions used here are covered in patch-vsphere-template.yaml
-				InitWithKubernetesVersion: "v1.30.0",
-				WorkloadKubernetesVersion: "v1.30.0",
-				WorkloadFlavor:            testSpecificSettingsGetter().FlavorForMode("workload"),
-				// We are using a separate management cluster. For running in VCSim we also have to pass WithAdditionalVCSimServer
-				// below otherwise there will be no VCSim instance created in the management cluster.
-				UseKindForManagementCluster:              true,
-				KindManagementClusterNewClusterProxyFunc: kindManagementClusterNewClusterProxyFunc,
-			}
-		})
-	},
-		WithIP("WORKLOAD_CONTROL_PLANE_ENDPOINT_IP"),
-		// This is required because we are using a separate management cluster with kind by passing `UseKindForManagementCluster` above.
-		WithAdditionalVCSimServer(true),
-	)
-})
-
 // getStableReleaseOfMinor returns the latest stable version of minorRelease.
 func getStableReleaseOfMinor(ctx context.Context, releaseMarkerPrefix, minorRelease string) (string, error) {
 	releaseMarker := fmt.Sprintf(releaseMarkerPrefix, minorRelease)
@@ -268,10 +269,14 @@ func getStableReleaseOfMinor(ctx context.Context, releaseMarkerPrefix, minorRele
 }
 
 func kindManagementClusterNewClusterProxyFunc(name string, kubeconfigPath string) framework.ClusterProxy {
+	scheme := initScheme()
+	// The scheme for v1beta1 is still required as long as we upgrade from v1beta1 Cluster's.
+	_ = clusterv1beta1.AddToScheme(scheme)
+
 	if testTarget == VCSimTestTarget {
-		return vcsim.NewClusterProxy(name, kubeconfigPath, initScheme())
+		return vcsim.NewClusterProxy(name, kubeconfigPath, scheme)
 	}
-	return framework.NewClusterProxy(name, kubeconfigPath, initScheme())
+	return framework.NewClusterProxy(name, kubeconfigPath, scheme, framework.WithMachineLogCollector(framework.DockerLogCollector{}))
 }
 
 func crdShouldBeMigrated(crd apiextensionsv1.CustomResourceDefinition) bool {

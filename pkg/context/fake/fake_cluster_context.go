@@ -19,9 +19,8 @@ package fake
 import (
 	"context"
 
-	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 
 	infrav1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/v1beta1"
 	capvcontext "sigs.k8s.io/cluster-api-provider-vsphere/pkg/context"
@@ -56,17 +55,16 @@ func newClusterV1() clusterv1.Cluster {
 			UID:       Clusterv1a2UUID,
 		},
 		Spec: clusterv1.ClusterSpec{
-			ClusterNetwork: &clusterv1.ClusterNetwork{
-				Pods: &clusterv1.NetworkRanges{
+			ClusterNetwork: clusterv1.ClusterNetwork{
+				Pods: clusterv1.NetworkRanges{
 					CIDRBlocks: []string{PodCIDR},
 				},
-				Services: &clusterv1.NetworkRanges{
+				Services: clusterv1.NetworkRanges{
 					CIDRBlocks: []string{ServiceCIDR},
 				},
 			},
-			InfrastructureRef: &corev1.ObjectReference{
-				Namespace: Namespace,
-				Name:      InfrastructureRefName,
+			InfrastructureRef: clusterv1.ContractVersionedObjectReference{
+				Name: InfrastructureRefName,
 			},
 		},
 	}

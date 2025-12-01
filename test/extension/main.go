@@ -39,12 +39,12 @@ import (
 	logsv1 "k8s.io/component-base/logs/api/v1"
 	_ "k8s.io/component-base/logs/json/register"
 	"k8s.io/klog/v2"
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
-	bootstrapv1 "sigs.k8s.io/cluster-api/bootstrap/kubeadm/api/v1beta1"
+	bootstrapv1 "sigs.k8s.io/cluster-api/api/bootstrap/kubeadm/v1beta2"
+	controlplanev1 "sigs.k8s.io/cluster-api/api/controlplane/kubeadm/v1beta2"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
+	runtimehooksv1 "sigs.k8s.io/cluster-api/api/runtime/hooks/v1alpha1"
 	"sigs.k8s.io/cluster-api/controllers/remote"
-	controlplanev1 "sigs.k8s.io/cluster-api/controlplane/kubeadm/api/v1beta1"
 	runtimecatalog "sigs.k8s.io/cluster-api/exp/runtime/catalog"
-	runtimehooksv1 "sigs.k8s.io/cluster-api/exp/runtime/hooks/api/v1alpha1"
 	"sigs.k8s.io/cluster-api/exp/runtime/server"
 	"sigs.k8s.io/cluster-api/test/extension/handlers/lifecycle"
 	"sigs.k8s.io/cluster-api/util/apiwarnings"
@@ -170,15 +170,13 @@ func InitFlags(fs *pflag.FlagSet) {
 // +kubebuilder:rbac:groups=authorization.k8s.io,resources=subjectaccessreviews,verbs=create
 
 func main() {
-	setupLog.Info(fmt.Sprintf("Version: %+v", version.Get().String()))
-
 	// Initialize and parse command line flags.
 	InitFlags(pflag.CommandLine)
 	pflag.CommandLine.SetNormalizeFunc(cliflag.WordSepNormalizeFunc)
 	pflag.CommandLine.AddGoFlagSet(flag.CommandLine)
 	// Set log level 2 as default.
 	if err := pflag.CommandLine.Set("v", "2"); err != nil {
-		setupLog.Error(err, "Failed to set default log level")
+		fmt.Printf("Failed to set default log level: %v\n", err)
 		os.Exit(1)
 	}
 	pflag.Parse()
@@ -187,7 +185,7 @@ func main() {
 	// so klog will automatically use the right logger.
 	// NOTE: klog is the log of choice of component-base machinery.
 	if err := logsv1.ValidateAndApply(logOptions, nil); err != nil {
-		setupLog.Error(err, "Unable to start extension")
+		fmt.Printf("Unable to start manager: %v\n", err)
 		os.Exit(1)
 	}
 
@@ -196,6 +194,9 @@ func main() {
 	// because it allows to use a log stored in the context across the entire chain of calls (without
 	// requiring an addition log parameter in all the functions).
 	ctrl.SetLogger(klog.Background())
+
+	// Note: setupLog can only be used after ctrl.SetLogger was called
+	setupLog.Info(fmt.Sprintf("Version: %s (git commit: %s)", version.Get().String(), version.Get().GitCommit))
 
 	restConfig := ctrl.GetConfigOrDie()
 	restConfig.QPS = restConfigQPS
@@ -286,7 +287,7 @@ func setupTopologyMutationHookHandlers(runtimeExtensionWebhookServer *server.Ser
 	// Create the ExtensionHandlers for the Topology Mutation Hooks.
 	// NOTE: it is not mandatory to group all the ExtensionHandlers using a struct, what is important
 	// is to have HandlerFunc with the signature defined in sigs.k8s.io/cluster-api/exp/runtime/hooks/api/v1alpha1.
-	topologyMutationExtensionHandlers := topologymutation.NewExtensionHandlers(scheme)
+	topologyMutationExtensionHandlers := topologymutation.NewExtensionHandlers()
 
 	if err := runtimeExtensionWebhookServer.AddExtensionHandler(server.ExtensionHandler{
 		Hook:        runtimehooksv1.GeneratePatches,

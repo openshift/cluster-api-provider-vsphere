@@ -29,11 +29,12 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	apirecord "k8s.io/client-go/tools/record"
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
+	"k8s.io/utils/ptr"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
+	ipamv1beta1 "sigs.k8s.io/cluster-api/api/ipam/v1beta1"
 	"sigs.k8s.io/cluster-api/controllers/clustercache"
-	ipamv1 "sigs.k8s.io/cluster-api/exp/ipam/api/v1beta1"
 	"sigs.k8s.io/cluster-api/util"
-	"sigs.k8s.io/cluster-api/util/conditions"
+	v1beta1conditions "sigs.k8s.io/cluster-api/util/deprecated/v1beta1/conditions"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -58,7 +59,7 @@ func TestReconcileNormal_WaitingForIPAddrAllocation(t *testing.T) {
 		vsphereCluster *infrav1.VSphereCluster
 
 		initObjs       []client.Object
-		ipAddressClaim *ipamv1.IPAddressClaim
+		ipAddressClaim *ipamv1beta1.IPAddressClaim
 	)
 
 	poolAPIGroup := "some.ipam.api.group"
@@ -87,12 +88,14 @@ func TestReconcileNormal_WaitingForIPAddrAllocation(t *testing.T) {
 					Namespace: "test",
 				},
 				Spec: clusterv1.ClusterSpec{
-					InfrastructureRef: &corev1.ObjectReference{
+					InfrastructureRef: clusterv1.ContractVersionedObjectReference{
 						Name: vsphereCluster.Name,
 					},
 				},
 				Status: clusterv1.ClusterStatus{
-					InfrastructureReady: true,
+					Initialization: clusterv1.ClusterInitializationStatus{
+						InfrastructureProvisioned: ptr.To(true),
+					},
 				},
 			}
 
@@ -143,7 +146,7 @@ func TestReconcileNormal_WaitingForIPAddrAllocation(t *testing.T) {
 				Status: infrav1.VSphereVMStatus{},
 			}
 
-			ipAddressClaim = &ipamv1.IPAddressClaim{
+			ipAddressClaim = &ipamv1beta1.IPAddressClaim{
 				TypeMeta: metav1.TypeMeta{
 					Kind: "IPAddressClaim",
 				},
@@ -155,7 +158,7 @@ func TestReconcileNormal_WaitingForIPAddrAllocation(t *testing.T) {
 					},
 					OwnerReferences: []metav1.OwnerReference{{APIVersion: infrav1.GroupVersion.String(), Kind: "VSphereVM", Name: "foo"}},
 				},
-				Spec: ipamv1.IPAddressClaimSpec{
+				Spec: ipamv1beta1.IPAddressClaimSpec{
 					PoolRef: corev1.TypedLocalObjectReference{
 						APIGroup: &poolAPIGroup,
 						Kind:     "IPAMPools",
@@ -206,8 +209,8 @@ func TestReconcileNormal_WaitingForIPAddrAllocation(t *testing.T) {
 		vmKey := util.ObjectKey(vsphereVM)
 		g.Expect(r.Client.Get(context.Background(), vmKey, vm)).NotTo(HaveOccurred())
 
-		g.Expect(conditions.Has(vm, infrav1.VMProvisionedCondition)).To(BeTrue())
-		vmProvisionCondition := conditions.Get(vm, infrav1.VMProvisionedCondition)
+		g.Expect(v1beta1conditions.Has(vm, infrav1.VMProvisionedCondition)).To(BeTrue())
+		vmProvisionCondition := v1beta1conditions.Get(vm, infrav1.VMProvisionedCondition)
 		g.Expect(vmProvisionCondition.Status).To(Equal(corev1.ConditionFalse))
 		g.Expect(vmProvisionCondition.Reason).To(Equal(infrav1.WaitingForStaticIPAllocationReason))
 	})
@@ -242,8 +245,8 @@ func TestReconcileNormal_WaitingForIPAddrAllocation(t *testing.T) {
 		vmKey := util.ObjectKey(vsphereVM)
 		g.Expect(r.Client.Get(context.Background(), vmKey, vm)).NotTo(HaveOccurred())
 
-		g.Expect(conditions.Has(vm, infrav1.VMProvisionedCondition)).To(BeTrue())
-		vmProvisionCondition := conditions.Get(vm, infrav1.VMProvisionedCondition)
+		g.Expect(v1beta1conditions.Has(vm, infrav1.VMProvisionedCondition)).To(BeTrue())
+		vmProvisionCondition := v1beta1conditions.Get(vm, infrav1.VMProvisionedCondition)
 		g.Expect(vmProvisionCondition.Status).To(Equal(corev1.ConditionFalse))
 		g.Expect(vmProvisionCondition.Reason).To(Equal(infrav1.WaitingForIPAllocationReason))
 	})
@@ -292,7 +295,7 @@ func TestReconcileNormal_WaitingForIPAddrAllocation(t *testing.T) {
 		vmKey := util.ObjectKey(vsphereVM)
 		g.Expect(apierrors.IsNotFound(r.Client.Get(context.Background(), vmKey, vm))).To(BeTrue())
 
-		claim := &ipamv1.IPAddressClaim{}
+		claim := &ipamv1beta1.IPAddressClaim{}
 		ipacKey := util.ObjectKey(ipAddressClaim)
 		g.Expect(r.Client.Get(context.Background(), ipacKey, claim)).NotTo(HaveOccurred())
 		g.Expect(claim.ObjectMeta.Finalizers).NotTo(ContainElement(infrav1.IPAddressClaimFinalizer))
@@ -473,7 +476,7 @@ func TestRetrievingVCenterCredentialsFromCluster(t *testing.T) {
 				Namespace: "test",
 			},
 			Spec: clusterv1.ClusterSpec{
-				InfrastructureRef: &corev1.ObjectReference{
+				InfrastructureRef: clusterv1.ContractVersionedObjectReference{
 					Name: vsphereCluster.Name,
 				},
 			},
@@ -498,8 +501,8 @@ func TestRetrievingVCenterCredentialsFromCluster(t *testing.T) {
 		vm := &infrav1.VSphereVM{}
 		vmKey := util.ObjectKey(vsphereVM)
 		g.Expect(r.Client.Get(context.Background(), vmKey, vm)).NotTo(HaveOccurred())
-		g.Expect(conditions.Has(vm, infrav1.VCenterAvailableCondition)).To(BeTrue())
-		vCenterCondition := conditions.Get(vm, infrav1.VCenterAvailableCondition)
+		g.Expect(v1beta1conditions.Has(vm, infrav1.VCenterAvailableCondition)).To(BeTrue())
+		vCenterCondition := v1beta1conditions.Get(vm, infrav1.VCenterAvailableCondition)
 		g.Expect(vCenterCondition.Status).To(Equal(corev1.ConditionTrue))
 	},
 	)
@@ -511,9 +514,9 @@ func TestRetrievingVCenterCredentialsFromCluster(t *testing.T) {
 				Namespace: "test",
 			},
 
-			// InfrastructureRef is nil so we should get an error.
+			// InfrastructureRef is not set so we should get an error.
 			Spec: clusterv1.ClusterSpec{
-				InfrastructureRef: nil,
+				// InfrastructureRef not set.
 			},
 		}
 		initObjs := createMachineOwnerHierarchy(machine)

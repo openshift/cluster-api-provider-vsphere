@@ -35,8 +35,7 @@ import (
 	"golang.org/x/crypto/ssh"
 	kerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/klog/v2"
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
-	expv1 "sigs.k8s.io/cluster-api/exp/api/v1beta1"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	vmwarev1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/vmware/v1beta1"
@@ -53,7 +52,7 @@ type MachineLogCollector struct {
 	Finder *find.Finder
 }
 
-func (c *MachineLogCollector) CollectMachinePoolLog(_ context.Context, _ client.Client, _ *expv1.MachinePool, _ string) error {
+func (c *MachineLogCollector) CollectMachinePoolLog(_ context.Context, _ client.Client, _ *clusterv1.MachinePool, _ string) error {
 	return nil
 }
 
@@ -98,6 +97,8 @@ func (c *MachineLogCollector) CollectMachineLog(ctx context.Context, ctrlClient 
 			"sudo", "cat", "/var/log/cloud-init-output.log"),
 		captureLogs("kubeadm-service.log",
 			"sudo", "cat", "/var/log/kubeadm-service.log"),
+		captureLogs("pod-logs.tar.gz",
+			"sudo", "tar", "-czf", "-", "-C", "/var/log", "pods"),
 	)
 }
 
@@ -116,10 +117,10 @@ func (c *MachineLogCollector) machineIPAddresses(ctx context.Context, ctrlClient
 	vmName := m.GetName()
 
 	// For supervisor mode it could be the case that the name of the virtual machine differs from the machine's name.
-	if m.Spec.InfrastructureRef.GroupVersionKind().Group == vmwarev1.GroupVersion.Group {
+	if m.Spec.InfrastructureRef.APIGroup == vmwarev1.GroupVersion.Group {
 		vsphereMachine := &vmwarev1.VSphereMachine{}
-		if err := ctrlClient.Get(ctx, client.ObjectKey{Namespace: m.Spec.InfrastructureRef.Namespace, Name: m.Spec.InfrastructureRef.Name}, vsphereMachine); err != nil {
-			return nil, errors.Wrapf(err, "getting vmwarev1.VSphereMachine %s/%s", m.Spec.InfrastructureRef.Namespace, m.Spec.InfrastructureRef.Name)
+		if err := ctrlClient.Get(ctx, client.ObjectKey{Namespace: m.Namespace, Name: m.Spec.InfrastructureRef.Name}, vsphereMachine); err != nil {
+			return nil, errors.Wrapf(err, "getting vmwarev1.VSphereMachine %s/%s", m.Namespace, m.Spec.InfrastructureRef.Name)
 		}
 
 		if vsphereMachine.Status.IPAddr != "" {

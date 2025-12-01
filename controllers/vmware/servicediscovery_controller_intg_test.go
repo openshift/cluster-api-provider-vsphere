@@ -53,7 +53,7 @@ var _ = Describe("Service Discovery controller integration tests", func() {
 			vmwarehelpers.CreateAndWait(ctx, intCtx.Client, intCtx.Cluster)
 			vmwarehelpers.CreateAndWait(ctx, intCtx.Client, intCtx.VSphereCluster)
 			vmwarehelpers.CreateAndWait(ctx, intCtx.Client, intCtx.KubeconfigSecret)
-			vmwarehelpers.ClusterInfrastructureReady(ctx, intCtx.Client, clusterCache, intCtx.Cluster)
+			vmwarehelpers.ClusterInfrastructureProvisioned(ctx, intCtx.Client, clusterCache, intCtx.Cluster)
 		})
 
 		By("Verifying that the guest cluster client works")
@@ -112,10 +112,11 @@ var _ = Describe("Service Discovery controller integration tests", func() {
 	})
 	Context("When headless svc and endpoints already exists", func() {
 		BeforeEach(func() {
-			// Create the svc & endpoint objects in guest cluster
-			// NOTE: the service account controller is not creating this service because it gets re-queued for 2 minutes
-			// after being created - when the cluster cache client is not ready.
-			createObjects(ctx, intCtx.GuestClient, newTestHeadlessSvcEndpoints())
+			// Wait for the reconciler to create the service.
+			Eventually(func() error {
+				key := client.ObjectKey{Namespace: supervisorHeadlessSvcNamespace, Name: supervisorHeadlessSvcName}
+				return intCtx.GuestAPIReader.Get(ctx, key, &corev1.Service{})
+			}).Should(Succeed())
 
 			// Init objects in the supervisor cluster
 			initObjects = []client.Object{
