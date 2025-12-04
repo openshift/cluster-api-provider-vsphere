@@ -27,10 +27,11 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/klog/v2"
 	"k8s.io/utils/ptr"
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
+	clusterv1beta1 "sigs.k8s.io/cluster-api/api/core/v1beta1"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	inmemoryruntime "sigs.k8s.io/cluster-api/test/infrastructure/inmemory/pkg/runtime"
 	inmemoryserver "sigs.k8s.io/cluster-api/test/infrastructure/inmemory/pkg/server"
-	"sigs.k8s.io/cluster-api/util/conditions"
+	v1beta1conditions "sigs.k8s.io/cluster-api/util/deprecated/v1beta1/conditions"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -59,12 +60,10 @@ func Test_Reconcile_VirtualMachine(t *testing.T) {
 				UID:       "bar",
 			},
 			Spec: clusterv1.ClusterSpec{
-				InfrastructureRef: &corev1.ObjectReference{
-					APIVersion: vmwarev1.GroupVersion.String(),
-					Kind:       "VSphereCluster",
-					Namespace:  vsphereCluster.Namespace,
-					Name:       vsphereCluster.Name,
-					UID:        vsphereCluster.UID,
+				InfrastructureRef: clusterv1.ContractVersionedObjectReference{
+					APIGroup: vmwarev1.GroupVersion.Group,
+					Kind:     "VSphereCluster",
+					Name:     vsphereCluster.Name,
 				},
 			},
 		}
@@ -159,9 +158,9 @@ func Test_Reconcile_VirtualMachine(t *testing.T) {
 		err = inmemoryClient.Get(ctx, client.ObjectKeyFromObject(virtualMachine), conditionsTracker)
 		g.Expect(err).ToNot(HaveOccurred())
 
-		c := conditions.Get(conditionsTracker, VMProvisionedCondition)
+		c := v1beta1conditions.Get(conditionsTracker, VMProvisionedCondition)
 		g.Expect(c.Status).To(Equal(corev1.ConditionFalse))
-		g.Expect(c.Severity).To(Equal(clusterv1.ConditionSeverityInfo))
+		g.Expect(c.Severity).To(Equal(clusterv1beta1.ConditionSeverityInfo))
 		g.Expect(c.Reason).To(Equal(WaitingControlPlaneInitializedReason))
 	})
 
@@ -183,12 +182,10 @@ func Test_Reconcile_VirtualMachine(t *testing.T) {
 				UID:       "bar",
 			},
 			Spec: clusterv1.ClusterSpec{
-				InfrastructureRef: &corev1.ObjectReference{
-					APIVersion: vmwarev1.GroupVersion.String(),
-					Kind:       "VSphereCluster",
-					Namespace:  vsphereCluster.Namespace,
-					Name:       vsphereCluster.Name,
-					UID:        vsphereCluster.UID,
+				InfrastructureRef: clusterv1.ContractVersionedObjectReference{
+					APIGroup: vmwarev1.GroupVersion.Group,
+					Kind:     "VSphereCluster",
+					Name:     vsphereCluster.Name,
 				},
 			},
 		}
@@ -299,7 +296,7 @@ func Test_Reconcile_VirtualMachine(t *testing.T) {
 		err = inmemoryClient.Get(ctx, client.ObjectKeyFromObject(virtualMachine), conditionsTracker)
 		g.Expect(err).ToNot(HaveOccurred())
 
-		c := conditions.Get(conditionsTracker, NodeProvisionedCondition)
+		c := v1beta1conditions.Get(conditionsTracker, NodeProvisionedCondition)
 		g.Expect(c.Status).To(Equal(corev1.ConditionTrue))
 	})
 }

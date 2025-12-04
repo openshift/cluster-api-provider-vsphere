@@ -25,10 +25,11 @@ import (
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"
-	addonsv1 "sigs.k8s.io/cluster-api/api/addons/v1beta1"
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
-	bootstrapv1 "sigs.k8s.io/cluster-api/bootstrap/kubeadm/api/v1beta1"
-	controlplanev1 "sigs.k8s.io/cluster-api/controlplane/kubeadm/api/v1beta1"
+	addonsv1 "sigs.k8s.io/cluster-api/api/addons/v1beta2"
+	bootstrapv1 "sigs.k8s.io/cluster-api/api/bootstrap/kubeadm/v1beta2"
+	controlplanev1 "sigs.k8s.io/cluster-api/api/controlplane/kubeadm/v1beta2"
+	clusterv1beta1 "sigs.k8s.io/cluster-api/api/core/v1beta1"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	infrav1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/v1beta1"
@@ -118,13 +119,15 @@ func newClusterTopologyCluster(supervisorMode bool) (clusterv1.Cluster, error) {
 			Labels:    clusterLabels(),
 		},
 		Spec: clusterv1.ClusterSpec{
-			Topology: &clusterv1.Topology{
-				Class:   env.ClusterClassNameVar,
+			Topology: clusterv1.Topology{
+				ClassRef: clusterv1.ClusterClassRef{
+					Name: env.ClusterClassNameVar,
+				},
 				Version: env.KubernetesVersionVar,
 				ControlPlane: clusterv1.ControlPlaneTopology{
 					Replicas: ptr.To[int32](1),
 				},
-				Workers: &clusterv1.WorkersTopology{
+				Workers: clusterv1.WorkersTopology{
 					MachineDeployments: []clusterv1.MachineDeploymentTopology{
 						{
 							Class:    fmt.Sprintf("%s-worker", env.ClusterClassNameVar),
@@ -257,7 +260,7 @@ func newVMWareCluster() vmwarev1.VSphereCluster {
 			Namespace: env.NamespaceVar,
 		},
 		Spec: vmwarev1.VSphereClusterSpec{
-			ControlPlaneEndpoint: clusterv1.APIEndpoint{
+			ControlPlaneEndpoint: clusterv1beta1.APIEndpoint{
 				Host: env.ControlPlaneEndpointHostVar,
 				Port: 6443,
 			},
@@ -277,23 +280,23 @@ func newCluster(vsphereCluster client.Object, controlPlane *controlplanev1.Kubea
 			Labels:    clusterLabels(),
 		},
 		Spec: clusterv1.ClusterSpec{
-			ClusterNetwork: &clusterv1.ClusterNetwork{
-				Pods: &clusterv1.NetworkRanges{
+			ClusterNetwork: clusterv1.ClusterNetwork{
+				Pods: clusterv1.NetworkRanges{
 					CIDRBlocks: []string{env.DefaultClusterCIDR},
 				},
 			},
-			InfrastructureRef: &corev1.ObjectReference{
-				APIVersion: vsphereCluster.GetObjectKind().GroupVersionKind().GroupVersion().String(),
-				Kind:       vsphereCluster.GetObjectKind().GroupVersionKind().Kind,
-				Name:       vsphereCluster.GetName(),
+			InfrastructureRef: clusterv1.ContractVersionedObjectReference{
+				APIGroup: vsphereCluster.GetObjectKind().GroupVersionKind().Group,
+				Kind:     vsphereCluster.GetObjectKind().GroupVersionKind().Kind,
+				Name:     vsphereCluster.GetName(),
 			},
 		},
 	}
 	if controlPlane != nil {
-		cluster.Spec.ControlPlaneRef = &corev1.ObjectReference{
-			APIVersion: controlPlane.GroupVersionKind().GroupVersion().String(),
-			Kind:       controlPlane.Kind,
-			Name:       controlPlane.Name,
+		cluster.Spec.ControlPlaneRef = clusterv1.ContractVersionedObjectReference{
+			APIGroup: controlPlane.GroupVersionKind().Group,
+			Kind:     controlPlane.Kind,
+			Name:     controlPlane.Name,
 		}
 	}
 	return cluster
@@ -442,16 +445,19 @@ func nodeIPAMVirtualMachineCloneSpec() infrav1.VirtualMachineCloneSpec {
 
 func defaultKubeadmInitSpec(files []bootstrapv1.File) bootstrapv1.KubeadmConfigSpec {
 	return bootstrapv1.KubeadmConfigSpec{
-		InitConfiguration: &bootstrapv1.InitConfiguration{
+		InitConfiguration: bootstrapv1.InitConfiguration{
 			NodeRegistration: defaultNodeRegistrationOptions(),
 		},
-		JoinConfiguration: &bootstrapv1.JoinConfiguration{
+		JoinConfiguration: bootstrapv1.JoinConfiguration{
 			NodeRegistration: defaultNodeRegistrationOptions(),
 		},
-		ClusterConfiguration: &bootstrapv1.ClusterConfiguration{
-			ControllerManager: bootstrapv1.ControlPlaneComponent{
-				ExtraArgs: map[string]string{
-					"cloud-provider": "external",
+		ClusterConfiguration: bootstrapv1.ClusterConfiguration{
+			ControllerManager: bootstrapv1.ControllerManager{
+				ExtraArgs: []bootstrapv1.Arg{
+					{
+						Name:  "cloud-provider",
+						Value: ptr.To("external"),
+					},
 				},
 			},
 		},
@@ -467,29 +473,30 @@ func ignitionKubeadmInitSpec(files []bootstrapv1.File) bootstrapv1.KubeadmConfig
 
 	return bootstrapv1.KubeadmConfigSpec{
 		Format: bootstrapv1.Ignition,
-		Ignition: &bootstrapv1.IgnitionSpec{
-			ContainerLinuxConfig: &bootstrapv1.ContainerLinuxConfig{
+		Ignition: bootstrapv1.IgnitionSpec{
+			ContainerLinuxConfig: bootstrapv1.ContainerLinuxConfig{
 				AdditionalConfig: AdditionalIgnitionConfig,
 			},
 		},
-		InitConfiguration: &bootstrapv1.InitConfiguration{
+		InitConfiguration: bootstrapv1.InitConfiguration{
 			NodeRegistration: nro,
 		},
-		JoinConfiguration: &bootstrapv1.JoinConfiguration{
+		JoinConfiguration: bootstrapv1.JoinConfiguration{
 			NodeRegistration: nro,
 		},
-		ClusterConfiguration: &bootstrapv1.ClusterConfiguration{
-			ControllerManager: bootstrapv1.ControlPlaneComponent{
-				ExtraArgs: map[string]string{
-					"cloud-provider": "external",
+		ClusterConfiguration: bootstrapv1.ClusterConfiguration{
+			ControllerManager: bootstrapv1.ControllerManager{
+				ExtraArgs: []bootstrapv1.Arg{
+					{
+						Name:  "cloud-provider",
+						Value: ptr.To("external"),
+					},
 				},
 			},
 		},
 		Users:              flatcarUsers(),
 		PreKubeadmCommands: flatcarPreKubeadmCommands(),
-		// UseExperimentalRetryJoin isn't supported with Ignition bootstrap.
-		UseExperimentalRetryJoin: false,
-		Files:                    files,
+		Files:              files,
 	}
 }
 
@@ -506,7 +513,7 @@ func newKubeadmConfigTemplate(templateName string, addUsers bool) bootstrapv1.Ku
 		Spec: bootstrapv1.KubeadmConfigTemplateSpec{
 			Template: bootstrapv1.KubeadmConfigTemplateResource{
 				Spec: bootstrapv1.KubeadmConfigSpec{
-					JoinConfiguration: &bootstrapv1.JoinConfiguration{
+					JoinConfiguration: bootstrapv1.JoinConfiguration{
 						NodeRegistration: defaultNodeRegistrationOptions(),
 					},
 					PreKubeadmCommands: defaultPreKubeadmCommands(),
@@ -537,12 +544,12 @@ func newIgnitionKubeadmConfigTemplate() bootstrapv1.KubeadmConfigTemplate {
 			Template: bootstrapv1.KubeadmConfigTemplateResource{
 				Spec: bootstrapv1.KubeadmConfigSpec{
 					Format: bootstrapv1.Ignition,
-					Ignition: &bootstrapv1.IgnitionSpec{
-						ContainerLinuxConfig: &bootstrapv1.ContainerLinuxConfig{
+					Ignition: bootstrapv1.IgnitionSpec{
+						ContainerLinuxConfig: bootstrapv1.ContainerLinuxConfig{
 							AdditionalConfig: AdditionalIgnitionConfig,
 						},
 					},
-					JoinConfiguration: &bootstrapv1.JoinConfiguration{
+					JoinConfiguration: bootstrapv1.JoinConfiguration{
 						NodeRegistration: nro,
 					},
 					Users:              flatcarUsers(),
@@ -557,8 +564,11 @@ func defaultNodeRegistrationOptions() bootstrapv1.NodeRegistrationOptions {
 	return bootstrapv1.NodeRegistrationOptions{
 		Name:      "{{ local_hostname }}",
 		CRISocket: "/var/run/containerd/containerd.sock",
-		KubeletExtraArgs: map[string]string{
-			"cloud-provider": "external",
+		KubeletExtraArgs: []bootstrapv1.Arg{
+			{
+				Name:  "cloud-provider",
+				Value: ptr.To("external"),
+			},
 		},
 	}
 }
@@ -567,7 +577,7 @@ func defaultUsers() []bootstrapv1.User {
 	return []bootstrapv1.User{
 		{
 			Name: "capv",
-			Sudo: ptr.To("ALL=(ALL) NOPASSWD:ALL"),
+			Sudo: "ALL=(ALL) NOPASSWD:ALL",
 			SSHAuthorizedKeys: []string{
 				env.VSphereSSHAuthorizedKeysVar,
 			},
@@ -579,7 +589,7 @@ func flatcarUsers() []bootstrapv1.User {
 	return []bootstrapv1.User{
 		{
 			Name: "core",
-			Sudo: ptr.To("ALL=(ALL) NOPASSWD:ALL"),
+			Sudo: "ALL=(ALL) NOPASSWD:ALL",
 			SSHAuthorizedKeys: []string{
 				env.VSphereSSHAuthorizedKeysVar,
 			},
@@ -668,19 +678,19 @@ func newMachineDeployment(cluster clusterv1.Cluster, machineTemplate client.Obje
 					Labels: clusterLabels(),
 				},
 				Spec: clusterv1.MachineSpec{
-					Version:     ptr.To(env.KubernetesVersionVar),
+					Version:     env.KubernetesVersionVar,
 					ClusterName: cluster.Name,
 					Bootstrap: clusterv1.Bootstrap{
-						ConfigRef: &corev1.ObjectReference{
-							APIVersion: bootstrapTemplate.GroupVersionKind().GroupVersion().String(),
-							Kind:       bootstrapTemplate.Kind,
-							Name:       bootstrapTemplate.Name,
+						ConfigRef: clusterv1.ContractVersionedObjectReference{
+							APIGroup: bootstrapTemplate.GroupVersionKind().Group,
+							Kind:     bootstrapTemplate.Kind,
+							Name:     bootstrapTemplate.Name,
 						},
 					},
-					InfrastructureRef: corev1.ObjectReference{
-						APIVersion: machineTemplate.GetObjectKind().GroupVersionKind().GroupVersion().String(),
-						Kind:       machineTemplate.GetObjectKind().GroupVersionKind().Kind,
-						Name:       machineTemplate.GetName(),
+					InfrastructureRef: clusterv1.ContractVersionedObjectReference{
+						APIGroup: machineTemplate.GetObjectKind().GroupVersionKind().Group,
+						Kind:     machineTemplate.GetObjectKind().GroupVersionKind().Kind,
+						Name:     machineTemplate.GetName(),
 					},
 				},
 			},
@@ -701,10 +711,12 @@ func newKubeadmControlplane(infraTemplate client.Object, files []bootstrapv1.Fil
 		Spec: controlplanev1.KubeadmControlPlaneSpec{
 			Version: env.KubernetesVersionVar,
 			MachineTemplate: controlplanev1.KubeadmControlPlaneMachineTemplate{
-				InfrastructureRef: corev1.ObjectReference{
-					APIVersion: infraTemplate.GetObjectKind().GroupVersionKind().GroupVersion().String(),
-					Kind:       infraTemplate.GetObjectKind().GroupVersionKind().Kind,
-					Name:       infraTemplate.GetName(),
+				Spec: controlplanev1.KubeadmControlPlaneMachineTemplateSpec{
+					InfrastructureRef: clusterv1.ContractVersionedObjectReference{
+						APIGroup: infraTemplate.GetObjectKind().GroupVersionKind().Group,
+						Kind:     infraTemplate.GetObjectKind().GroupVersionKind().Kind,
+						Name:     infraTemplate.GetName(),
+					},
 				},
 			},
 			KubeadmConfigSpec: defaultKubeadmInitSpec(files),
@@ -725,10 +737,12 @@ func newIgnitionKubeadmControlplane(infraTemplate infrav1.VSphereMachineTemplate
 		Spec: controlplanev1.KubeadmControlPlaneSpec{
 			Version: env.KubernetesVersionVar,
 			MachineTemplate: controlplanev1.KubeadmControlPlaneMachineTemplate{
-				InfrastructureRef: corev1.ObjectReference{
-					APIVersion: infraTemplate.GroupVersionKind().GroupVersion().String(),
-					Kind:       infraTemplate.Kind,
-					Name:       infraTemplate.Name,
+				Spec: controlplanev1.KubeadmControlPlaneMachineTemplateSpec{
+					InfrastructureRef: clusterv1.ContractVersionedObjectReference{
+						APIGroup: infraTemplate.GroupVersionKind().Group,
+						Kind:     infraTemplate.Kind,
+						Name:     infraTemplate.Name,
+					},
 				},
 			},
 			KubeadmConfigSpec: ignitionKubeadmInitSpec(files),

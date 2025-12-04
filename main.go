@@ -40,7 +40,7 @@ import (
 	_ "k8s.io/component-base/logs/json/register"
 	"k8s.io/klog/v2"
 	"k8s.io/utils/ptr"
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/cluster-api/controllers/clustercache"
 	"sigs.k8s.io/cluster-api/controllers/crdmigrator"
 	"sigs.k8s.io/cluster-api/controllers/remote"
@@ -59,12 +59,12 @@ import (
 	"sigs.k8s.io/cluster-api-provider-vsphere/controllers"
 	"sigs.k8s.io/cluster-api-provider-vsphere/controllers/vmware"
 	"sigs.k8s.io/cluster-api-provider-vsphere/feature"
-	"sigs.k8s.io/cluster-api-provider-vsphere/internal/webhooks"
-	vmwarewebhooks "sigs.k8s.io/cluster-api-provider-vsphere/internal/webhooks/vmware"
 	capvcontext "sigs.k8s.io/cluster-api-provider-vsphere/pkg/context"
 	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/manager"
 	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/session"
 	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/version"
+	"sigs.k8s.io/cluster-api-provider-vsphere/webhooks"
+	vmwarewebhooks "sigs.k8s.io/cluster-api-provider-vsphere/webhooks/vmware"
 )
 
 var (
@@ -240,25 +240,26 @@ func InitFlags(fs *pflag.FlagSet) {
 // +kubebuilder:rbac:groups=infrastructure.cluster.x-k8s.io,resources=vspheremachinetemplates;vsphereclustertemplates,verbs=get;list;watch;patch;update
 
 func main() {
-	setupLog.Info(fmt.Sprintf("Version: %+v", version.Get().String()))
-
 	InitFlags(pflag.CommandLine)
 	pflag.CommandLine.SetNormalizeFunc(cliflag.WordSepNormalizeFunc)
 	pflag.CommandLine.AddGoFlagSet(flag.CommandLine)
 	// Set log level 2 as default.
 	if err := pflag.CommandLine.Set("v", "2"); err != nil {
-		setupLog.Error(err, "failed to set default log level")
+		fmt.Printf("Failed to set default log level: %v\n", err)
 		os.Exit(1)
 	}
 	pflag.Parse()
 
 	if err := logsv1.ValidateAndApply(logOptions, nil); err != nil {
-		setupLog.Error(err, "unable to start manager")
+		fmt.Printf("Unable to start manager: %v\n", err)
 		os.Exit(1)
 	}
 
 	// klog.Background will automatically use the right logger.
 	ctrl.SetLogger(klog.Background())
+
+	// Note: setupLog can only be used after ctrl.SetLogger was called
+	setupLog.Info(fmt.Sprintf("Version: %s (git commit: %s)", version.Get().String(), version.Get().GitCommit))
 
 	managerOpts.KubeConfig = ctrl.GetConfigOrDie()
 	managerOpts.KubeConfig.QPS = restConfigQPS
@@ -415,27 +416,27 @@ func main() {
 }
 
 func setupVAPIControllers(ctx context.Context, controllerCtx *capvcontext.ControllerManagerContext, mgr ctrlmgr.Manager, clusterCache clustercache.ClusterCache) error {
-	if err := (&webhooks.VSphereClusterTemplateWebhook{}).SetupWebhookWithManager(mgr); err != nil {
+	if err := (&webhooks.VSphereClusterTemplate{}).SetupWebhookWithManager(mgr); err != nil {
 		return err
 	}
 
-	if err := (&webhooks.VSphereMachineWebhook{}).SetupWebhookWithManager(mgr); err != nil {
+	if err := (&webhooks.VSphereMachine{}).SetupWebhookWithManager(mgr); err != nil {
 		return err
 	}
 
-	if err := (&webhooks.VSphereMachineTemplateWebhook{}).SetupWebhookWithManager(mgr); err != nil {
+	if err := (&webhooks.VSphereMachineTemplate{}).SetupWebhookWithManager(mgr); err != nil {
 		return err
 	}
 
-	if err := (&webhooks.VSphereVMWebhook{}).SetupWebhookWithManager(mgr); err != nil {
+	if err := (&webhooks.VSphereVM{}).SetupWebhookWithManager(mgr); err != nil {
 		return err
 	}
 
-	if err := (&webhooks.VSphereDeploymentZoneWebhook{}).SetupWebhookWithManager(mgr); err != nil {
+	if err := (&webhooks.VSphereDeploymentZone{}).SetupWebhookWithManager(mgr); err != nil {
 		return err
 	}
 
-	if err := (&webhooks.VSphereFailureDomainWebhook{}).SetupWebhookWithManager(mgr); err != nil {
+	if err := (&webhooks.VSphereFailureDomain{}).SetupWebhookWithManager(mgr); err != nil {
 		return err
 	}
 
@@ -456,10 +457,13 @@ func setupVAPIControllers(ctx context.Context, controllerCtx *capvcontext.Contro
 }
 
 func setupSupervisorControllers(ctx context.Context, controllerCtx *capvcontext.ControllerManagerContext, mgr ctrlmgr.Manager, clusterCache clustercache.ClusterCache) error {
-	if err := (&vmwarewebhooks.VSphereMachineTemplateWebhook{}).SetupWebhookWithManager(mgr); err != nil {
+	if err := (&vmwarewebhooks.VSphereMachineTemplate{}).SetupWebhookWithManager(mgr, controllerCtx.NetworkProvider); err != nil {
 		return err
 	}
-	if err := (&vmwarewebhooks.VSphereMachineWebhook{}).SetupWebhookWithManager(mgr); err != nil {
+	if err := (&vmwarewebhooks.VSphereMachine{}).SetupWebhookWithManager(mgr, controllerCtx.NetworkProvider); err != nil {
+		return err
+	}
+	if err := (&vmwarewebhooks.VSphereCluster{}).SetupWebhookWithManager(mgr, controllerCtx.NetworkProvider); err != nil {
 		return err
 	}
 	if err := controllers.AddClusterControllerToManager(ctx, controllerCtx, mgr, true, concurrency(vSphereClusterConcurrency)); err != nil {

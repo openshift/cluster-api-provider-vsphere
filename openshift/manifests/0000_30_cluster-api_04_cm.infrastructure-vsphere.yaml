@@ -475,7 +475,7 @@ data:
             - --diagnostics-address=${CAPI_DIAGNOSTICS_ADDRESS:=:8443}
             - --insecure-diagnostics=${CAPI_INSECURE_DIAGNOSTICS:=false}
             - --v=4
-            - --feature-gates=NodeAntiAffinity=${EXP_NODE_ANTI_AFFINITY:=false},NamespaceScopedZones=${EXP_NAMESPACE_SCOPED_ZONES:=false},PriorityQueue=${EXP_PRIORITY_QUEUE:=false}
+            - --feature-gates=MultiNetworks=${EXP_MULTI_NETWORKS:=false},NodeAntiAffinity=${EXP_NODE_ANTI_AFFINITY:=false},NamespaceScopedZones=${EXP_NAMESPACE_SCOPED_ZONES:=false},PriorityQueue=${EXP_PRIORITY_QUEUE:=false}
             env:
             - name: POD_NAMESPACE
               valueFrom:
@@ -554,7 +554,7 @@ data:
     kind: CustomResourceDefinition
     metadata:
       annotations:
-        controller-gen.kubebuilder.io/version: v0.17.0
+        controller-gen.kubebuilder.io/version: v0.18.0
         exclude.release.openshift.io/internal-openshift-hosted: "true"
         include.release.openshift.io/self-managed-high-availability: "true"
         include.release.openshift.io/single-node-developer: "true"
@@ -567,6 +567,17 @@ data:
         clusterctl.cluster.x-k8s.io: ""
       name: vspheremachines.infrastructure.cluster.x-k8s.io
     spec:
+      conversion:
+        strategy: Webhook
+        webhook:
+          clientConfig:
+            service:
+              name: capv-webhook-service
+              namespace: openshift-cluster-api
+              path: /convert
+          conversionReviewVersions:
+          - v1
+          - v1beta1
       group: infrastructure.cluster.x-k8s.io
       names:
         categories:
@@ -1940,7 +1951,7 @@ data:
                     type: integer
                   numCoresPerSocket:
                     description: |-
-                      NumCPUs is the number of cores among which to distribute CPUs in this
+                      NumCoresPerSocket is the number of cores among which to distribute CPUs in this
                       virtual machine.
                       Defaults to the eponymous property value in the template from which the
                       virtual machine is cloned.
@@ -2297,7 +2308,7 @@ data:
     kind: CustomResourceDefinition
     metadata:
       annotations:
-        controller-gen.kubebuilder.io/version: v0.17.0
+        controller-gen.kubebuilder.io/version: v0.18.0
         exclude.release.openshift.io/internal-openshift-hosted: "true"
         include.release.openshift.io/self-managed-high-availability: "true"
         include.release.openshift.io/single-node-developer: "true"
@@ -2310,6 +2321,17 @@ data:
         clusterctl.cluster.x-k8s.io: ""
       name: vsphereclusters.infrastructure.cluster.x-k8s.io
     spec:
+      conversion:
+        strategy: Webhook
+        webhook:
+          clientConfig:
+            service:
+              name: capv-webhook-service
+              namespace: openshift-cluster-api
+              path: /convert
+          conversionReviewVersions:
+          - v1
+          - v1beta1
       group: infrastructure.cluster.x-k8s.io
       names:
         categories:
@@ -2330,7 +2352,7 @@ data:
           name: Server
           type: string
         - description: API Endpoint
-          jsonPath: .spec.controlPlaneEndpoint[0]
+          jsonPath: .spec.controlPlaneEndpoint.host
           name: ControlPlaneEndpoint
           priority: 1
           type: string
@@ -2755,7 +2777,7 @@ data:
           name: Server
           type: string
         - description: API Endpoint
-          jsonPath: .spec.controlPlaneEndpoint[0]
+          jsonPath: .spec.controlPlaneEndpoint.host
           name: ControlPlaneEndpoint
           priority: 1
           type: string
@@ -2920,7 +2942,7 @@ data:
           name: Server
           type: string
         - description: API Endpoint
-          jsonPath: .spec.controlPlaneEndpoint[0]
+          jsonPath: .spec.controlPlaneEndpoint.host
           name: ControlPlaneEndpoint
           priority: 1
           type: string
@@ -3250,7 +3272,7 @@ data:
     kind: CustomResourceDefinition
     metadata:
       annotations:
-        controller-gen.kubebuilder.io/version: v0.17.0
+        controller-gen.kubebuilder.io/version: v0.18.0
         exclude.release.openshift.io/internal-openshift-hosted: "true"
         include.release.openshift.io/self-managed-high-availability: "true"
         include.release.openshift.io/single-node-developer: "true"
@@ -3263,6 +3285,17 @@ data:
         clusterctl.cluster.x-k8s.io: ""
       name: vspheremachinetemplates.infrastructure.cluster.x-k8s.io
     spec:
+      conversion:
+        strategy: Webhook
+        webhook:
+          clientConfig:
+            service:
+              name: capv-webhook-service
+              namespace: openshift-cluster-api
+              path: /convert
+          conversionReviewVersions:
+          - v1
+          - v1beta1
       group: infrastructure.cluster.x-k8s.io
       names:
         categories:
@@ -4511,7 +4544,7 @@ data:
                             type: integer
                           numCoresPerSocket:
                             description: |-
-                              NumCPUs is the number of cores among which to distribute CPUs in this
+                              NumCoresPerSocket is the number of cores among which to distribute CPUs in this
                               virtual machine.
                               Defaults to the eponymous property value in the template from which the
                               virtual machine is cloned.
@@ -4652,7 +4685,7 @@ data:
     kind: CustomResourceDefinition
     metadata:
       annotations:
-        controller-gen.kubebuilder.io/version: v0.17.0
+        controller-gen.kubebuilder.io/version: v0.18.0
         exclude.release.openshift.io/internal-openshift-hosted: "true"
         include.release.openshift.io/self-managed-high-availability: "true"
         include.release.openshift.io/single-node-developer: "true"
@@ -4665,6 +4698,17 @@ data:
         clusterctl.cluster.x-k8s.io: ""
       name: vspherevms.infrastructure.cluster.x-k8s.io
     spec:
+      conversion:
+        strategy: Webhook
+        webhook:
+          clientConfig:
+            service:
+              name: capv-webhook-service
+              namespace: openshift-cluster-api
+              path: /convert
+          conversionReviewVersions:
+          - v1
+          - v1beta1
       group: infrastructure.cluster.x-k8s.io
       names:
         categories:
@@ -6101,7 +6145,7 @@ data:
                     type: integer
                   numCoresPerSocket:
                     description: |-
-                      NumCPUs is the number of cores among which to distribute CPUs in this
+                      NumCoresPerSocket is the number of cores among which to distribute CPUs in this
                       virtual machine.
                       Defaults to the eponymous property value in the template from which the
                       virtual machine is cloned.
@@ -6471,7 +6515,7 @@ data:
     kind: CustomResourceDefinition
     metadata:
       annotations:
-        controller-gen.kubebuilder.io/version: v0.17.0
+        controller-gen.kubebuilder.io/version: v0.18.0
         exclude.release.openshift.io/internal-openshift-hosted: "true"
         include.release.openshift.io/self-managed-high-availability: "true"
         include.release.openshift.io/single-node-developer: "true"
@@ -6484,6 +6528,17 @@ data:
         clusterctl.cluster.x-k8s.io: ""
       name: vspherefailuredomains.infrastructure.cluster.x-k8s.io
     spec:
+      conversion:
+        strategy: Webhook
+        webhook:
+          clientConfig:
+            service:
+              name: capv-webhook-service
+              namespace: openshift-cluster-api
+              path: /convert
+          conversionReviewVersions:
+          - v1
+          - v1beta1
       group: infrastructure.cluster.x-k8s.io
       names:
         categories:
@@ -7081,7 +7136,7 @@ data:
     kind: CustomResourceDefinition
     metadata:
       annotations:
-        controller-gen.kubebuilder.io/version: v0.17.0
+        controller-gen.kubebuilder.io/version: v0.18.0
         exclude.release.openshift.io/internal-openshift-hosted: "true"
         include.release.openshift.io/self-managed-high-availability: "true"
         include.release.openshift.io/single-node-developer: "true"
@@ -7094,6 +7149,17 @@ data:
         clusterctl.cluster.x-k8s.io: ""
       name: vspheredeploymentzones.infrastructure.cluster.x-k8s.io
     spec:
+      conversion:
+        strategy: Webhook
+        webhook:
+          clientConfig:
+            service:
+              name: capv-webhook-service
+              namespace: openshift-cluster-api
+              path: /convert
+          conversionReviewVersions:
+          - v1
+          - v1beta1
       group: infrastructure.cluster.x-k8s.io
       names:
         categories:
@@ -7538,7 +7604,7 @@ data:
     kind: CustomResourceDefinition
     metadata:
       annotations:
-        controller-gen.kubebuilder.io/version: v0.17.0
+        controller-gen.kubebuilder.io/version: v0.18.0
         exclude.release.openshift.io/internal-openshift-hosted: "true"
         include.release.openshift.io/self-managed-high-availability: "true"
         include.release.openshift.io/single-node-developer: "true"
@@ -8074,7 +8140,7 @@ data:
     kind: CustomResourceDefinition
     metadata:
       annotations:
-        controller-gen.kubebuilder.io/version: v0.17.0
+        controller-gen.kubebuilder.io/version: v0.18.0
         exclude.release.openshift.io/internal-openshift-hosted: "true"
         include.release.openshift.io/self-managed-high-availability: "true"
         include.release.openshift.io/single-node-developer: "true"
@@ -8087,6 +8153,17 @@ data:
         clusterctl.cluster.x-k8s.io: ""
       name: vsphereclustertemplates.infrastructure.cluster.x-k8s.io
     spec:
+      conversion:
+        strategy: Webhook
+        webhook:
+          clientConfig:
+            service:
+              name: capv-webhook-service
+              namespace: openshift-cluster-api
+              path: /convert
+          conversionReviewVersions:
+          - v1
+          - v1beta1
       group: infrastructure.cluster.x-k8s.io
       names:
         categories:
@@ -8496,6 +8573,27 @@ data:
         service:
           name: capv-webhook-service
           namespace: openshift-cluster-api
+          path: /validate-infrastructure-cluster-x-k8s-io-v1beta1-vsphereclustertemplate
+      failurePolicy: Fail
+      matchPolicy: Equivalent
+      name: validation.vsphereclustertemplate.infrastructure.cluster.x-k8s.io
+      rules:
+      - apiGroups:
+        - infrastructure.cluster.x-k8s.io
+        apiVersions:
+        - v1beta1
+        operations:
+        - CREATE
+        - UPDATE
+        resources:
+        - vsphereclustertemplates
+      sideEffects: None
+    - admissionReviewVersions:
+      - v1beta1
+      clientConfig:
+        service:
+          name: capv-webhook-service
+          namespace: openshift-cluster-api
           path: /validate-infrastructure-cluster-x-k8s-io-v1beta1-vspherefailuredomain
       failurePolicy: Fail
       matchPolicy: Equivalent
@@ -8665,6 +8763,9 @@ data:
       - major: 1
         minor: 13
         contract: v1beta1
+      - major: 1
+        minor: 14
+        contract: v1beta1
 kind: ConfigMap
 metadata:
   annotations:
@@ -8676,6 +8777,6 @@ metadata:
   labels:
     provider.cluster.x-k8s.io/name: vsphere
     provider.cluster.x-k8s.io/type: infrastructure
-    provider.cluster.x-k8s.io/version: v1.13.0
+    provider.cluster.x-k8s.io/version: v1.14.0
   name: vsphere
   namespace: openshift-cluster-api

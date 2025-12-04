@@ -26,8 +26,17 @@ providers:
   - name: cluster-api
     type: CoreProvider
     versions:
-      - name: "v1.10.99"
-        value: "https://storage.googleapis.com/k8s-staging-cluster-api/components/v1.10.1/core-components.yaml"
+      - name: "v1.11.99"
+        value: "https://storage.googleapis.com/k8s-staging-cluster-api/components/v1.11.1/core-components.yaml"
+        type: "url"
+        contract: v1beta2
+        files:
+          - sourcePath: "../data/shared/capi/v1.11/metadata.yaml"
+        replacements:
+          - old: "imagePullPolicy: Always"
+            new: "imagePullPolicy: IfNotPresent"
+      - name: "{go://sigs.k8s.io/cluster-api@v1.10}"
+        value: "https://github.com/kubernetes-sigs/cluster-api/releases/download/{go://sigs.k8s.io/cluster-api@v1.10}/core-components.yaml"
         type: "url"
         contract: v1beta1
         files:
@@ -53,30 +62,21 @@ providers:
         replacements:
           - old: "imagePullPolicy: Always"
             new: "imagePullPolicy: IfNotPresent"
-      - name: "{go://sigs.k8s.io/cluster-api@v1.7}" # supported release in the v1beta1 series
-        value: "https://github.com/kubernetes-sigs/cluster-api/releases/download/{go://sigs.k8s.io/cluster-api@v1.7}/core-components.yaml"
-        type: "url"
-        contract: v1beta1
-        files:
-          - sourcePath: "../data/shared/capi/v1.7/metadata.yaml"
-        replacements:
-          - old: "imagePullPolicy: Always"
-            new: "imagePullPolicy: IfNotPresent"
-      - name: "{go://sigs.k8s.io/cluster-api@v1.6}" # supported release in the v1beta1 series
-        value: "https://github.com/kubernetes-sigs/cluster-api/releases/download/{go://sigs.k8s.io/cluster-api@v1.6}/core-components.yaml"
-        type: "url"
-        contract: v1beta1
-        files:
-          - sourcePath: "../data/shared/capi/v1.6/metadata.yaml"
-        replacements:
-          - old: "imagePullPolicy: Always"
-            new: "imagePullPolicy: IfNotPresent"
 
   - name: kubeadm
     type: BootstrapProvider
     versions:
-      - name: "v1.10.99"
-        value: "https://storage.googleapis.com/k8s-staging-cluster-api/components/v1.10.1/bootstrap-components.yaml"
+      - name: "v1.11.99"
+        value: "https://storage.googleapis.com/k8s-staging-cluster-api/components/v1.11.1/bootstrap-components.yaml"
+        type: "url"
+        contract: v1beta2
+        files:
+          - sourcePath: "../data/shared/capi/v1.11/metadata.yaml"
+        replacements:
+          - old: "imagePullPolicy: Always"
+            new: "imagePullPolicy: IfNotPresent"
+      - name: "{go://sigs.k8s.io/cluster-api@v1.10}"
+        value: "https://github.com/kubernetes-sigs/cluster-api/releases/download/{go://sigs.k8s.io/cluster-api@v1.10}/bootstrap-components.yaml"
         type: "url"
         contract: v1beta1
         files:
@@ -102,30 +102,21 @@ providers:
         replacements:
           - old: "imagePullPolicy: Always"
             new: "imagePullPolicy: IfNotPresent"
-      - name: "{go://sigs.k8s.io/cluster-api@v1.7}" # supported release in the v1beta1 series
-        value: "https://github.com/kubernetes-sigs/cluster-api/releases/download/{go://sigs.k8s.io/cluster-api@v1.7}/bootstrap-components.yaml"
-        type: "url"
-        contract: v1beta1
-        files:
-          - sourcePath: "../data/shared/capi/v1.7/metadata.yaml"
-        replacements:
-          - old: "imagePullPolicy: Always"
-            new: "imagePullPolicy: IfNotPresent"
-      - name: "{go://sigs.k8s.io/cluster-api@v1.6}" # supported release in the v1beta1 series
-        value: "https://github.com/kubernetes-sigs/cluster-api/releases/download/{go://sigs.k8s.io/cluster-api@v1.6}/bootstrap-components.yaml"
-        type: "url"
-        contract: v1beta1
-        files:
-          - sourcePath: "../data/shared/capi/v1.6/metadata.yaml"
-        replacements:
-          - old: "imagePullPolicy: Always"
-            new: "imagePullPolicy: IfNotPresent"
 
   - name: kubeadm
     type: ControlPlaneProvider
     versions:
-      - name: "v1.10.99"
-        value: "https://storage.googleapis.com/k8s-staging-cluster-api/components/v1.10.1/control-plane-components.yaml"
+      - name: "v1.11.99"
+        value: "https://storage.googleapis.com/k8s-staging-cluster-api/components/v1.11.1/control-plane-components.yaml"
+        type: "url"
+        contract: v1beta2
+        files:
+          - sourcePath: "../data/shared/capi/v1.11/metadata.yaml"
+        replacements:
+          - old: "imagePullPolicy: Always"
+            new: "imagePullPolicy: IfNotPresent"
+      - name: "{go://sigs.k8s.io/cluster-api@v1.10}"
+        value: "https://github.com/kubernetes-sigs/cluster-api/releases/download/{go://sigs.k8s.io/cluster-api@v1.10}/control-plane-components.yaml"
         type: "url"
         contract: v1beta1
         files:
@@ -151,24 +142,6 @@ providers:
         replacements:
           - old: "imagePullPolicy: Always"
             new: "imagePullPolicy: IfNotPresent"
-      - name: "{go://sigs.k8s.io/cluster-api@v1.7}" # supported release in the v1beta1 series
-        value: "https://github.com/kubernetes-sigs/cluster-api/releases/download/{go://sigs.k8s.io/cluster-api@v1.7}/control-plane-components.yaml"
-        type: "url"
-        contract: v1beta1
-        files:
-          - sourcePath: "../data/shared/capi/v1.7/metadata.yaml"
-        replacements:
-          - old: "imagePullPolicy: Always"
-            new: "imagePullPolicy: IfNotPresent"
-      - name: "{go://sigs.k8s.io/cluster-api@v1.6}" # supported release in the v1beta1 series
-        value: "https://github.com/kubernetes-sigs/cluster-api/releases/download/{go://sigs.k8s.io/cluster-api@v1.6}/control-plane-components.yaml"
-        type: "url"
-        contract: v1beta1
-        files:
-          - sourcePath: "../data/shared/capi/v1.6/metadata.yaml"
-        replacements:
-          - old: "imagePullPolicy: Always"
-            new: "imagePullPolicy: IfNotPresent"
 
   - name: in-cluster
     type: IPAMProvider
@@ -186,7 +159,7 @@ providers:
   - name: vsphere
     type: InfrastructureProvider
     versions:
-      - name: v1.13.99 # next release
+      - name: v1.14.99 # next release
         # Use manifest from source files
         value: ../../../../cluster-api-provider-vsphere/config/default
         contract: v1beta1
@@ -219,6 +192,16 @@ providers:
           - sourcePath: "../../../test/e2e/data/infrastructure-vsphere-supervisor/main/cluster-template-conformance-supervisor.yaml"
           - sourcePath: "../../../test/e2e/data/infrastructure-vsphere-supervisor/main/cluster-template-ownerrefs-finalizers-supervisor.yaml"
           - sourcePath: "../data/shared/capv/main/metadata.yaml"
+      - name: "{go://sigs.k8s.io/cluster-api-provider-vsphere@v1.13}"
+        value: "https://github.com/kubernetes-sigs/cluster-api-provider-vsphere/releases/download/{go://sigs.k8s.io/cluster-api-provider-vsphere@v1.13}/infrastructure-components.yaml"
+        type: "url"
+        contract: v1beta1
+        files:
+          - sourcePath: "../../../test/e2e/data/infrastructure-vsphere-govmomi/v1.13/cluster-template-workload.yaml"
+          - sourcePath: "../../../test/e2e/data/infrastructure-vsphere-govmomi/v1.13/clusterclass-quick-start.yaml"
+          - sourcePath: "../../../test/e2e/data/infrastructure-vsphere-supervisor/v1.13/cluster-template-workload-supervisor.yaml"
+          - sourcePath: "../../../test/e2e/data/infrastructure-vsphere-supervisor/v1.13/clusterclass-quick-start-supervisor.yaml"
+          - sourcePath: "../data/shared/capv/v1.13/metadata.yaml"
       - name: "{go://sigs.k8s.io/cluster-api-provider-vsphere@v1.12}"
         value: "https://github.com/kubernetes-sigs/cluster-api-provider-vsphere/releases/download/{go://sigs.k8s.io/cluster-api-provider-vsphere@v1.12}/infrastructure-components.yaml"
         type: "url"
@@ -239,21 +222,11 @@ providers:
           - sourcePath: "../../../test/e2e/data/infrastructure-vsphere-supervisor/v1.11/cluster-template-workload-supervisor.yaml"
           - sourcePath: "../../../test/e2e/data/infrastructure-vsphere-supervisor/v1.11/clusterclass-quick-start-supervisor.yaml"
           - sourcePath: "../data/shared/capv/v1.11/metadata.yaml"
-      - name: "{go://sigs.k8s.io/cluster-api-provider-vsphere@v1.10}"
-        value: "https://github.com/kubernetes-sigs/cluster-api-provider-vsphere/releases/download/{go://sigs.k8s.io/cluster-api-provider-vsphere@v1.10}/infrastructure-components.yaml"
-        type: "url"
-        contract: v1beta1
-        files:
-          - sourcePath: "../../../test/e2e/data/infrastructure-vsphere-govmomi/v1.10/cluster-template-workload.yaml"
-          - sourcePath: "../../../test/e2e/data/infrastructure-vsphere-govmomi/v1.10/clusterclass-quick-start.yaml"
-          - sourcePath: "../../../test/e2e/data/infrastructure-vsphere-supervisor/v1.10/cluster-template-workload-supervisor.yaml"
-          - sourcePath: "../../../test/e2e/data/infrastructure-vsphere-supervisor/v1.10/clusterclass-quick-start-supervisor.yaml"
-          - sourcePath: "../data/shared/capv/v1.10/metadata.yaml"
 
   - name: vcsim
     type: RuntimeExtensionProvider # vcsim isn't a provider, but we fake it is so it can be handled by the clusterctl machinery.
     versions:
-      - name: v1.13.99
+      - name: v1.14.99
         # Use manifest from source files
         value: ../../../../cluster-api-provider-vsphere/test/infrastructure/vcsim/config/default
         contract: v1beta1
@@ -278,7 +251,7 @@ providers:
   - name: net-operator
     type: RuntimeExtensionProvider # net-operator isn't a provider, but we fake it is so it can be handled by the clusterctl machinery.
     versions:
-      - name: v1.13.99
+      - name: v1.14.99
         # Use manifest from source files
         value: ../../../../cluster-api-provider-vsphere/test/infrastructure/net-operator/config/default
         contract: v1beta1
@@ -291,7 +264,7 @@ providers:
   - name: capv-test-extension
     type: RuntimeExtensionProvider
     versions:
-      - name: v1.13.99
+      - name: v1.14.99
         # Use manifest from source files
         value: ../../../../cluster-api-provider-vsphere/test/extension/config/default
         contract: v1beta1
@@ -303,25 +276,25 @@ providers:
 
 variables:
   # Ensure all Kubernetes versions used here are covered in patch-vsphere-template.yaml
-  KUBERNETES_VERSION_MANAGEMENT: "v1.33.0"
-  KUBERNETES_VERSION_MANAGEMENT_LATEST_CI: "ci/latest-1.33"
-  KUBERNETES_VERSION: "v1.33.0"
-  KUBERNETES_VERSION_UPGRADE_FROM: "v1.32.0"
-  KUBERNETES_VERSION_UPGRADE_TO: "v1.33.0"
-  KUBERNETES_VERSION_LATEST_CI: "ci/latest-1.33"
-  CPI_IMAGE_K8S_VERSION: "v1.33.0"
+  KUBERNETES_VERSION_MANAGEMENT: "v1.34.0"
+  KUBERNETES_VERSION_MANAGEMENT_LATEST_CI: "ci/latest-1.34"
+  KUBERNETES_VERSION: "v1.34.0"
+  KUBERNETES_VERSION_UPGRADE_FROM: "v1.33.0"
+  KUBERNETES_VERSION_UPGRADE_TO: "v1.34.0"
+  KUBERNETES_VERSION_LATEST_CI: "ci/latest-1.34"
+  CPI_IMAGE_K8S_VERSION: "v1.34.0"
   CNI: "./data/cni/calico/calico.yaml"
   AUTOSCALER_WORKLOAD: "./data/autoscaler/autoscaler-to-management-workload.yaml"
   CONTROL_PLANE_MACHINE_COUNT: 1
   WORKER_MACHINE_COUNT: 1
   IP_FAMILY: "IPv4"
   CLUSTER_CLASS_NAME: "quick-start"
-  VSPHERE_COMPUTE_CLUSTER: "Cluster-1"
-  VSPHERE_DATACENTER:  "SDDC-Datacenter"
-  VSPHERE_FOLDER: "/SDDC-Datacenter/vm/Workloads/cluster-api-provider-vsphere"
-  VSPHERE_RESOURCE_POOL: "/SDDC-Datacenter/host/Cluster-1/Resources/Compute-ResourcePool/cluster-api-provider-vsphere"
-  VSPHERE_DATASTORE: "WorkloadDatastore"
-  VSPHERE_STORAGE_POLICY: "Cluster API vSphere Storage Policy"
+  VSPHERE_COMPUTE_CLUSTER: "k8s-gcve-cluster"
+  VSPHERE_DATACENTER:  "Datacenter"
+  VSPHERE_FOLDER: "/Datacenter/vm/Workloads/prow"
+  VSPHERE_RESOURCE_POOL: "/Datacenter/host/k8s-gcve-cluster/Resources/prow"
+  VSPHERE_DATASTORE: "vsanDatastore"
+  VSPHERE_STORAGE_POLICY: "vSAN Default Storage Policy"
   VSPHERE_STORAGE_CLASS: "test-storageclass"
   VSPHERE_MACHINE_CLASS_NAME: "test-machine-class"
   # CI runs vm-operator v1.8.6 on vCenter 8, setting CPU and Memory does not work and defaults to 2 CPUs / 2Gi memory.
@@ -334,14 +307,14 @@ variables:
   VSPHERE_MACHINE_CLASS_CPU_CONFORMANCE: "2"
   VSPHERE_MACHINE_CLASS_MEMORY_CONFORMANCE: "2Gi"
   VSPHERE_CONTENT_LIBRARY: "capv"
-  VSPHERE_CONTENT_LIBRARY_ITEMS: "ubuntu-2204-kube-v1.28.0,ubuntu-2204-kube-v1.29.0,ubuntu-2204-kube-v1.30.0,ubuntu-2404-kube-v1.31.0,ubuntu-2404-kube-v1.32.0,ubuntu-2404-kube-v1.33.0"
-  VSPHERE_IMAGE_NAME: "ubuntu-2404-kube-v1.33.0"
-  VSPHERE_NETWORK: "sddc-cgw-network-10"
-  VSPHERE_DISTRIBUTED_PORT_GROUP: "/SDDC-Datacenter/network/sddc-cgw-network-10"
-  VSPHERE_TEMPLATE: "ubuntu-2404-kube-v1.33.0"
-  FLATCAR_VSPHERE_TEMPLATE: "flatcar-stable-4152.2.2-kube-v1.33.0"
+  VSPHERE_CONTENT_LIBRARY_ITEMS: "ubuntu-2204-kube-v1.28.0,ubuntu-2204-kube-v1.29.0,ubuntu-2204-kube-v1.30.0,ubuntu-2404-kube-v1.31.0,ubuntu-2404-kube-v1.32.0,ubuntu-2404-kube-v1.33.0,ubuntu-2404-kube-v1.34.0"
+  VSPHERE_IMAGE_NAME: "ubuntu-2404-kube-v1.34.0"
+  VSPHERE_NETWORK: "k8s-ci"
+  VSPHERE_DISTRIBUTED_PORT_GROUP: "/Datacenter/network/k8s-ci"
+  VSPHERE_TEMPLATE: "ubuntu-2404-kube-v1.34.0"
+  FLATCAR_VSPHERE_TEMPLATE: "flatcar-stable-4230.2.2-kube-v1.34.0"
   KUBETEST_CONFIGURATION: "./data/kubetest/conformance.yaml"
-  NODE_DRAIN_TIMEOUT: "60s"
+  NODE_DRAIN_TIMEOUT_SECONDS: "60"
   EXP_CLUSTER_RESOURCE_SET: "true"
   EXP_KUBEADM_BOOTSTRAP_FORMAT_IGNITION: "true"
   CLUSTER_TOPOLOGY: "true"
@@ -352,6 +325,7 @@ variables:
   DEVICE_ID: 7864
   VENDOR_ID: 4318
   # CAPV feature flags
+  EXP_MULTI_NETWORKS: "false"
   EXP_NODE_ANTI_AFFINITY: "true"
   EXP_NAMESPACE_SCOPED_ZONE: "false"
   CAPI_DIAGNOSTICS_ADDRESS: ":8080"

@@ -28,11 +28,14 @@ import (
 	vmoprv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha2"
 	ncpv1 "github.com/vmware-tanzu/vm-operator/external/ncp/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	apitypes "k8s.io/apimachinery/pkg/types"
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
-	"sigs.k8s.io/cluster-api/util/conditions"
+	"k8s.io/utils/ptr"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
+	v1beta1conditions "sigs.k8s.io/cluster-api/util/deprecated/v1beta1/conditions"
+	v1beta2conditions "sigs.k8s.io/cluster-api/util/deprecated/v1beta1/conditions/v1beta2"
 	runtimeclient "sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
@@ -59,7 +62,7 @@ func (m *MockNSXTNetworkProvider) ProvisionClusterNetwork(ctx context.Context, c
 	if err != nil {
 		// Check if the error contains the string "virtual network ready status"
 		if strings.Contains(err.Error(), "virtual network ready status") {
-			conditions.MarkTrue(clusterCtx.VSphereCluster, vmwarev1.ClusterNetworkReadyCondition)
+			v1beta1conditions.MarkTrue(clusterCtx.VSphereCluster, vmwarev1.ClusterNetworkReadyCondition)
 			return nil
 		}
 		// return the original error if it doesn't contain the specific string
@@ -79,7 +82,7 @@ func (m *MockNSXTVpcNetworkProvider) ProvisionClusterNetwork(ctx context.Context
 	if err != nil {
 		// Check if the error contains the string "subnetset ready status"
 		if strings.Contains(err.Error(), "subnetset ready status") {
-			conditions.MarkTrue(clusterCtx.VSphereCluster, vmwarev1.ClusterNetworkReadyCondition)
+			v1beta1conditions.MarkTrue(clusterCtx.VSphereCluster, vmwarev1.ClusterNetworkReadyCondition)
 			return nil
 		}
 		// return the original error if it doesn't contain the specific string
@@ -115,6 +118,7 @@ var _ = Describe("Network provider", func() {
 		cluster          *clusterv1.Cluster
 		vSphereCluster   *vmwarev1.VSphereCluster
 		vm               *vmoprv1.VirtualMachine
+		machine          *vmwarev1.VSphereMachine
 		hasLB            bool
 	)
 	BeforeEach(func() {
@@ -128,10 +132,10 @@ var _ = Describe("Network provider", func() {
 				Namespace: dummyNs,
 			},
 			Spec: clusterv1.ClusterSpec{
-				InfrastructureRef: &corev1.ObjectReference{
-					APIVersion: vmwarev1.GroupVersion.String(),
-					Kind:       infraClusterKind,
-					Name:       dummyCluster,
+				InfrastructureRef: clusterv1.ContractVersionedObjectReference{
+					APIGroup: vmwarev1.GroupVersion.Group,
+					Kind:     infraClusterKind,
+					Name:     dummyCluster,
 				},
 			},
 		}
@@ -152,11 +156,17 @@ var _ = Describe("Network provider", func() {
 				Name:      dummyVM,
 			},
 		}
+		machine = &vmwarev1.VSphereMachine{
+			ObjectMeta: metav1.ObjectMeta{
+				Namespace: dummyNs,
+				Name:      dummyVM,
+			},
+		}
 	})
 
 	Context("ConfigureVirtualMachine", func() {
 		JustBeforeEach(func() {
-			err = np.ConfigureVirtualMachine(ctx, clusterCtx, vm)
+			err = np.ConfigureVirtualMachine(ctx, clusterCtx, machine, vm)
 		})
 
 		Context("with dummy network provider", func() {
@@ -186,7 +196,7 @@ var _ = Describe("Network provider", func() {
 					}
 				})
 
-				Context("ConfigureVirtualMachine", func() {
+				Context("ConfigureVirtualMachine without network.interfaces set in vSphereMachine spec", func() {
 					BeforeEach(func() {
 						scheme := runtime.NewScheme()
 						Expect(netopv1.AddToScheme(scheme)).To(Succeed())
@@ -198,15 +208,114 @@ var _ = Describe("Network provider", func() {
 						Expect(err).ToNot(HaveOccurred())
 						Expect(vm.Spec.Network).ToNot(BeNil())
 						Expect(vm.Spec.Network.Interfaces).To(HaveLen(1))
+						Expect(vm.Spec.Network.Interfaces[0].Name).To(Equal("eth0"))
+						Expect(vm.Spec.Network.Interfaces[0].MTU).To(BeNil())
+						Expect(vm.Spec.Network.Interfaces[0].Routes).To(BeEmpty())
 						Expect(vm.Spec.Network.Interfaces[0].Network.TypeMeta.Kind).To(Equal("Network"))
 						Expect(vm.Spec.Network.Interfaces[0].Network.TypeMeta.APIVersion).To(Equal(netopv1.SchemeGroupVersion.String()))
+						Expect(vm.Spec.Network.Interfaces[0].Gateway4).To(BeEmpty())
+						Expect(vm.Spec.Network.Interfaces[0].Gateway6).To(BeEmpty())
 					})
 
 					It("should add vds type network interface", func() {
 					})
 
 					It("vds network interface already exists", func() {
-						err = np.ConfigureVirtualMachine(ctx, clusterCtx, vm)
+						err = np.ConfigureVirtualMachine(ctx, clusterCtx, machine, vm)
+					})
+				})
+
+				Context("ConfigureVirtualMachine with network.interfaces set in vSphereMachine spec", func() {
+
+					BeforeEach(func() {
+						// Set up VSphereMachine with network interfaces
+						machine.Spec.Network = vmwarev1.VSphereMachineNetworkSpec{
+							Interfaces: vmwarev1.InterfacesSpec{
+								Secondary: []vmwarev1.SecondaryInterfaceSpec{
+									{
+										Name: "eth1",
+										InterfaceSpec: vmwarev1.InterfaceSpec{
+											Network: vmwarev1.InterfaceNetworkReference{
+												Kind:       "Network",
+												APIVersion: netopv1.SchemeGroupVersion.String(),
+												Name:       "one-secondary-network",
+											},
+											MTU: int32(1500),
+											Routes: []vmwarev1.RouteSpec{
+												{
+													To:  "10.0.0.0/24",
+													Via: "10.0.0.1",
+												},
+											},
+										},
+									},
+									{
+										Name: "eth2",
+										InterfaceSpec: vmwarev1.InterfaceSpec{
+											Network: vmwarev1.InterfaceNetworkReference{
+												Kind:       "Network",
+												APIVersion: netopv1.SchemeGroupVersion.String(),
+												Name:       "another-secondary-network",
+											},
+										},
+									},
+								},
+							},
+						}
+
+						scheme := runtime.NewScheme()
+						Expect(netopv1.AddToScheme(scheme)).To(Succeed())
+						client := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(defaultNetwork).Build()
+						np = NetOpNetworkProvider(client)
+					})
+
+					AfterEach(func() {
+						Expect(err).ToNot(HaveOccurred())
+						Expect(vm.Spec.Network).ToNot(BeNil())
+						// Should have 3 interfaces: 1 primary (eth0) + 2 secondary
+						Expect(vm.Spec.Network.Interfaces).To(HaveLen(3))
+
+						// Verify primary interface
+						Expect(vm.Spec.Network.Interfaces[0].Name).To(Equal("eth0"))
+						Expect(vm.Spec.Network.Interfaces[0].MTU).To(BeNil())
+						Expect(vm.Spec.Network.Interfaces[0].Routes).To(BeEmpty())
+						Expect(vm.Spec.Network.Interfaces[0].Network.TypeMeta.Kind).To(Equal("Network"))
+						Expect(vm.Spec.Network.Interfaces[0].Network.TypeMeta.APIVersion).To(Equal(netopv1.SchemeGroupVersion.String()))
+						Expect(vm.Spec.Network.Interfaces[0].Network.Name).To(Equal(defaultNetwork.Name))
+						Expect(vm.Spec.Network.Interfaces[0].Gateway4).To(BeEmpty())
+						Expect(vm.Spec.Network.Interfaces[0].Gateway6).To(BeEmpty())
+
+						// Verify first secondary interface
+						Expect(vm.Spec.Network.Interfaces[1].Name).To(Equal("eth1"))
+						Expect(*vm.Spec.Network.Interfaces[1].MTU).To(Equal(int64(1500)))
+						Expect(vm.Spec.Network.Interfaces[1].Routes).To(HaveLen(1))
+						Expect(vm.Spec.Network.Interfaces[1].Routes[0].To).To(Equal("10.0.0.0/24"))
+						Expect(vm.Spec.Network.Interfaces[1].Routes[0].Via).To(Equal("10.0.0.1"))
+						Expect(vm.Spec.Network.Interfaces[1].Network.TypeMeta.Kind).To(Equal("Network"))
+						Expect(vm.Spec.Network.Interfaces[1].Network.TypeMeta.APIVersion).To(Equal(netopv1.SchemeGroupVersion.String()))
+						Expect(vm.Spec.Network.Interfaces[1].Network.Name).To(Equal("one-secondary-network"))
+						Expect(vm.Spec.Network.Interfaces[1].Gateway4).To(Equal("None"))
+						Expect(vm.Spec.Network.Interfaces[1].Gateway6).To(Equal("None"))
+
+						// Verify second secondary interface
+						Expect(vm.Spec.Network.Interfaces[2].Name).To(Equal("eth2"))
+						Expect(vm.Spec.Network.Interfaces[2].MTU).To(BeNil())
+						Expect(vm.Spec.Network.Interfaces[2].Routes).To(BeEmpty())
+						Expect(vm.Spec.Network.Interfaces[2].Network.TypeMeta.Kind).To(Equal("Network"))
+						Expect(vm.Spec.Network.Interfaces[2].Network.TypeMeta.APIVersion).To(Equal(netopv1.SchemeGroupVersion.String()))
+						Expect(vm.Spec.Network.Interfaces[2].Network.Name).To(Equal("another-secondary-network"))
+						Expect(vm.Spec.Network.Interfaces[2].Gateway4).To(Equal("None"))
+						Expect(vm.Spec.Network.Interfaces[2].Gateway6).To(Equal("None"))
+					})
+
+					It("should add primary and secondary network interfaces", func() {
+					})
+
+					It("after multiple reconciles we don't end up with duplicate interfaces", func() {
+						// Test that calling ConfigureVirtualMachine again doesn't duplicate interfaces
+						err = np.ConfigureVirtualMachine(ctx, clusterCtx, machine, vm)
+						Expect(err).ToNot(HaveOccurred())
+						Expect(vm.Spec.Network.Interfaces).To(HaveLen(3))
 					})
 				})
 			}
@@ -230,16 +339,23 @@ var _ = Describe("Network provider", func() {
 
 			It("should add nsx-t type network interface", func() {
 			})
+
 			It("nsx-t network interface already exists", func() {
-				err = np.ConfigureVirtualMachine(ctx, clusterCtx, vm)
+				err = np.ConfigureVirtualMachine(ctx, clusterCtx, machine, vm)
 			})
+
 			AfterEach(func() {
 				Expect(err).ToNot(HaveOccurred())
 				Expect(vm.Spec.Network).ToNot(BeNil())
 				Expect(vm.Spec.Network.Interfaces).To(HaveLen(1))
+				Expect(vm.Spec.Network.Interfaces[0].Name).To(Equal("eth0"))
+				Expect(vm.Spec.Network.Interfaces[0].MTU).To(BeNil())
+				Expect(vm.Spec.Network.Interfaces[0].Routes).To(BeEmpty())
 				Expect(vm.Spec.Network.Interfaces[0].Network.Name).To(Equal(GetNSXTVirtualNetworkName(vSphereCluster.Name)))
 				Expect(vm.Spec.Network.Interfaces[0].Network.TypeMeta.Kind).To(Equal("VirtualNetwork"))
 				Expect(vm.Spec.Network.Interfaces[0].Network.TypeMeta.APIVersion).To(Equal(ncpv1.SchemeGroupVersion.String()))
+				Expect(vm.Spec.Network.Interfaces[0].Gateway4).To(BeEmpty())
+				Expect(vm.Spec.Network.Interfaces[0].Gateway6).To(BeEmpty())
 			})
 		})
 
@@ -251,26 +367,206 @@ var _ = Describe("Network provider", func() {
 				np = NSXTVpcNetworkProvider(client)
 			})
 
-			It("should add nsx-t-subnetset type network interface", func() {
-				err = np.ConfigureVirtualMachine(ctx, clusterCtx, vm)
-				Expect(err).ToNot(HaveOccurred())
-				Expect(vm.Spec.Network.Interfaces).To(HaveLen(1))
+			Context("ConfigureVirtualMachine without network.interfaces set in vSphereMachine spec", func() {
+				It("should add nsx-t-subnetset type network interface", func() {
+				})
+
+				It("nsx-t-subnetset type network interface already exists", func() {
+					err = np.ConfigureVirtualMachine(ctx, clusterCtx, machine, vm)
+				})
+
+				AfterEach(func() {
+					Expect(err).ToNot(HaveOccurred())
+					Expect(vm.Spec.Network).ToNot(BeNil())
+					Expect(vm.Spec.Network.Interfaces).To(HaveLen(1))
+					Expect(vm.Spec.Network.Interfaces[0].Name).To(Equal("eth0"))
+					Expect(vm.Spec.Network.Interfaces[0].MTU).To(BeNil())
+					Expect(vm.Spec.Network.Interfaces[0].Routes).To(BeEmpty())
+					Expect(vm.Spec.Network.Interfaces[0].Network.Name).To(Equal(vSphereCluster.Name))
+					Expect(vm.Spec.Network.Interfaces[0].Network.TypeMeta.Kind).To(Equal("SubnetSet"))
+					Expect(vm.Spec.Network.Interfaces[0].Network.TypeMeta.APIVersion).To(Equal(nsxvpcv1.SchemeGroupVersion.String()))
+					Expect(vm.Spec.Network.Interfaces[0].Gateway4).To(BeEmpty())
+					Expect(vm.Spec.Network.Interfaces[0].Gateway6).To(BeEmpty())
+				})
 			})
 
-			It("nsx-t-subnetset type network interface already exists", func() {
-				err = np.ConfigureVirtualMachine(ctx, clusterCtx, vm)
-				Expect(err).ToNot(HaveOccurred())
-				Expect(vm.Spec.Network).ToNot(BeNil())
-				Expect(vm.Spec.Network.Interfaces).To(HaveLen(1))
+			Context("ConfigureVirtualMachine with only secondary network.interfaces set in vSphereMachine spec", func() {
+				BeforeEach(func() {
+					// Set up VSphereMachine with network interfaces
+					machine.Spec.Network = vmwarev1.VSphereMachineNetworkSpec{
+						Interfaces: vmwarev1.InterfacesSpec{
+							Secondary: []vmwarev1.SecondaryInterfaceSpec{
+								{
+									Name: "eth1",
+									InterfaceSpec: vmwarev1.InterfaceSpec{
+										Network: vmwarev1.InterfaceNetworkReference{
+											Kind:       "SubnetSet",
+											APIVersion: nsxvpcv1.SchemeGroupVersion.String(),
+											Name:       "secondary-subnetset",
+										},
+										MTU: int32(1500),
+										Routes: []vmwarev1.RouteSpec{
+											{
+												To:  "10.0.0.0/24",
+												Via: "10.0.0.1",
+											},
+										},
+									},
+								},
+								{
+									Name: "eth2",
+									InterfaceSpec: vmwarev1.InterfaceSpec{
+										Network: vmwarev1.InterfaceNetworkReference{
+											Kind:       "SubnetSet",
+											APIVersion: nsxvpcv1.SchemeGroupVersion.String(),
+											Name:       "another-secondary-subnetset",
+										},
+									},
+								},
+							},
+						},
+					}
+				})
+
+				AfterEach(func() {
+					Expect(err).ToNot(HaveOccurred())
+					Expect(vm.Spec.Network).ToNot(BeNil())
+					// Should have 3 interfaces: 1 primary (eth0) + 2 secondary
+					Expect(vm.Spec.Network.Interfaces).To(HaveLen(3))
+
+					// Verify primary interface
+					Expect(vm.Spec.Network.Interfaces[0].Name).To(Equal("eth0"))
+					Expect(vm.Spec.Network.Interfaces[0].MTU).To(BeNil())
+					Expect(vm.Spec.Network.Interfaces[0].Routes).To(BeEmpty())
+					Expect(vm.Spec.Network.Interfaces[0].Network.Name).To(Equal(vSphereCluster.Name))
+					Expect(vm.Spec.Network.Interfaces[0].Network.TypeMeta.Kind).To(Equal("SubnetSet"))
+					Expect(vm.Spec.Network.Interfaces[0].Network.TypeMeta.APIVersion).To(Equal(nsxvpcv1.SchemeGroupVersion.String()))
+					Expect(vm.Spec.Network.Interfaces[0].Gateway4).To(BeEmpty())
+					Expect(vm.Spec.Network.Interfaces[0].Gateway6).To(BeEmpty())
+
+					// Verify first secondary interface
+					Expect(vm.Spec.Network.Interfaces[1].Name).To(Equal("eth1"))
+					Expect(*vm.Spec.Network.Interfaces[1].MTU).To(Equal(int64(1500)))
+					Expect(vm.Spec.Network.Interfaces[1].Routes).To(HaveLen(1))
+					Expect(vm.Spec.Network.Interfaces[1].Routes[0].To).To(Equal("10.0.0.0/24"))
+					Expect(vm.Spec.Network.Interfaces[1].Routes[0].Via).To(Equal("10.0.0.1"))
+					Expect(vm.Spec.Network.Interfaces[1].Network.TypeMeta.Kind).To(Equal("SubnetSet"))
+					Expect(vm.Spec.Network.Interfaces[1].Network.TypeMeta.APIVersion).To(Equal(nsxvpcv1.SchemeGroupVersion.String()))
+					Expect(vm.Spec.Network.Interfaces[1].Network.Name).To(Equal("secondary-subnetset"))
+					Expect(vm.Spec.Network.Interfaces[1].Gateway4).To(Equal("None"))
+					Expect(vm.Spec.Network.Interfaces[1].Gateway6).To(Equal("None"))
+
+					// Verify second secondary interface
+					Expect(vm.Spec.Network.Interfaces[2].Name).To(Equal("eth2"))
+					Expect(vm.Spec.Network.Interfaces[2].MTU).To(BeNil())
+					Expect(vm.Spec.Network.Interfaces[2].Routes).To(BeEmpty())
+					Expect(vm.Spec.Network.Interfaces[2].Network.TypeMeta.Kind).To(Equal("SubnetSet"))
+					Expect(vm.Spec.Network.Interfaces[2].Network.TypeMeta.APIVersion).To(Equal(nsxvpcv1.SchemeGroupVersion.String()))
+					Expect(vm.Spec.Network.Interfaces[2].Network.Name).To(Equal("another-secondary-subnetset"))
+					Expect(vm.Spec.Network.Interfaces[2].Gateway4).To(Equal("None"))
+					Expect(vm.Spec.Network.Interfaces[2].Gateway6).To(Equal("None"))
+				})
+
+				It("should add primary and secondary network interfaces", func() {
+				})
+
+				It("after multiple reconciles we don't end up with duplicate interfaces", func() {
+					// Test that calling ConfigureVirtualMachine again doesn't duplicate interfaces
+					err = np.ConfigureVirtualMachine(ctx, clusterCtx, machine, vm)
+					Expect(err).ToNot(HaveOccurred())
+					Expect(vm.Spec.Network.Interfaces).To(HaveLen(3))
+				})
 			})
 
-			AfterEach(func() {
-				Expect(err).ToNot(HaveOccurred())
-				Expect(vm.Spec.Network).ToNot(BeNil())
-				Expect(vm.Spec.Network.Interfaces).To(HaveLen(1))
-				Expect(vm.Spec.Network.Interfaces[0].Network.Name).To(Equal(vSphereCluster.Name))
-				Expect(vm.Spec.Network.Interfaces[0].Network.TypeMeta.Kind).To(Equal("SubnetSet"))
-				Expect(vm.Spec.Network.Interfaces[0].Network.TypeMeta.APIVersion).To(Equal(nsxvpcv1.SchemeGroupVersion.String()))
+			Context("ConfigureVirtualMachine with createSubnetSet=false and custom primary interface", func() {
+				BeforeEach(func() {
+					// Set createSubnetSet to false
+					vSphereCluster.Spec.Network = vmwarev1.Network{
+						NSXVPC: vmwarev1.NSXVPC{
+							CreateSubnetSet: ptr.To(false),
+						},
+					}
+
+					// Set up VSphereMachine with custom primary interface and secondary interfaces
+					machine.Spec.Network = vmwarev1.VSphereMachineNetworkSpec{
+						Interfaces: vmwarev1.InterfacesSpec{
+							Primary: vmwarev1.InterfaceSpec{
+								Network: vmwarev1.InterfaceNetworkReference{
+									Kind:       "SubnetSet",
+									APIVersion: nsxvpcv1.SchemeGroupVersion.String(),
+									Name:       "custom-primary-subnetset",
+								},
+								MTU: int32(9000),
+								Routes: []vmwarev1.RouteSpec{
+									{
+										To:  "default",
+										Via: "192.168.1.1",
+									},
+								},
+							},
+							Secondary: []vmwarev1.SecondaryInterfaceSpec{
+								{
+									Name: "eth1",
+									InterfaceSpec: vmwarev1.InterfaceSpec{
+										Network: vmwarev1.InterfaceNetworkReference{
+											Kind:       "SubnetSet",
+											APIVersion: nsxvpcv1.SchemeGroupVersion.String(),
+											Name:       "secondary-subnetset",
+										},
+										MTU: int32(1500),
+										Routes: []vmwarev1.RouteSpec{
+											{
+												To:  "10.0.0.0/24",
+												Via: "10.0.0.1",
+											},
+										},
+									},
+								},
+							},
+						},
+					}
+				})
+
+				AfterEach(func() {
+					Expect(err).ToNot(HaveOccurred())
+					Expect(vm.Spec.Network).ToNot(BeNil())
+					// Should have 2 interfaces: 1 custom primary (eth0) + 1 secondary
+					Expect(vm.Spec.Network.Interfaces).To(HaveLen(2))
+
+					// Verify custom primary interface
+					Expect(vm.Spec.Network.Interfaces[0].Name).To(Equal("eth0"))
+					Expect(*vm.Spec.Network.Interfaces[0].MTU).To(Equal(int64(9000)))
+					Expect(vm.Spec.Network.Interfaces[0].Routes).To(HaveLen(1))
+					Expect(vm.Spec.Network.Interfaces[0].Routes[0].To).To(Equal("default"))
+					Expect(vm.Spec.Network.Interfaces[0].Routes[0].Via).To(Equal("192.168.1.1"))
+					Expect(vm.Spec.Network.Interfaces[0].Network.Name).To(Equal("custom-primary-subnetset"))
+					Expect(vm.Spec.Network.Interfaces[0].Network.TypeMeta.Kind).To(Equal("SubnetSet"))
+					Expect(vm.Spec.Network.Interfaces[0].Network.TypeMeta.APIVersion).To(Equal(nsxvpcv1.SchemeGroupVersion.String()))
+					Expect(vm.Spec.Network.Interfaces[0].Gateway4).To(BeEmpty())
+					Expect(vm.Spec.Network.Interfaces[0].Gateway6).To(BeEmpty())
+
+					// Verify secondary interface
+					Expect(vm.Spec.Network.Interfaces[1].Name).To(Equal("eth1"))
+					Expect(*vm.Spec.Network.Interfaces[1].MTU).To(Equal(int64(1500)))
+					Expect(vm.Spec.Network.Interfaces[1].Routes).To(HaveLen(1))
+					Expect(vm.Spec.Network.Interfaces[1].Routes[0].To).To(Equal("10.0.0.0/24"))
+					Expect(vm.Spec.Network.Interfaces[1].Routes[0].Via).To(Equal("10.0.0.1"))
+					Expect(vm.Spec.Network.Interfaces[1].Network.TypeMeta.Kind).To(Equal("SubnetSet"))
+					Expect(vm.Spec.Network.Interfaces[1].Network.TypeMeta.APIVersion).To(Equal(nsxvpcv1.SchemeGroupVersion.String()))
+					Expect(vm.Spec.Network.Interfaces[1].Network.Name).To(Equal("secondary-subnetset"))
+					Expect(vm.Spec.Network.Interfaces[1].Gateway4).To(Equal("None"))
+					Expect(vm.Spec.Network.Interfaces[1].Gateway6).To(Equal("None"))
+				})
+
+				It("should add custom primary and secondary network interfaces", func() {
+				})
+
+				It("should handle custom primary interface with MTU and routes", func() {
+					// Test that calling ConfigureVirtualMachine again doesn't duplicate interfaces
+					err = np.ConfigureVirtualMachine(ctx, clusterCtx, machine, vm)
+					Expect(err).ToNot(HaveOccurred())
+					Expect(vm.Spec.Network.Interfaces).To(HaveLen(2))
+				})
 			})
 		})
 	})
@@ -367,7 +663,7 @@ var _ = Describe("Network provider", func() {
 				Expect(err).ToNot(HaveOccurred())
 			})
 			It("should succeed", func() {
-				Expect(conditions.IsTrue(clusterCtx.VSphereCluster, vmwarev1.ClusterNetworkReadyCondition)).To(BeTrue())
+				Expect(v1beta1conditions.IsTrue(clusterCtx.VSphereCluster, vmwarev1.ClusterNetworkReadyCondition)).To(BeTrue())
 			})
 		})
 
@@ -401,7 +697,7 @@ var _ = Describe("Network provider", func() {
 				annotations, err := np.GetVMServiceAnnotations(ctx, clusterCtx)
 				Expect(err).ToNot(HaveOccurred())
 				Expect(annotations).To(HaveKeyWithValue("ncp.vmware.com/virtual-network-name", GetNSXTVirtualNetworkName(clusterCtx.VSphereCluster.Name)))
-				Expect(conditions.IsTrue(clusterCtx.VSphereCluster, vmwarev1.ClusterNetworkReadyCondition)).To(BeTrue())
+				Expect(v1beta1conditions.IsTrue(clusterCtx.VSphereCluster, vmwarev1.ClusterNetworkReadyCondition)).To(BeTrue())
 			})
 		})
 
@@ -433,7 +729,7 @@ var _ = Describe("Network provider", func() {
 
 				Expect(err).ToNot(HaveOccurred())
 				Expect(createdVNET.Spec.WhitelistSourceRanges).To(BeEmpty())
-				Expect(conditions.IsTrue(clusterCtx.VSphereCluster, vmwarev1.ClusterNetworkReadyCondition)).To(BeTrue())
+				Expect(v1beta1conditions.IsTrue(clusterCtx.VSphereCluster, vmwarev1.ClusterNetworkReadyCondition)).To(BeTrue())
 			})
 		})
 
@@ -460,7 +756,7 @@ var _ = Describe("Network provider", func() {
 
 				Expect(err).ToNot(HaveOccurred())
 				Expect(createdVNET.Spec.WhitelistSourceRanges).To(Equal(fakeSNATIP + "/32"))
-				Expect(conditions.IsTrue(clusterCtx.VSphereCluster, vmwarev1.ClusterNetworkReadyCondition)).To(BeTrue())
+				Expect(v1beta1conditions.IsTrue(clusterCtx.VSphereCluster, vmwarev1.ClusterNetworkReadyCondition)).To(BeTrue())
 			})
 		})
 
@@ -494,7 +790,7 @@ var _ = Describe("Network provider", func() {
 				Expect(createdVNET.Spec.WhitelistSourceRanges).To(Equal(fakeSNATIP + "/32"))
 				// err is not empty, but it is because vnetObj does not have status mocked in this test
 
-				Expect(conditions.IsTrue(clusterCtx.VSphereCluster, vmwarev1.ClusterNetworkReadyCondition)).To(BeTrue())
+				Expect(v1beta1conditions.IsTrue(clusterCtx.VSphereCluster, vmwarev1.ClusterNetworkReadyCondition)).To(BeTrue())
 			})
 		})
 
@@ -524,7 +820,7 @@ var _ = Describe("Network provider", func() {
 				Expect(createdVNET.Spec.WhitelistSourceRanges).To(BeEmpty())
 				// err is not empty, but it is because vnetObj does not have status mocked in this test
 
-				Expect(conditions.IsTrue(clusterCtx.VSphereCluster, vmwarev1.ClusterNetworkReadyCondition)).To(BeTrue())
+				Expect(v1beta1conditions.IsTrue(clusterCtx.VSphereCluster, vmwarev1.ClusterNetworkReadyCondition)).To(BeTrue())
 			})
 
 			AfterEach(func() {
@@ -562,7 +858,7 @@ var _ = Describe("Network provider", func() {
 				expectedErrorMessage := fmt.Sprintf("virtual network ready status is: '%s' in cluster %s. reason: %s, message: %s",
 					"False", apitypes.NamespacedName{Namespace: dummyNs, Name: dummyCluster}, testNetworkNotRealizedReason, testNetworkNotRealizedMessage)
 				Expect(err).To(MatchError(expectedErrorMessage))
-				Expect(conditions.IsFalse(clusterCtx.VSphereCluster, vmwarev1.ClusterNetworkReadyCondition)).To(BeTrue())
+				Expect(v1beta1conditions.IsFalse(clusterCtx.VSphereCluster, vmwarev1.ClusterNetworkReadyCondition)).To(BeTrue())
 			})
 
 			It("should return error when vnet ready status is not set", func() {
@@ -579,7 +875,7 @@ var _ = Describe("Network provider", func() {
 
 				expectedErrorMessage := fmt.Sprintf("virtual network ready status in cluster %s has not been set", apitypes.NamespacedName{Namespace: dummyNs, Name: dummyCluster})
 				Expect(err).To(MatchError(expectedErrorMessage))
-				Expect(conditions.IsFalse(clusterCtx.VSphereCluster, vmwarev1.ClusterNetworkReadyCondition)).To(BeTrue())
+				Expect(v1beta1conditions.IsFalse(clusterCtx.VSphereCluster, vmwarev1.ClusterNetworkReadyCondition)).To(BeTrue())
 			})
 		})
 
@@ -727,7 +1023,7 @@ var _ = Describe("Network provider", func() {
 				expectedErrorMessage := fmt.Sprintf("subnetset ready status is: '%s' in cluster %s. reason: %s, message: %s",
 					"False", apitypes.NamespacedName{Namespace: dummyNs, Name: dummyCluster}, testNetworkNotRealizedReason, testNetworkNotRealizedMessage)
 				Expect(err).To(MatchError(expectedErrorMessage))
-				Expect(conditions.IsFalse(clusterCtx.VSphereCluster, vmwarev1.ClusterNetworkReadyCondition)).To(BeTrue())
+				Expect(v1beta1conditions.IsFalse(clusterCtx.VSphereCluster, vmwarev1.ClusterNetworkReadyCondition)).To(BeTrue())
 			})
 
 			It("should return error when subnetset ready status is not set", func() {
@@ -745,7 +1041,43 @@ var _ = Describe("Network provider", func() {
 				err = np.VerifyNetworkStatus(ctx, clusterCtx, subnetsetObj)
 				expectedErrorMessage := fmt.Sprintf("subnetset ready status in cluster %s has not been set", apitypes.NamespacedName{Namespace: dummyNs, Name: dummyCluster})
 				Expect(err).To(MatchError(expectedErrorMessage))
-				Expect(conditions.IsFalse(clusterCtx.VSphereCluster, vmwarev1.ClusterNetworkReadyCondition)).To(BeTrue())
+				Expect(v1beta1conditions.IsFalse(clusterCtx.VSphereCluster, vmwarev1.ClusterNetworkReadyCondition)).To(BeTrue())
+			})
+		})
+
+		Context("with NSX-VPC network provider and createSubnetSet is false", func() {
+			BeforeEach(func() {
+				// Set createSubnetSet to false on the cluster spec
+				vSphereCluster.Spec.Network = vmwarev1.Network{
+					NSXVPC: vmwarev1.NSXVPC{
+						CreateSubnetSet: ptr.To(false),
+					},
+				}
+				// No SubnetSet exists in the cluster
+				client = fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(configmapObj, systemNamespaceObj).Build()
+				np = NSXTVpcNetworkProvider(client)
+			})
+
+			It("should not create a SubnetSet", func() {
+				err = np.ProvisionClusterNetwork(ctx, clusterCtx)
+				Expect(err).ToNot(HaveOccurred())
+
+				// Try to fetch the SubnetSet, should not exist
+				subnetSet := &nsxvpcv1.SubnetSet{}
+				getErr := client.Get(ctx, apitypes.NamespacedName{
+					Name:      dummyCluster,
+					Namespace: dummyNs,
+				}, subnetSet)
+				Expect(apierrors.IsNotFound(getErr)).To(BeTrue())
+				Expect(v1beta1conditions.IsTrue(clusterCtx.VSphereCluster, vmwarev1.ClusterNetworkReadyCondition)).To(BeTrue())
+				Expect(v1beta2conditions.IsTrue(clusterCtx.VSphereCluster, vmwarev1.VSphereClusterNetworkReadyV1Beta2Condition)).To(BeTrue())
+			})
+
+			It("VerifyNetworkStatus should skip validation and return nil", func() {
+				// Pass a dummy SubnetSet object
+				dummySubnetSet := &nsxvpcv1.SubnetSet{}
+				err := np.VerifyNetworkStatus(ctx, clusterCtx, dummySubnetSet)
+				Expect(err).ToNot(HaveOccurred())
 			})
 		})
 	})
