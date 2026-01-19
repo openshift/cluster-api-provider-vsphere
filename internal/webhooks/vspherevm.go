@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"net"
 	"reflect"
+	"strconv"
 
 	"github.com/pkg/errors"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -95,6 +96,29 @@ func (webhook *VSphereVM) ValidateCreate(_ context.Context, raw runtime.Object) 
 			allErrs = append(allErrs, field.Invalid(field.NewPath("spec", "guestSoftPowerOffTimeout"), spec.GuestSoftPowerOffTimeout, "should be greater than 0"))
 		}
 	}
+
+	// Validate VirtualTPM configuration
+	if spec.VirtualTPM != nil && spec.VirtualTPM.Enabled {
+		// Check hardware version requirement
+		if spec.HardwareVersion != "" {
+			hwVersion, err := strconv.Atoi(spec.HardwareVersion)
+			if err != nil || hwVersion < 14 {
+				allErrs = append(allErrs, field.Invalid(field.NewPath("spec", "hardwareVersion"), spec.HardwareVersion, "VirtualTPM requires hardware version 14 or higher"))
+			}
+		}
+
+		// Check firmware type requirement (UEFI is required for VirtualTPM)
+		// Note: This validation assumes UEFI is the default for newer hardware versions
+		// In practice, the firmware type is typically set at the template level
+		if spec.HardwareVersion != "" {
+			hwVersion, err := strconv.Atoi(spec.HardwareVersion)
+			if err == nil && hwVersion >= 14 {
+				// Hardware version 14+ typically uses UEFI by default
+				// Additional validation could be added here if firmware type is exposed in the API
+			}
+		}
+	}
+
 	return nil, AggregateObjErrors(objValue.GroupVersionKind().GroupKind(), objValue.Name, allErrs)
 }
 
@@ -116,6 +140,28 @@ func (webhook *VSphereVM) ValidateUpdate(_ context.Context, oldRaw runtime.Objec
 		}
 		if newTyped.Spec.GuestSoftPowerOffTimeout.Duration <= 0 {
 			allErrs = append(allErrs, field.Invalid(field.NewPath("spec", "guestSoftPowerOffTimeout"), newTyped.Spec.GuestSoftPowerOffTimeout, "should be greater than 0"))
+		}
+	}
+
+	// Validate VirtualTPM configuration
+	if newTyped.Spec.VirtualTPM != nil && newTyped.Spec.VirtualTPM.Enabled {
+		// Check hardware version requirement
+		if newTyped.Spec.HardwareVersion != "" {
+			hwVersion, err := strconv.Atoi(newTyped.Spec.HardwareVersion)
+			if err != nil || hwVersion < 14 {
+				allErrs = append(allErrs, field.Invalid(field.NewPath("spec", "hardwareVersion"), newTyped.Spec.HardwareVersion, "VirtualTPM requires hardware version 14 or higher"))
+			}
+		}
+
+		// Check firmware type requirement (UEFI is required for VirtualTPM)
+		// Note: This validation assumes UEFI is the default for newer hardware versions
+		// In practice, the firmware type is typically set at the template level
+		if newTyped.Spec.HardwareVersion != "" {
+			hwVersion, err := strconv.Atoi(newTyped.Spec.HardwareVersion)
+			if err == nil && hwVersion >= 14 {
+				// Hardware version 14+ typically uses UEFI by default
+				// Additional validation could be added here if firmware type is exposed in the API
+			}
 		}
 	}
 

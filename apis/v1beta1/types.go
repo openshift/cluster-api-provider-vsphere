@@ -209,6 +209,16 @@ type VirtualMachineCloneSpec struct {
 	// +listMapKey=name
 	// +kubebuilder:validation:MaxItems=29
 	DataDisks []VSphereDisk `json:"dataDisks,omitempty"`
+	// VirtualTPM is the configuration for the virtual Trusted Platform Module device.
+	// Here are the requirements for VirtualTPM:
+	// - VirtualTPM requires UEFI firmware and hardware version 14 or higher on the VM.
+	// - VirtualTPM requires ESXi Host Encryption Mode to be enabled.
+	// - VirtualTPM requires a Key Provider to be configured.
+	// For more details on the requirements see:
+	// https://techdocs.broadcom.com/us/en/vmware-cis/vsphere/vsphere/8-0/vsphere-security-8-0/securing-virtual-machines-with-virtual-trusted-platform-module/vtpm-overview.html
+	// and  https://techdocs.broadcom.com/us/en/vmware-cis/vsphere/vsphere/8-0/vsphere-security-8-0/securing-virtual-machines-with-virtual-trusted-platform-module/add-a-virtual-trusted-platform-module-to-a-virtual-machine.html
+	// +optional
+	VirtualTPM *VirtualTPMSpec `json:"virtualTPM,omitempty"`
 }
 
 // VSphereDisk is an additional disk to add to the VM that is not part of the VM OVA template.
@@ -313,6 +323,14 @@ type PCIDeviceSpec struct {
 	// virtual machine is cloned.
 	// +optional
 	CustomLabel string `json:"customLabel,omitempty"`
+}
+
+// VirtualTPMSpec defines the virtual machine's virtual Trusted Platform Module configuration.
+type VirtualTPMSpec struct {
+	// Enabled indicates whether the virtual TPM device should be enabled.
+	// When enabled, the VM will have a virtual TPM 2.0 device attached.
+	// +optional
+	Enabled bool `json:"enabled,omitempty"`
 }
 
 // NetworkSpec defines the virtual machine's network configuration.
