@@ -43,7 +43,7 @@ go.work.sum
 **/*.out
 
 # Openshift specific overriding
-!openshift/manifests/*.yaml
+!openshift/capi-operator-manifests/**
 
 # Common editor / temporary files
 **/*~
