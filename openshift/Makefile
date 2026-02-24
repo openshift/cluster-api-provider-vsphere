@@ -23,4 +23,4 @@ update-manifests-gen:
 .PHONY: ocp-manifests
 ocp-manifests: $(RELEASE_DIR) ## Builds openshift specific manifests
 	# Generate provider manifests.
-	cd tools && $(MANIFESTS_GEN) --provider-name "vsphere" --provider-type "InfrastructureProvider" --provider-version "${PROVIDER_VERSION}" --base-path "../../" --manifests-path "../manifests"
+	cd tools && $(MANIFESTS_GEN) --platform "VSphere" --name "vsphere" --kustomize-dir "../../config/default" --manifests-path ".." --profile-name "manifests"
