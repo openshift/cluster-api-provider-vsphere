@@ -12,7 +12,7 @@ FROM registry.ci.openshift.org/ocp/4.22:base-rhel9
 LABEL description="Cluster API Provider vSphere Controller Manager"
 
 COPY --from=builder /build/manager /manager
-COPY --from=builder /build/openshift/manifests /manifests
+COPY --from=builder /build/openshift/manifests /capi-operator-manifests
 
 ENTRYPOINT [ "/manager" ]
 
