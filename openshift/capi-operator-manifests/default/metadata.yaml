@@ -1,7 +1,0 @@
-attributes:
-  type: infrastructure
-  version: v1.14.0
-installOrder: 20
-name: cluster-api-provider-vsphere
-ocpPlatform: VSphere
-selfImageRef: registry.ci.openshift.org/openshift:vsphere-cluster-api-controllers

@@ -36,6 +36,13 @@ if [[ "${ARTIFACTS}" != "${REPO_ROOT}/_artifacts" ]]; then
   ARTIFACTS=$(mktemp -d)
 fi
 
+E2E_SH_LOG_FILE="e2e-sh-log.txt"
+
+# Redirect all output of this script additionally to a file in artifacts,
+# so we can create a junit file with its content in case of general CI failures.
+# This way the bash script's log can be analyzed using k8s-triage.
+exec &> >(stdbuf -oL tee "${ARTIFACTS}/${E2E_SH_LOG_FILE}")
+
 # shellcheck source=./hack/ensure-go.sh
 source "${REPO_ROOT}/hack/ensure-go.sh"
 
@@ -44,10 +51,6 @@ if [[ "${JOB_NAME}" != "" ]]; then
   export BOSKOS_RESOURCE_OWNER="${JOB_NAME}/${BUILD_ID}"
 fi
 export BOSKOS_RESOURCE_TYPE="gcve-vsphere-project"
-# Fallback for mirror-prow.
-if [[ "${GOVC_URL:-}" == "10.2.224.4" ]]; then
-  BOSKOS_RESOURCE_TYPE=vsphere-project-cluster-api-provider
-fi
 
 on_exit() {
   # Only handle Boskos when we have to (not for vcsim)
@@ -56,7 +59,9 @@ on_exit() {
     [[ -z ${HEART_BEAT_PID:-} ]] || kill -9 "${HEART_BEAT_PID}"
 
     # If Boskos is being used then release the vsphere project.
-    [ -z "${BOSKOS_HOST:-}" ] || docker run -e VSPHERE_USERNAME -e VSPHERE_PASSWORD gcr.io/k8s-staging-capi-vsphere/extra/boskosctl:latest release --boskos-host="${BOSKOS_HOST}" --resource-owner="${BOSKOS_RESOURCE_OWNER}" --resource-name="${BOSKOS_RESOURCE_NAME}" --vsphere-server="${VSPHERE_SERVER}" --vsphere-tls-thumbprint="${VSPHERE_TLS_THUMBPRINT}" --vsphere-folder="${BOSKOS_RESOURCE_FOLDER}" --vsphere-resource-pool="${BOSKOS_RESOURCE_POOL}"
+    if [[ "${BOSKOS_HOST:-}" != "" && "${BOSKOS_RESOURCE_NAME:-}" != "" ]]; then
+      docker run -e VSPHERE_USERNAME -e VSPHERE_PASSWORD gcr.io/k8s-staging-capi-vsphere/extra/boskosctl:latest release --boskos-host="${BOSKOS_HOST}" --resource-owner="${BOSKOS_RESOURCE_OWNER}" --resource-name="${BOSKOS_RESOURCE_NAME}" --vsphere-server="${VSPHERE_SERVER}" --vsphere-tls-thumbprint="${VSPHERE_TLS_THUMBPRINT}" --vsphere-folder="${BOSKOS_RESOURCE_FOLDER}" --vsphere-resource-pool="${BOSKOS_RESOURCE_POOL}"
+    fi
   fi
 
   # Cleanup VSPHERE_PASSWORD from temporary artifacts directory.
@@ -101,6 +106,17 @@ on_exit() {
     # Move all artifacts to the original artifacts location.
     mv "${ARTIFACTS}"/* "${ORIGINAL_ARTIFACTS}/"
   fi
+
+  # Create a junit file for running this script.
+  if [[ $(find "${ORIGINAL_ARTIFACTS}" -maxdepth 1 -name 'junit\.*\.xml' | wc -l) -gt 0 ]]; then
+    # There are junit files in artifacts so the script succeeded.
+    junit::createJunitReportE2Esh 0 "${ORIGINAL_ARTIFACTS}/junit.e2e-sh.xml"
+  else
+    # No junit files in artifacts so the script failed.
+    junit::createJunitReportE2Esh 1 "${ORIGINAL_ARTIFACTS}/junit.e2e-sh.xml" "${ORIGINAL_ARTIFACTS}/${E2E_SH_LOG_FILE}"
+  fi
+  # Always cleanup the additionally written log file used for the junit report, the same content will be in build-log.txt.
+  rm "${ORIGINAL_ARTIFACTS}/${E2E_SH_LOG_FILE}"
 }
 
 trap on_exit EXIT
@@ -129,15 +145,18 @@ ssh-keygen -t ed25519 -f "${VSPHERE_SSH_PRIVATE_KEY}" -N ""
 export VSPHERE_SSH_AUTHORIZED_KEY
 VSPHERE_SSH_AUTHORIZED_KEY="$(cat "${VSPHERE_SSH_PRIVATE_KEY}.pub")"
 
-# Fallback for mirror-prow.
-if [[ "${GOVC_URL:-}" == "10.2.224.4" ]]; then
-  VSPHERE_SSH_AUTHORIZED_KEY="${VM_SSH_PUB_KEY:-}"
-  VSPHERE_SSH_PRIVATE_KEY="/root/ssh/.private-key/private-key"
-  E2E_CONF_OVERRIDE_FILE="$(pwd)/test/e2e/config/config-overrides-mirror-prow.yaml"
-fi
-
 # Ensure vSphere is reachable
 function wait_for_vsphere_reachable() {
+  echo "# installing tcptraceroute to check route"
+  {
+  apt-get update && apt-get install -y tcptraceroute
+  } > /dev/null
+
+  echo "$ ip link"
+  ip link
+  echo "$ tcptraceroute ${VSPHERE_SERVER} 443"
+  tcptraceroute "${VSPHERE_SERVER}" 443
+
   local n=0
   until [ $n -ge 300 ]; do
     curl -s -v "https://${VSPHERE_SERVER}/sdk" --connect-timeout 2 -k && RET=$? || RET=$?
@@ -145,23 +164,23 @@ function wait_for_vsphere_reachable() {
       break
     fi
     n=$((n + 1))
-    echo "Failed to reach https://${VSPHERE_SERVER}/sdk. Retrying in 1s ($n/30)"
+    echo "Failed to reach https://${VSPHERE_SERVER}/sdk. Retrying in 1s ($n/300)"
     sleep 1
   done
-  if [ "$RET" -ne 0 ]; then
-    # Output some debug information in case of failing connectivity.
-    echo "$ ip link" 
-    ip link
-    echo "# installing tcptraceroute to check route"
-    apt-get update && apt-get install -y tcptraceroute
-    echo "$ tcptraceroute ${VSPHERE_SERVER} 443"
-    tcptraceroute "${VSPHERE_SERVER}" 443
-  fi
+
+  echo "$ tcptraceroute ${VSPHERE_SERVER} 443"
+  tcptraceroute "${VSPHERE_SERVER}" 443
+
   return "$RET"
 }
 # Only run the boskos/check for IPAM when we need them (not for vcsim)
 if [[ ! "${GINKGO_FOCUS:-}" =~ $RE_VCSIM ]]; then
   wait_for_vsphere_reachable
+fi
+
+if [ -n "${SKIP_E2E_TESTS:-}" ]; then
+  junit::createJunitReportE2Esh 0 "${ORIGINAL_ARTIFACTS}/junit.e2e-sh.xml"
+  exit 0
 fi
 
 # Make tests run in-parallel
