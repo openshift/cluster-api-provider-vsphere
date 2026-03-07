@@ -34,7 +34,6 @@ type EphemeralContainerApplyConfiguration struct {
 func EphemeralContainer() *EphemeralContainerApplyConfiguration {
 	return &EphemeralContainerApplyConfiguration{}
 }
-func (b EphemeralContainerApplyConfiguration) IsApplyConfiguration() {}
 
 // WithName sets the Name field in the declarative configuration to the given value
 // and returns the receiver, so that objects can be built by chaining "With" function invocations.
@@ -145,6 +144,19 @@ func (b *EphemeralContainerApplyConfiguration) WithResizePolicy(values ...*Conta
 // If called multiple times, the RestartPolicy field is set to the value of the last call.
 func (b *EphemeralContainerApplyConfiguration) WithRestartPolicy(value corev1.ContainerRestartPolicy) *EphemeralContainerApplyConfiguration {
 	b.EphemeralContainerCommonApplyConfiguration.RestartPolicy = &value
+	return b
+}
+
+// WithRestartPolicyRules adds the given value to the RestartPolicyRules field in the declarative configuration
+// and returns the receiver, so that objects can be build by chaining "With" function invocations.
+// If called multiple times, values provided by each call will be appended to the RestartPolicyRules field.
+func (b *EphemeralContainerApplyConfiguration) WithRestartPolicyRules(values ...*ContainerRestartRuleApplyConfiguration) *EphemeralContainerApplyConfiguration {
+	for i := range values {
+		if values[i] == nil {
+			panic("nil value passed to WithRestartPolicyRules")
+		}
+		b.EphemeralContainerCommonApplyConfiguration.RestartPolicyRules = append(b.EphemeralContainerCommonApplyConfiguration.RestartPolicyRules, *values[i])
+	}
 	return b
 }
 

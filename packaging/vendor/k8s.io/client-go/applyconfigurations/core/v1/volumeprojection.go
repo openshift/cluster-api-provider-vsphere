@@ -26,6 +26,7 @@ type VolumeProjectionApplyConfiguration struct {
 	ConfigMap           *ConfigMapProjectionApplyConfiguration           `json:"configMap,omitempty"`
 	ServiceAccountToken *ServiceAccountTokenProjectionApplyConfiguration `json:"serviceAccountToken,omitempty"`
 	ClusterTrustBundle  *ClusterTrustBundleProjectionApplyConfiguration  `json:"clusterTrustBundle,omitempty"`
+	PodCertificate      *PodCertificateProjectionApplyConfiguration      `json:"podCertificate,omitempty"`
 }
 
 // VolumeProjectionApplyConfiguration constructs a declarative configuration of the VolumeProjection type for use with
@@ -33,7 +34,6 @@ type VolumeProjectionApplyConfiguration struct {
 func VolumeProjection() *VolumeProjectionApplyConfiguration {
 	return &VolumeProjectionApplyConfiguration{}
 }
-func (b VolumeProjectionApplyConfiguration) IsApplyConfiguration() {}
 
 // WithSecret sets the Secret field in the declarative configuration to the given value
 // and returns the receiver, so that objects can be built by chaining "With" function invocations.
@@ -72,5 +72,13 @@ func (b *VolumeProjectionApplyConfiguration) WithServiceAccountToken(value *Serv
 // If called multiple times, the ClusterTrustBundle field is set to the value of the last call.
 func (b *VolumeProjectionApplyConfiguration) WithClusterTrustBundle(value *ClusterTrustBundleProjectionApplyConfiguration) *VolumeProjectionApplyConfiguration {
 	b.ClusterTrustBundle = value
+	return b
+}
+
+// WithPodCertificate sets the PodCertificate field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the PodCertificate field is set to the value of the last call.
+func (b *VolumeProjectionApplyConfiguration) WithPodCertificate(value *PodCertificateProjectionApplyConfiguration) *VolumeProjectionApplyConfiguration {
+	b.PodCertificate = value
 	return b
 }

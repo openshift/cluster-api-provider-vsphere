@@ -139,15 +139,15 @@ github.com/opencontainers/go-digest
 ## explicit; go 1.18
 github.com/opencontainers/image-spec/specs-go
 github.com/opencontainers/image-spec/specs-go/v1
-# github.com/openshift/api v0.0.0-20260205045418-81371d13d1fc
+# github.com/openshift/api v0.0.0-20260228183123-9b2ee997d297
 ## explicit; go 1.24.0
 github.com/openshift/api/config/v1
 github.com/openshift/api/operator/v1
 github.com/openshift/api/operator/v1alpha1
-# github.com/openshift/cluster-capi-operator v0.0.0-20260219175436-fdd7c3867c84
+# github.com/openshift/cluster-capi-operator v0.0.0-20260304134942-0acc63ee9c60
 ## explicit; go 1.24.0
 github.com/openshift/cluster-capi-operator/pkg/providerimages
-# github.com/openshift/cluster-capi-operator/manifests-gen v0.0.0-20260219175436-fdd7c3867c84
+# github.com/openshift/cluster-capi-operator/manifests-gen v0.0.0-20260304134942-0acc63ee9c60
 ## explicit; go 1.24.0
 github.com/openshift/cluster-capi-operator/manifests-gen
 # github.com/sirupsen/logrus v1.9.3

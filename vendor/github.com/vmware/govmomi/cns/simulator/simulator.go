@@ -1,5 +1,5 @@
 // © Broadcom. All Rights Reserved.
-// The term “Broadcom” refers to Broadcom Inc. and/or its subsidiaries.
+// The term "Broadcom" refers to Broadcom Inc. and/or its subsidiaries.
 // SPDX-License-Identifier: Apache-2.0
 
 package simulator
@@ -284,15 +284,15 @@ func matchesFilter(filter cnstypes.CnsQueryFilter, volume *types.CnsVolume) bool
 	return true
 }
 
-func (m *CnsVolumeManager) queryVolume(filter cnstypes.CnsQueryFilter) []cnstypes.CnsVolume {
+func (m *CnsVolumeManager) queryVolume(filter cnstypes.BaseCnsQueryFilter) []cnstypes.CnsVolume {
 	var matches []cnstypes.CnsVolume
 
 	for ds, volumes := range m.volumes {
-		if !matchesDatastore(filter, ds) {
+		if !matchesDatastore(*filter.GetCnsQueryFilter(), ds) {
 			continue
 		}
 		for _, volume := range volumes {
-			if matchesFilter(filter, volume) {
+			if matchesFilter(*filter.GetCnsQueryFilter(), volume) {
 				matches = append(matches, *volume)
 			}
 		}
@@ -320,7 +320,7 @@ func (m *CnsVolumeManager) CnsQueryAllVolume(ctx context.Context, req *cnstypes.
 	return &methods.CnsQueryAllVolumeBody{
 		Res: &cnstypes.CnsQueryAllVolumeResponse{
 			Returnval: cnstypes.CnsQueryResult{
-				Volumes: m.queryVolume(req.Filter),
+				Volumes: m.queryVolume(req.Filter.GetCnsQueryFilter()),
 			},
 		},
 	}
@@ -724,7 +724,7 @@ func (m *CnsVolumeManager) CnsQuerySnapshots(ctx *simulator.Context, req *cnstyp
 				// volumeId in snapshotQuerySpecs does not exist
 				snapshotQueryResultEntries = append(snapshotQueryResultEntries, cnstypes.CnsSnapshotQueryResultEntry{
 					Error: &vim25types.LocalizedMethodFault{
-						Fault: cnstypes.CnsVolumeNotFoundFault{
+						Fault: &cnstypes.CnsVolumeNotFoundFault{
 							VolumeId: snapshotQuerySpec.VolumeId,
 						},
 					},
@@ -742,7 +742,7 @@ func (m *CnsVolumeManager) CnsQuerySnapshots(ctx *simulator.Context, req *cnstyp
 				if isSnapshotQueryFilter && len(snapshotQueryResultEntries) == 0 {
 					snapshotQueryResultEntries = append(snapshotQueryResultEntries, cnstypes.CnsSnapshotQueryResultEntry{
 						Error: &vim25types.LocalizedMethodFault{
-							Fault: cnstypes.CnsSnapshotNotFoundFault{
+							Fault: &cnstypes.CnsSnapshotNotFoundFault{
 								VolumeId:   snapshotQuerySpec.VolumeId,
 								SnapshotId: *snapshotQuerySpec.SnapshotId,
 							},

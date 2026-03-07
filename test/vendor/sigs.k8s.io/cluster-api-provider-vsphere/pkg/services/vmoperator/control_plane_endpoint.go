@@ -41,7 +41,8 @@ const (
 	defaultAPIBindPort                   = 6443
 	controlPlaneServiceAPIServerPortName = "apiserver"
 
-	clusterSelectorKey = "capv.vmware.com/cluster.name"
+	// ClusterSelectorKey is a label we use to store the cluster name on VirtualMachine objects.
+	ClusterSelectorKey = "capv.vmware.com/cluster.name"
 	nodeSelectorKey    = "capv.vmware.com/cluster.role"
 	roleNode           = "node"
 	roleControlPlane   = "controlplane"
@@ -169,7 +170,7 @@ func legacyControlPlaneVMServiceName(clusterName string) string {
 // Add the legacyNodeSelectorKey and legacyClusterSelectorKey to machines as well.
 func clusterRoleVMLabels(ctx *vmware.ClusterContext, controlPlane bool) map[string]string {
 	result := map[string]string{
-		clusterSelectorKey:       ctx.Cluster.Name,
+		ClusterSelectorKey:       ctx.Cluster.Name,
 		legacyClusterSelectorKey: ctx.Cluster.Name,
 	}
 	if controlPlane {
@@ -189,7 +190,7 @@ func newVirtualMachineService(ctx *vmware.ClusterContext) *vmoprv1.VirtualMachin
 			Namespace: ctx.Cluster.Namespace,
 		},
 		TypeMeta: metav1.TypeMeta{
-			APIVersion: vmoprv1.SchemeGroupVersion.String(),
+			APIVersion: vmoprv1.GroupVersion.String(),
 			Kind:       "VirtualMachineService",
 		},
 	}
