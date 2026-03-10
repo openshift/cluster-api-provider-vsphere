@@ -102,3 +102,6 @@ tilt.d
 tilt-settings.json
 tilt-settings.yaml
 .tiltbuild
+
+# Do not ignore files in vendor directory
+!vendor/**
