@@ -35,7 +35,8 @@ export GO111MODULE := on
 #
 # Kubebuilder.
 #
-export KUBEBUILDER_ENVTEST_KUBERNETES_VERSION ?= 1.23.3
+export KUBEBUILDER_ENVTEST_KUBERNETES_VERSION ?= 1.28.0
+ENVTEST_ASSETS_DIR ?= /tmp/controller-tools/envtest
 
 # Directories
 ROOT_DIR:=$(shell dirname $(realpath $(firstword $(MAKEFILE_LIST))))
@@ -61,7 +62,6 @@ GOLANGCI_LINT := $(TOOLS_BIN_DIR)/golangci-lint
 GOVC := $(TOOLS_BIN_DIR)/govc
 KIND := $(TOOLS_BIN_DIR)/kind
 KUSTOMIZE := $(TOOLS_BIN_DIR)/kustomize
-SETUP_ENVTEST := $(abspath $(TOOLS_BIN_DIR)/setup-envtest)
 CONVERSION_VERIFIER := $(abspath $(TOOLS_BIN_DIR)/conversion-verifier)
 GO_APIDIFF := $(TOOLS_BIN_DIR)/go-apidiff
 RELEASE_NOTES := $(TOOLS_BIN_DIR)/release-notes
@@ -123,11 +123,23 @@ help: ## Display this help
 ## Testing
 ## --------------------------------------
 
-KUBEBUILDER_ASSETS ?= $(shell $(SETUP_ENVTEST) use --use-env -p path $(KUBEBUILDER_ENVTEST_KUBERNETES_VERSION))
+KUBEBUILDER_ASSETS ?= $(ENVTEST_ASSETS_DIR)
+
+.PHONY: setup-envtest
+setup-envtest: ## Set up envtest (download kubebuilder assets)
+	@[ -f $(ENVTEST_ASSETS_DIR)/kube-apiserver ] || { \
+	set -e ;\
+	ARCH=$$(go env GOARCH) ;\
+	OS=$$(go env GOOS) ;\
+	echo "Downloading envtest binaries for k8s $(KUBEBUILDER_ENVTEST_KUBERNETES_VERSION) ($${OS}/$${ARCH})..." ;\
+	curl -fSL "https://github.com/kubernetes-sigs/controller-tools/releases/download/envtest-v$(KUBEBUILDER_ENVTEST_KUBERNETES_VERSION)/envtest-v$(KUBEBUILDER_ENVTEST_KUBERNETES_VERSION)-$${OS}-$${ARCH}.tar.gz" -o /tmp/envtest.tar.gz ;\
+	tar -xzf /tmp/envtest.tar.gz -C /tmp/ ;\
+	}
+	@echo KUBEBUILDER_ASSETS=$(KUBEBUILDER_ASSETS)
 
 .PHONY: test
-test: $(SETUP_ENVTEST) $(GOVC)
-	$(MAKE) generate lint-go
+test: setup-envtest $(GOVC)
+	$(MAKE) generate
 	KUBEBUILDER_ASSETS="$(KUBEBUILDER_ASSETS)" GOVC_BIN_PATH=$(GOVC) go test -v ./apis/... ./controllers/... ./pkg/... $(TEST_ARGS)
 
 
@@ -205,9 +217,6 @@ $(MANAGER): generate
 clusterctl: $(CLUSTERCTL) ## Build clusterctl binary
 $(CLUSTERCTL): go.mod
 	go build -o $@ sigs.k8s.io/cluster-api/cmd/clusterctl
-
-$(SETUP_ENVTEST): $(TOOLS_DIR)/go.mod # Build setup-envtest from tools folder.
-	cd $(TOOLS_DIR); go build -tags=tools -o $(TOOLS_BIN_DIR)/setup-envtest sigs.k8s.io/controller-runtime/tools/setup-envtest
 
 ## --------------------------------------
 ## Tooling Binaries
