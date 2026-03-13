@@ -74,3 +74,6 @@ _releasenotes
 *~
 *.tmp
 .DS_Store
+
+# Do not ignore files in vendor directory
+!vendor/**
