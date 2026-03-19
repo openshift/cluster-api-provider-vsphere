@@ -103,10 +103,7 @@ KUSTOMIZE_BIN := kustomize
 KUSTOMIZE := $(abspath $(TOOLS_BIN_DIR)/$(KUSTOMIZE_BIN)-$(KUSTOMIZE_VER))
 KUSTOMIZE_PKG := sigs.k8s.io/kustomize/kustomize/v4
 
-SETUP_ENVTEST_VER := 116a1b831fffe7ccc3c8145306c3e1a3b1b14ffa # Note: this matches the commit ID of the dependent controller-runtime module.
-SETUP_ENVTEST_BIN := setup-envtest
-SETUP_ENVTEST := $(abspath $(TOOLS_BIN_DIR)/$(SETUP_ENVTEST_BIN)-$(SETUP_ENVTEST_VER))
-SETUP_ENVTEST_PKG := sigs.k8s.io/controller-runtime/tools/setup-envtest
+ENVTEST_ASSETS_DIR ?= /tmp/controller-tools/envtest
 
 CONTROLLER_GEN_VER := v0.13.0
 CONTROLLER_GEN_BIN := controller-gen
@@ -478,14 +475,22 @@ docker-build: docker-pull-prerequisites ## Build the docker image for vsphere co
 
 ARTIFACTS ?= ${ROOT_DIR}/_artifacts
 
-KUBEBUILDER_ASSETS ?= $(shell $(SETUP_ENVTEST) use --use-env -p path $(KUBEBUILDER_ENVTEST_KUBERNETES_VERSION))
+KUBEBUILDER_ASSETS ?= $(ENVTEST_ASSETS_DIR)
 
 .PHONY: setup-envtest
-setup-envtest: $(SETUP_ENVTEST) ## Set up envtest (download kubebuilder assets)
+setup-envtest: ## Set up envtest (download kubebuilder assets)
+	@[ -f $(ENVTEST_ASSETS_DIR)/kube-apiserver ] || { \
+	set -e ;\
+	ARCH=$$(go env GOARCH) ;\
+	OS=$$(go env GOOS) ;\
+	echo "Downloading envtest binaries for k8s $(KUBEBUILDER_ENVTEST_KUBERNETES_VERSION) ($${OS}/$${ARCH})..." ;\
+	curl -fSL "https://github.com/kubernetes-sigs/controller-tools/releases/download/envtest-v$(KUBEBUILDER_ENVTEST_KUBERNETES_VERSION)/envtest-v$(KUBEBUILDER_ENVTEST_KUBERNETES_VERSION)-$${OS}-$${ARCH}.tar.gz" -o /tmp/envtest.tar.gz ;\
+	tar -xzf /tmp/envtest.tar.gz -C /tmp/ ;\
+	}
 	@echo KUBEBUILDER_ASSETS=$(KUBEBUILDER_ASSETS)
 
 .PHONY: test
-test: $(SETUP_ENVTEST) $(GOVC) ## Run unit tests
+test: setup-envtest $(GOVC) ## Run unit tests
 	KUBEBUILDER_ASSETS="$(KUBEBUILDER_ASSETS)" GOVC_BIN_PATH=$(GOVC) go test -v ./apis/... ./controllers/... ./pkg/... ./internal/... $(TEST_ARGS)
 
 .PHONY: test-verbose
@@ -493,7 +498,7 @@ test-verbose: ## Run unit tests with verbose flag
 	$(MAKE) test TEST_ARGS="$(TEST_ARGS) -v"
 
 .PHONY: test-junit
-test-junit: $(SETUP_ENVTEST) $(GOTESTSUM) $(GOVC) ## Run unit tests
+test-junit: setup-envtest $(GOTESTSUM) $(GOVC) ## Run unit tests
 	# Note: ARTIFACTS must be set so the ginkgo suites write junit reports to the ARTIFACTS folder
 	set +o errexit; (ARTIFACTS=$(ARTIFACTS) KUBEBUILDER_ASSETS="$(KUBEBUILDER_ASSETS)" GOVC_BIN_PATH=$(GOVC) go test -json ./apis/... ./controllers/... ./pkg/... ./internal/... $(TEST_ARGS); echo $$? > $(ARTIFACTS)/junit.exitcode) | tee $(ARTIFACTS)/junit.stdout
 	$(GOTESTSUM) --junitfile $(ARTIFACTS)/junit.xml --raw-command cat $(ARTIFACTS)/junit.stdout
@@ -776,9 +781,6 @@ $(ENVSUBST_BIN): $(ENVSUBST) ## Build a local copy of envsubst.
 .PHONY: $(KUSTOMIZE_BIN)
 $(KUSTOMIZE_BIN): $(KUSTOMIZE) ## Build a local copy of kustomize.
 
-.PHONY: $(SETUP_ENVTEST_BIN)
-$(SETUP_ENVTEST_BIN): $(SETUP_ENVTEST) ## Build a local copy of setup-envtest.
-
 .PHONY: $(KPROMO_BIN)
 $(KPROMO_BIN): $(KPROMO) ## Build a local copy of kpromo
 
@@ -829,9 +831,6 @@ $(ENVSUBST): # Build envsubst.
 
 $(KUSTOMIZE): # Build kustomize.
 	CGO_ENABLED=0 GOBIN=$(TOOLS_BIN_DIR) $(GO_INSTALL) $(KUSTOMIZE_PKG) $(KUSTOMIZE_BIN) $(KUSTOMIZE_VER)
-
-$(SETUP_ENVTEST): # Build setup-envtest.
-	GOBIN=$(TOOLS_BIN_DIR) $(GO_INSTALL) $(SETUP_ENVTEST_PKG) $(SETUP_ENVTEST_BIN) $(SETUP_ENVTEST_VER)
 
 $(KPROMO):
 	GOBIN=$(TOOLS_BIN_DIR) $(GO_INSTALL) $(KPROMO_PKG) $(KPROMO_BIN) $(KPROMO_VER)
