@@ -221,11 +221,10 @@ var _ = Describe("VSphereDeploymentZoneReconciler", func() {
 			failureDomainKey = client.ObjectKey{Name: vsphereFailureDomain.Name}
 
 			Eventually(func() bool {
-				deploymentZoneWithFinalizers := &infrav1.VSphereDeploymentZone{}
-				if err := testEnv.Get(ctx, deploymentZoneKey, deploymentZoneWithFinalizers); err != nil {
+				if err := testEnv.Get(ctx, deploymentZoneKey, vsphereDeploymentZone); err != nil {
 					return false
 				}
-				return len(deploymentZoneWithFinalizers.Finalizers) > 0
+				return len(vsphereDeploymentZone.Finalizers) > 0
 			}, timeout).Should(BeTrue())
 		})
 
