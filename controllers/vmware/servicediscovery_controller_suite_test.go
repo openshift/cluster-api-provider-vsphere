@@ -28,11 +28,10 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	bootstrapapi "k8s.io/cluster-bootstrap/token/api"
-	clusterv1beta1 "sigs.k8s.io/cluster-api/api/core/v1beta1"
-	v1beta1conditions "sigs.k8s.io/cluster-api/util/deprecated/v1beta1/conditions"
+	"sigs.k8s.io/cluster-api/util/conditions"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	vmwarev1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/vmware/v1beta1"
+	vmwarev1 "sigs.k8s.io/cluster-api-provider-vsphere/api/supervisor/v1beta2"
 )
 
 const (
@@ -120,9 +119,9 @@ func assertHeadlessSvcWithFIPHostNameEndpoints(ctx context.Context, guestClient 
 	Expect(headlessEndpoints.Subsets[0].Ports[0].Port).To(Equal(int32(testSupervisorAPIServerPort)))
 }
 
-func assertServiceDiscoveryCondition(vsphereCluster *vmwarev1.VSphereCluster, status corev1.ConditionStatus,
-	message string, reason string, severity clusterv1beta1.ConditionSeverity) {
-	c := v1beta1conditions.Get(vsphereCluster, vmwarev1.ServiceDiscoveryReadyCondition)
+func assertServiceDiscoveryCondition(vsphereCluster *vmwarev1.VSphereCluster, status metav1.ConditionStatus,
+	message string, reason string) {
+	c := conditions.Get(vsphereCluster, vmwarev1.VSphereClusterServiceDiscoveryReadyCondition)
 	Expect(c).NotTo(BeNil())
 	if message == "" {
 		Expect(c.Message).To(BeEmpty())
@@ -131,7 +130,6 @@ func assertServiceDiscoveryCondition(vsphereCluster *vmwarev1.VSphereCluster, st
 	}
 	Expect(c.Status).To(Equal(status))
 	Expect(c.Reason).To(Equal(reason))
-	Expect(c.Severity).To(Equal(severity))
 }
 
 func assertHeadlessSvcWithUpdatedVIPEndpoints(ctx context.Context, guestClient client.Client, namespace, name string) {

@@ -37,7 +37,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	vmwarev1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/vmware/v1beta1"
+	vmwarev1 "sigs.k8s.io/cluster-api-provider-vsphere/api/supervisor/v1beta2"
 )
 
 // IntegrationTestContext is used for integration testing
@@ -137,6 +137,9 @@ func NewIntegrationTestContextWithClusters(ctx context.Context, integrationTestC
 			ObjectMeta: metav1.ObjectMeta{
 				Namespace: testCtx.Namespace,
 				Name:      fmt.Sprintf("%s-kubeconfig", testCtx.Cluster.Name),
+				Labels: map[string]string{
+					clusterv1.ClusterNameLabel: testCtx.Cluster.Name,
+				},
 				OwnerReferences: []metav1.OwnerReference{
 					{
 						APIVersion: clusterv1.GroupVersion.String(),

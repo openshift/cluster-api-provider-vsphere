@@ -28,12 +28,11 @@ import (
 	addonsv1 "sigs.k8s.io/cluster-api/api/addons/v1beta2"
 	bootstrapv1 "sigs.k8s.io/cluster-api/api/bootstrap/kubeadm/v1beta2"
 	controlplanev1 "sigs.k8s.io/cluster-api/api/controlplane/kubeadm/v1beta2"
-	clusterv1beta1 "sigs.k8s.io/cluster-api/api/core/v1beta1"
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	infrav1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/v1beta1"
-	vmwarev1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/vmware/v1beta1"
+	infrav1 "sigs.k8s.io/cluster-api-provider-vsphere/api/govmomi/v1beta2"
+	vmwarev1 "sigs.k8s.io/cluster-api-provider-vsphere/api/supervisor/v1beta2"
 	"sigs.k8s.io/cluster-api-provider-vsphere/packaging/flavorgen/flavors/env"
 	"sigs.k8s.io/cluster-api-provider-vsphere/packaging/flavorgen/flavors/kubevip"
 	"sigs.k8s.io/cluster-api-provider-vsphere/packaging/flavorgen/flavors/util"
@@ -237,7 +236,7 @@ func newVSphereCluster() infrav1.VSphereCluster {
 		Spec: infrav1.VSphereClusterSpec{
 			Server:     env.VSphereServerVar,
 			Thumbprint: env.VSphereThumbprint,
-			IdentityRef: &infrav1.VSphereIdentityReference{
+			IdentityRef: infrav1.VSphereIdentityReference{
 				Name: env.ClusterNameVar,
 				Kind: infrav1.SecretKind,
 			},
@@ -260,7 +259,7 @@ func newVMWareCluster() vmwarev1.VSphereCluster {
 			Namespace: env.NamespaceVar,
 		},
 		Spec: vmwarev1.VSphereClusterSpec{
-			ControlPlaneEndpoint: clusterv1beta1.APIEndpoint{
+			ControlPlaneEndpoint: vmwarev1.APIEndpoint{
 				Host: env.ControlPlaneEndpointHostVar,
 				Port: 6443,
 			},
@@ -361,8 +360,8 @@ func defaultVirtualMachineCloneSpec() infrav1.VirtualMachineCloneSpec {
 			Devices: []infrav1.NetworkDeviceSpec{
 				{
 					NetworkName: env.VSphereNetworkVar,
-					DHCP4:       true,
-					DHCP6:       false,
+					DHCP4:       ptr.To(true),
+					DHCP6:       ptr.To(false),
 				},
 			},
 		},
@@ -413,11 +412,11 @@ func nodeIPAMVirtualMachineCloneSpec() infrav1.VirtualMachineCloneSpec {
 			Devices: []infrav1.NetworkDeviceSpec{
 				{
 					NetworkName: env.VSphereNetworkVar,
-					DHCP4:       false,
-					DHCP6:       false,
-					AddressesFromPools: []corev1.TypedLocalObjectReference{
+					DHCP4:       ptr.To(false),
+					DHCP6:       ptr.To(false),
+					AddressesFromPools: []infrav1.IPPoolReference{
 						{
-							APIGroup: ptr.To(env.NodeIPAMPoolAPIGroup),
+							APIGroup: env.NodeIPAMPoolAPIGroup,
 							Kind:     env.NodeIPAMPoolKind,
 							Name:     env.NodeIPAMPoolName,
 						},

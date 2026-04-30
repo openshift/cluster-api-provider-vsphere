@@ -1,0 +1,451 @@
+/*
+Copyright 2026 The Kubernetes Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package v1beta1
+
+import (
+	"maps"
+	"reflect"
+	"slices"
+	"sort"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	apimachineryconversion "k8s.io/apimachinery/pkg/conversion"
+	"k8s.io/utils/ptr"
+	clusterv1beta1 "sigs.k8s.io/cluster-api/api/core/v1beta1"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
+	utilconversion "sigs.k8s.io/cluster-api/util/conversion"
+	"sigs.k8s.io/controller-runtime/pkg/conversion"
+
+	vmwarev1 "sigs.k8s.io/cluster-api-provider-vsphere/api/supervisor/v1beta2"
+)
+
+func (src *VSphereCluster) ConvertTo(dstRaw conversion.Hub) error {
+	dst := dstRaw.(*vmwarev1.VSphereCluster)
+	if err := Convert_v1beta1_VSphereCluster_To_v1beta2_VSphereCluster(src, dst, nil); err != nil {
+		return err
+	}
+
+	restored := &vmwarev1.VSphereCluster{}
+	ok, err := utilconversion.UnmarshalData(src, restored)
+	if err != nil {
+		return err
+	}
+
+	initialization := vmwarev1.VSphereClusterInitializationStatus{}
+	clusterv1.Convert_bool_To_Pointer_bool(src.Status.Ready, ok, restored.Status.Initialization.Provisioned, &initialization.Provisioned)
+	if !reflect.DeepEqual(initialization, vmwarev1.VSphereClusterInitializationStatus{}) {
+		dst.Status.Initialization = initialization
+	}
+	return nil
+}
+
+func (dst *VSphereCluster) ConvertFrom(srcRaw conversion.Hub) error {
+	src := srcRaw.(*vmwarev1.VSphereCluster)
+	if err := Convert_v1beta2_VSphereCluster_To_v1beta1_VSphereCluster(src, dst, nil); err != nil {
+		return err
+	}
+
+	return utilconversion.MarshalDataUnsafeNoCopy(src, dst)
+}
+
+func (src *VSphereClusterTemplate) ConvertTo(dstRaw conversion.Hub) error {
+	dst := dstRaw.(*vmwarev1.VSphereClusterTemplate)
+	if err := Convert_v1beta1_VSphereClusterTemplate_To_v1beta2_VSphereClusterTemplate(src, dst, nil); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (dst *VSphereClusterTemplate) ConvertFrom(srcRaw conversion.Hub) error {
+	src := srcRaw.(*vmwarev1.VSphereClusterTemplate)
+	if err := Convert_v1beta2_VSphereClusterTemplate_To_v1beta1_VSphereClusterTemplate(src, dst, nil); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (src *VSphereMachine) ConvertTo(dstRaw conversion.Hub) error {
+	dst := dstRaw.(*vmwarev1.VSphereMachine)
+	if err := Convert_v1beta1_VSphereMachine_To_v1beta2_VSphereMachine(src, dst, nil); err != nil {
+		return err
+	}
+
+	restored := &vmwarev1.VSphereMachine{}
+	ok, err := utilconversion.UnmarshalData(src, restored)
+	if err != nil {
+		return err
+	}
+
+	initialization := vmwarev1.VSphereMachineInitializationStatus{}
+	clusterv1.Convert_bool_To_Pointer_bool(src.Status.Ready, ok, restored.Status.Initialization.Provisioned, &initialization.Provisioned)
+	if !reflect.DeepEqual(initialization, vmwarev1.VSphereMachineInitializationStatus{}) {
+		dst.Status.Initialization = initialization
+	}
+	dst.Status.FailureDomain = restored.Status.FailureDomain
+	return nil
+}
+
+func (dst *VSphereMachine) ConvertFrom(srcRaw conversion.Hub) error {
+	src := srcRaw.(*vmwarev1.VSphereMachine)
+	if err := Convert_v1beta2_VSphereMachine_To_v1beta1_VSphereMachine(src, dst, nil); err != nil {
+		return err
+	}
+
+	if dst.Spec.ProviderID != nil && *dst.Spec.ProviderID == "" {
+		dst.Spec.ProviderID = nil
+	}
+
+	if dst.Spec.FailureDomain != nil && *dst.Spec.FailureDomain == "" {
+		dst.Spec.FailureDomain = nil
+	}
+
+	if dst.Status.ID != nil && *dst.Status.ID == "" {
+		dst.Status.ID = nil
+	}
+
+	return utilconversion.MarshalDataUnsafeNoCopy(src, dst)
+}
+
+func (src *VSphereMachineTemplate) ConvertTo(dstRaw conversion.Hub) error {
+	dst := dstRaw.(*vmwarev1.VSphereMachineTemplate)
+	if err := Convert_v1beta1_VSphereMachineTemplate_To_v1beta2_VSphereMachineTemplate(src, dst, nil); err != nil {
+		return err
+	}
+
+	restored := &vmwarev1.VSphereMachineTemplate{}
+	ok, err := utilconversion.UnmarshalData(src, restored)
+	if err != nil {
+		return err
+	}
+
+	if ok {
+		dst.Status.NodeInfo = restored.Status.NodeInfo
+	}
+
+	return nil
+}
+
+func (dst *VSphereMachineTemplate) ConvertFrom(srcRaw conversion.Hub) error {
+	src := srcRaw.(*vmwarev1.VSphereMachineTemplate)
+	if err := Convert_v1beta2_VSphereMachineTemplate_To_v1beta1_VSphereMachineTemplate(src, dst, nil); err != nil {
+		return err
+	}
+
+	if dst.Spec.Template.Spec.ProviderID != nil && *dst.Spec.Template.Spec.ProviderID == "" {
+		dst.Spec.Template.Spec.ProviderID = nil
+	}
+
+	if dst.Spec.Template.Spec.FailureDomain != nil && *dst.Spec.Template.Spec.FailureDomain == "" {
+		dst.Spec.Template.Spec.FailureDomain = nil
+	}
+
+	return utilconversion.MarshalDataUnsafeNoCopy(src, dst)
+}
+
+func (src *ProviderServiceAccount) ConvertTo(dstRaw conversion.Hub) error {
+	dst := dstRaw.(*vmwarev1.ProviderServiceAccount)
+	if err := Convert_v1beta1_ProviderServiceAccount_To_v1beta2_ProviderServiceAccount(src, dst, nil); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (dst *ProviderServiceAccount) ConvertFrom(srcRaw conversion.Hub) error {
+	src := srcRaw.(*vmwarev1.ProviderServiceAccount)
+	if err := Convert_v1beta2_ProviderServiceAccount_To_v1beta1_ProviderServiceAccount(src, dst, nil); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func Convert_v1beta2_VSphereClusterStatus_To_v1beta1_VSphereClusterStatus(in *vmwarev1.VSphereClusterStatus, out *VSphereClusterStatus, s apimachineryconversion.Scope) error {
+	if err := autoConvert_v1beta2_VSphereClusterStatus_To_v1beta1_VSphereClusterStatus(in, out, s); err != nil {
+		return err
+	}
+
+	// Reset conditions from autogenerated conversions
+	// NOTE: v1beta2 conditions should not automatically be converted into legacy conditions (v1beta1).
+	out.Conditions = nil
+
+	// Retrieve legacy conditions (v1beta1) from the deprecated field.
+	if in.Deprecated != nil && in.Deprecated.V1Beta1 != nil {
+		if in.Deprecated.V1Beta1.Conditions != nil {
+			clusterv1beta1.Convert_v1beta2_Deprecated_V1Beta1_Conditions_To_v1beta1_Conditions(&in.Deprecated.V1Beta1.Conditions, &out.Conditions)
+		}
+	}
+
+	// Move initialization to old field
+	out.Ready = ptr.Deref(in.Initialization.Provisioned, false)
+
+	// Move FailureDomains
+	if in.FailureDomains != nil {
+		out.FailureDomains = clusterv1beta1.FailureDomains{}
+		for _, fd := range in.FailureDomains {
+			out.FailureDomains[fd.Name] = clusterv1beta1.FailureDomainSpec{
+				ControlPlane: ptr.Deref(fd.ControlPlane, false),
+				Attributes:   fd.Attributes,
+			}
+		}
+	}
+
+	// Move new conditions (v1beta2) to the v1beta2 field.
+	if in.Conditions == nil {
+		return nil
+	}
+	out.V1Beta2 = &VSphereClusterV1Beta2Status{}
+	out.V1Beta2.Conditions = in.Conditions
+	return nil
+}
+
+func Convert_v1beta1_VSphereClusterStatus_To_v1beta2_VSphereClusterStatus(in *VSphereClusterStatus, out *vmwarev1.VSphereClusterStatus, s apimachineryconversion.Scope) error {
+	if err := autoConvert_v1beta1_VSphereClusterStatus_To_v1beta2_VSphereClusterStatus(in, out, s); err != nil {
+		return err
+	}
+
+	// Reset conditions from autogenerated conversions
+	// NOTE: v1beta1 conditions should not be automatically be converted into v1beta2 conditions.
+	out.Conditions = nil
+
+	// Retrieve new conditions (v1beta2) from the v1beta2 field.
+	if in.V1Beta2 != nil {
+		out.Conditions = in.V1Beta2.Conditions
+	}
+
+	// Move FailureDomains
+	if in.FailureDomains != nil {
+		out.FailureDomains = []clusterv1.FailureDomain{}
+		domainNames := slices.Collect(maps.Keys(in.FailureDomains))
+		sort.Strings(domainNames)
+		for _, name := range domainNames {
+			fd := in.FailureDomains[name]
+			out.FailureDomains = append(out.FailureDomains, clusterv1.FailureDomain{
+				Name:         name,
+				ControlPlane: ptr.To(fd.ControlPlane),
+				Attributes:   fd.Attributes,
+			})
+		}
+	}
+
+	// Move legacy conditions (v1beta1) to the deprecated field.
+	if in.Conditions == nil {
+		return nil
+	}
+
+	if out.Deprecated == nil {
+		out.Deprecated = &vmwarev1.VSphereClusterDeprecatedStatus{}
+	}
+	if out.Deprecated.V1Beta1 == nil {
+		out.Deprecated.V1Beta1 = &vmwarev1.VSphereClusterV1Beta1DeprecatedStatus{}
+	}
+	if in.Conditions != nil {
+		clusterv1beta1.Convert_v1beta1_Conditions_To_v1beta2_Deprecated_V1Beta1_Conditions(&in.Conditions, &out.Deprecated.V1Beta1.Conditions)
+	}
+	return nil
+}
+
+func Convert_v1beta2_VSphereClusterTemplateResource_To_v1beta1_VSphereClusterTemplateResource(in *vmwarev1.VSphereClusterTemplateResource, out *VSphereClusterTemplateResource, s apimachineryconversion.Scope) error {
+	if err := autoConvert_v1beta2_VSphereClusterTemplateResource_To_v1beta1_VSphereClusterTemplateResource(in, out, s); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func Convert_v1beta2_VSphereMachineSpec_To_v1beta1_VSphereMachineSpec(in *vmwarev1.VSphereMachineSpec, out *VSphereMachineSpec, s apimachineryconversion.Scope) error {
+	if err := autoConvert_v1beta2_VSphereMachineSpec_To_v1beta1_VSphereMachineSpec(in, out, s); err != nil {
+		return err
+	}
+
+	if !reflect.DeepEqual(in.Naming, vmwarev1.VirtualMachineNamingSpec{}) {
+		out.NamingStrategy = &VirtualMachineNamingStrategy{}
+		if err := metav1.Convert_string_To_Pointer_string(&in.Naming.Template, &out.NamingStrategy.Template, s); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func Convert_v1beta1_VSphereMachineSpec_To_v1beta2_VSphereMachineSpec(in *VSphereMachineSpec, out *vmwarev1.VSphereMachineSpec, s apimachineryconversion.Scope) error {
+	if err := autoConvert_v1beta1_VSphereMachineSpec_To_v1beta2_VSphereMachineSpec(in, out, s); err != nil {
+		return err
+	}
+
+	if in.NamingStrategy != nil {
+		if err := metav1.Convert_Pointer_string_To_string(&in.NamingStrategy.Template, &out.Naming.Template, s); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// Convert_v1beta1_InterfaceSpec_To_v1beta2_InterfaceSpec is an autogenerated conversion function.
+func Convert_v1beta1_InterfaceSpec_To_v1beta2_InterfaceSpec(in *InterfaceSpec, out *vmwarev1.InterfaceSpec, s apimachineryconversion.Scope) error {
+	if err := autoConvert_v1beta1_InterfaceSpec_To_v1beta2_InterfaceSpec(in, out, s); err != nil {
+		return err
+	}
+
+	out.NetworkRef.APIVersion = in.Network.APIVersion
+	out.NetworkRef.Kind = in.Network.Kind
+	out.NetworkRef.Name = in.Network.Name
+	return nil
+}
+
+// Convert_v1beta2_InterfaceSpec_To_v1beta1_InterfaceSpec is an autogenerated conversion function.
+func Convert_v1beta2_InterfaceSpec_To_v1beta1_InterfaceSpec(in *vmwarev1.InterfaceSpec, out *InterfaceSpec, s apimachineryconversion.Scope) error {
+	if err := autoConvert_v1beta2_InterfaceSpec_To_v1beta1_InterfaceSpec(in, out, s); err != nil {
+		return err
+	}
+
+	out.Network.APIVersion = in.NetworkRef.APIVersion
+	out.Network.Kind = in.NetworkRef.Kind
+	out.Network.Name = in.NetworkRef.Name
+	return nil
+}
+
+func Convert_v1beta2_VSphereMachineStatus_To_v1beta1_VSphereMachineStatus(in *vmwarev1.VSphereMachineStatus, out *VSphereMachineStatus, s apimachineryconversion.Scope) error {
+	if err := autoConvert_v1beta2_VSphereMachineStatus_To_v1beta1_VSphereMachineStatus(in, out, s); err != nil {
+		return err
+	}
+
+	out.ID = ptr.To(in.BiosUUID)
+	switch in.Phase {
+	case vmwarev1.VSphereMachinePhaseNotFound:
+		out.VMStatus = VirtualMachineStateNotFound
+	case vmwarev1.VSphereMachinePhaseCreated:
+		out.VMStatus = VirtualMachineStateCreated
+	case vmwarev1.VSphereMachinePhasePoweredOn:
+		out.VMStatus = VirtualMachineStatePoweredOn
+	case vmwarev1.VSphereMachinePhasePending:
+		out.VMStatus = VirtualMachineStatePending
+	case vmwarev1.VSphereMachinePhaseReady:
+		out.VMStatus = VirtualMachineStateReady
+	case vmwarev1.VSphereMachinePhaseDeleting:
+		out.VMStatus = VirtualMachineStateDeleting
+	case vmwarev1.VSphereMachinePhaseError:
+		out.VMStatus = VirtualMachineStateError
+	}
+
+	// Reset conditions from autogenerated conversions
+	// NOTE: v1beta2 conditions should not automatically be converted into legacy conditions (v1beta1).
+	out.Conditions = nil
+
+	// Retrieve legacy conditions (v1beta1), failureReason and failureMessage from the deprecated field.
+	if in.Deprecated != nil && in.Deprecated.V1Beta1 != nil {
+		if in.Deprecated.V1Beta1.Conditions != nil {
+			clusterv1beta1.Convert_v1beta2_Deprecated_V1Beta1_Conditions_To_v1beta1_Conditions(&in.Deprecated.V1Beta1.Conditions, &out.Conditions)
+		}
+		out.FailureReason = in.Deprecated.V1Beta1.FailureReason
+		out.FailureMessage = in.Deprecated.V1Beta1.FailureMessage
+	}
+
+	// Move initialization to old field
+	out.Ready = ptr.Deref(in.Initialization.Provisioned, false)
+
+	// Move new conditions (v1beta2) to the v1beta2 field.
+	if in.Conditions == nil {
+		return nil
+	}
+	out.V1Beta2 = &VSphereMachineV1Beta2Status{}
+	out.V1Beta2.Conditions = in.Conditions
+	return nil
+}
+
+func Convert_v1beta1_VSphereMachineStatus_To_v1beta2_VSphereMachineStatus(in *VSphereMachineStatus, out *vmwarev1.VSphereMachineStatus, s apimachineryconversion.Scope) error {
+	if err := autoConvert_v1beta1_VSphereMachineStatus_To_v1beta2_VSphereMachineStatus(in, out, s); err != nil {
+		return err
+	}
+
+	out.BiosUUID = ptr.Deref(in.ID, "")
+	switch in.VMStatus {
+	case VirtualMachineStateNotFound:
+		out.Phase = vmwarev1.VSphereMachinePhaseNotFound
+	case VirtualMachineStateCreated:
+		out.Phase = vmwarev1.VSphereMachinePhaseCreated
+	case VirtualMachineStatePoweredOn:
+		out.Phase = vmwarev1.VSphereMachinePhasePoweredOn
+	case VirtualMachineStatePending:
+		out.Phase = vmwarev1.VSphereMachinePhasePending
+	case VirtualMachineStateReady:
+		out.Phase = vmwarev1.VSphereMachinePhaseReady
+	case VirtualMachineStateDeleting:
+		out.Phase = vmwarev1.VSphereMachinePhaseDeleting
+	case VirtualMachineStateError:
+		out.Phase = vmwarev1.VSphereMachinePhaseError
+	}
+
+	// Reset conditions from autogenerated conversions
+	// NOTE: v1beta1 conditions should not be automatically be converted into v1beta2 conditions.
+	out.Conditions = nil
+
+	// Retrieve new conditions (v1beta2) from the v1beta2 field.
+	if in.V1Beta2 != nil {
+		out.Conditions = in.V1Beta2.Conditions
+	}
+
+	// Move legacy conditions (v1beta1), failureReason and failureMessage to the deprecated field.
+	if in.FailureReason == nil && in.FailureMessage == nil && in.Conditions == nil {
+		return nil
+	}
+
+	if out.Deprecated == nil {
+		out.Deprecated = &vmwarev1.VSphereMachineDeprecatedStatus{}
+	}
+	if out.Deprecated.V1Beta1 == nil {
+		out.Deprecated.V1Beta1 = &vmwarev1.VSphereMachineV1Beta1DeprecatedStatus{}
+	}
+	if in.Conditions != nil {
+		clusterv1beta1.Convert_v1beta1_Conditions_To_v1beta2_Deprecated_V1Beta1_Conditions(&in.Conditions, &out.Deprecated.V1Beta1.Conditions)
+	}
+	out.Deprecated.V1Beta1.FailureReason = in.FailureReason
+	out.Deprecated.V1Beta1.FailureMessage = in.FailureMessage
+	return nil
+}
+
+func Convert_v1beta2_VSphereMachineTemplateResource_To_v1beta1_VSphereMachineTemplateResource(in *vmwarev1.VSphereMachineTemplateResource, out *VSphereMachineTemplateResource, s apimachineryconversion.Scope) error {
+	if err := autoConvert_v1beta2_VSphereMachineTemplateResource_To_v1beta1_VSphereMachineTemplateResource(in, out, s); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func Convert_v1beta2_APIEndpoint_To_v1beta1_APIEndpoint(in *vmwarev1.APIEndpoint, out *clusterv1beta1.APIEndpoint, _ apimachineryconversion.Scope) error {
+	out.Host = in.Host
+	out.Port = in.Port
+	return nil
+}
+
+func Convert_v1beta1_APIEndpoint_To_v1beta2_APIEndpoint(in *clusterv1beta1.APIEndpoint, out *vmwarev1.APIEndpoint, _ apimachineryconversion.Scope) error {
+	out.Host = in.Host
+	out.Port = in.Port
+	return nil
+}
+
+// Convert_v1beta2_VSphereMachineTemplateStatus_To_v1beta1_VSphereMachineTemplateStatus converts v1beta2 VSphereMachineTemplateStatus to v1beta1.
+// This is a manual conversion function that handles the NodeInfo field which doesn't exist in v1beta1.
+// The NodeInfo field is intentionally dropped during this conversion as v1beta1 doesn't support it.
+func Convert_v1beta2_VSphereMachineTemplateStatus_To_v1beta1_VSphereMachineTemplateStatus(in *vmwarev1.VSphereMachineTemplateStatus, out *VSphereMachineTemplateStatus, s apimachineryconversion.Scope) error {
+	// Call the auto-generated conversion function which handles the Capacity field
+	// Note: The NodeInfo field from v1beta2 is intentionally dropped as it doesn't exist in v1beta1
+	return autoConvert_v1beta2_VSphereMachineTemplateStatus_To_v1beta1_VSphereMachineTemplateStatus(in, out, s)
+}

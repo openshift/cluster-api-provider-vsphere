@@ -1,7 +1,7 @@
 ---
 - name: vsphere
   config:
-    version: v1.15.99
+    version: v1.16.99
     image: gcr.io/k8s-staging-capi-vsphere/cluster-api-vsphere-controller
     live_reload_deps:
       - main.go
@@ -15,7 +15,7 @@
     label: CAPV
 - name: vsphere-supervisor
   config:
-    version: v1.15.99
+    version: v1.16.99
     image: gcr.io/k8s-staging-capi-vsphere/cluster-api-vsphere-controller
     live_reload_deps:
       - main.go
@@ -27,13 +27,22 @@
       - internal
       - pkg
     label: CAPV
-    kustomize_folder: "/config/supervisor"
+    kustomize_folder: "/config/supervisor-tilt"
 
-# IMPORTANT: run "make vm-operator-manifest-build" before using this "provider" with tilt
-- name: vm-operator
+# IMPORTANT: run "VM_OPERATOR_VERSION=v1.8.6-0-gde75746a VM_OPERATOR_COMMIT=de75746a9505ef3161172d99b735d6593c54f0c5 make checkout-vm-operator generate-manifests-vm-operator" before using this "provider" with tilt
+- name: vm-operator-v1.8.6-0-gde75746a
   config:
-    version: v1.8.6
+    version: v1.8.6-0-gde75746a
     label: VMOP
-    kustomize_folder: "/test/infrastructure/vm-operator/config"
+    kustomize_folder: "/test/infrastructure/vm-operator/config/v1-8-6-0-gde75746a"
+    kustomize_options:
+      - "--load-restrictor=LoadRestrictionsNone"
+
+# IMPORTANT: run "VM_OPERATOR_VERSION=v1.9.0-567-g93918c59 VM_OPERATOR_COMMIT=93918c59a71918f6395fd319fa4dd5b9a3f57e24 make checkout-vm-operator generate-manifests-vm-operator" before using this "provider" with tilt
+- name: vm-operator-v1.9.0-567-g93918c59
+  config:
+    version: v1.9.0-567-g93918c59
+    label: VMOP
+    kustomize_folder: "/test/infrastructure/vm-operator/config/v1-9-0-567-g93918c59"
     kustomize_options:
       - "--load-restrictor=LoadRestrictionsNone"

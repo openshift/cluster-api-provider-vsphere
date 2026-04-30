@@ -36,26 +36,24 @@ import (
 	"k8s.io/client-go/tools/record"
 	bootstrapapi "k8s.io/cluster-bootstrap/token/api"
 	"k8s.io/klog/v2"
-	clusterv1beta1 "sigs.k8s.io/cluster-api/api/core/v1beta1"
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/cluster-api/controllers/clustercache"
 	clusterutilv1 "sigs.k8s.io/cluster-api/util"
 	"sigs.k8s.io/cluster-api/util/annotations"
-	v1beta1conditions "sigs.k8s.io/cluster-api/util/deprecated/v1beta1/conditions"
-	v1beta2conditions "sigs.k8s.io/cluster-api/util/deprecated/v1beta1/conditions/v1beta2"
-	"sigs.k8s.io/cluster-api/util/deprecated/v1beta1/patch"
+	"sigs.k8s.io/cluster-api/util/conditions"
+	deprecatedv1beta1conditions "sigs.k8s.io/cluster-api/util/conditions/deprecated/v1beta1"
+	capicontrollerutil "sigs.k8s.io/cluster-api/util/controller"
+	"sigs.k8s.io/cluster-api/util/patch"
 	"sigs.k8s.io/cluster-api/util/predicates"
 	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
-	"sigs.k8s.io/controller-runtime/pkg/source"
 
-	vmwarev1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/vmware/v1beta1"
+	vmwarev1 "sigs.k8s.io/cluster-api-provider-vsphere/api/supervisor/v1beta2"
 	capvcontext "sigs.k8s.io/cluster-api-provider-vsphere/pkg/context"
 	vmwarecontext "sigs.k8s.io/cluster-api-provider-vsphere/pkg/context/vmware"
 )
@@ -83,32 +81,17 @@ func AddServiceDiscoveryControllerToManager(ctx context.Context, controllerManag
 	}
 	predicateLog := ctrl.LoggerFrom(ctx).WithValues("controller", "servicediscovery/vspherecluster")
 
-	configMapCache, err := cache.New(mgr.GetConfig(), cache.Options{
-		Scheme: mgr.GetScheme(),
-		Mapper: mgr.GetRESTMapper(),
-		// TODO: Reintroduce the cache sync period
-		// Resync:    ctx.SyncPeriod,
-		DefaultNamespaces: map[string]cache.Config{metav1.NamespacePublic: {}},
-	})
-	if err != nil {
-		return errors.Wrapf(err, "failed to create ConfigMap cache")
-	}
-	if err := mgr.Add(configMapCache); err != nil {
-		return errors.Wrapf(err, "failed to add ConfigMap cache")
-	}
-	return ctrl.NewControllerManagedBy(mgr).For(&vmwarev1.VSphereCluster{}).
+	return capicontrollerutil.NewControllerManagedBy(mgr, predicateLog).
+		For(&vmwarev1.VSphereCluster{}).
 		Named("servicediscovery/vspherecluster").
 		WithOptions(options).
 		Watches(
 			&corev1.Service{},
 			handler.EnqueueRequestsFromMapFunc(r.serviceToClusters),
 		).
-		WatchesRawSource(
-			source.Kind(
-				configMapCache,
-				&corev1.ConfigMap{},
-				handler.TypedEnqueueRequestsFromMapFunc(r.configMapToClusters),
-			),
+		Watches(
+			&corev1.ConfigMap{},
+			handler.EnqueueRequestsFromMapFunc(r.configMapToClusters),
 		).
 		// watch the CAPI cluster
 		Watches(
@@ -152,7 +135,7 @@ type serviceDiscoveryReconciler struct {
 	clusterCache clustercache.ClusterCache
 }
 
-func (r *serviceDiscoveryReconciler) Reconcile(ctx context.Context, req reconcile.Request) (_ reconcile.Result, reterr error) {
+func (r *serviceDiscoveryReconciler) Reconcile(ctx context.Context, req reconcile.Request) (ret reconcile.Result, reterr error) {
 	log := ctrl.LoggerFrom(ctx)
 
 	// Get the vspherecluster for this request.
@@ -198,6 +181,14 @@ func (r *serviceDiscoveryReconciler) Reconcile(ctx context.Context, req reconcil
 		if err := r.patch(ctx, clusterContext); err != nil {
 			reterr = kerrors.NewAggregate([]error{reterr, err})
 		}
+
+		if reterr != nil {
+			// Note: controller-runtime logs a warning if an error is returned in combination with
+			// RequeueAfter / Requeue. Dropping RequeueAfter and Requeue here to avoid this warning
+			// (while preserving Priority).
+			ret.RequeueAfter = 0
+			ret.Requeue = false //nolint:staticcheck // We have to handle Requeue until it is removed
+		}
 	}()
 
 	// This type of controller doesn't care about delete events.
@@ -227,23 +218,23 @@ func (r *serviceDiscoveryReconciler) Reconcile(ctx context.Context, req reconcil
 func (r *serviceDiscoveryReconciler) patch(ctx context.Context, clusterCtx *vmwarecontext.ClusterContext) error {
 	// NOTE: this controller only owns the ServiceDiscoveryReady condition on the VSphereCluster object.
 	return clusterCtx.PatchHelper.Patch(ctx, clusterCtx.VSphereCluster,
-		patch.WithOwnedConditions{Conditions: []clusterv1beta1.ConditionType{
-			vmwarev1.ServiceDiscoveryReadyCondition,
+		patch.WithOwnedV1Beta1Conditions{Conditions: []clusterv1.ConditionType{
+			vmwarev1.ServiceDiscoveryReadyV1Beta1Condition,
 		}},
-		patch.WithOwnedV1Beta2Conditions{Conditions: []string{
-			vmwarev1.VSphereClusterServiceDiscoveryReadyV1Beta2Condition,
+		patch.WithOwnedConditions{Conditions: []string{
+			vmwarev1.VSphereClusterServiceDiscoveryReadyCondition,
 		}},
 	)
 }
 
 func (r *serviceDiscoveryReconciler) reconcileNormal(ctx context.Context, guestClusterCtx *vmwarecontext.GuestClusterContext) error {
 	if err := r.reconcileSupervisorHeadlessService(ctx, guestClusterCtx); err != nil {
-		v1beta1conditions.MarkFalse(guestClusterCtx.VSphereCluster, vmwarev1.ServiceDiscoveryReadyCondition, vmwarev1.SupervisorHeadlessServiceSetupFailedReason,
-			clusterv1beta1.ConditionSeverityWarning, "%v", err)
-		v1beta2conditions.Set(guestClusterCtx.VSphereCluster, metav1.Condition{
-			Type:    vmwarev1.VSphereClusterServiceDiscoveryReadyV1Beta2Condition,
+		deprecatedv1beta1conditions.MarkFalse(guestClusterCtx.VSphereCluster, vmwarev1.ServiceDiscoveryReadyV1Beta1Condition, vmwarev1.SupervisorHeadlessServiceSetupFailedV1Beta1Reason,
+			clusterv1.ConditionSeverityWarning, "%v", err)
+		conditions.Set(guestClusterCtx.VSphereCluster, metav1.Condition{
+			Type:    vmwarev1.VSphereClusterServiceDiscoveryReadyCondition,
 			Status:  metav1.ConditionFalse,
-			Reason:  vmwarev1.VSphereClusterServiceDiscoveryNotReadyV1Beta2Reason,
+			Reason:  vmwarev1.VSphereClusterServiceDiscoveryNotReadyReason,
 			Message: err.Error(),
 		})
 		return errors.Wrapf(err, "failed to reconcile supervisor headless Service")
@@ -282,18 +273,18 @@ func (r *serviceDiscoveryReconciler) reconcileSupervisorHeadlessService(ctx cont
 	if err != nil {
 		// Note: We have watches on the LB Svc (VIP) & the cluster-info configmap (FIP).
 		// There is no need to return an error to keep re-trying.
-		v1beta1conditions.MarkFalse(guestClusterCtx.VSphereCluster, vmwarev1.ServiceDiscoveryReadyCondition, vmwarev1.SupervisorHeadlessServiceSetupFailedReason,
-			clusterv1beta1.ConditionSeverityWarning, "%v", err)
-		v1beta2conditions.Set(guestClusterCtx.VSphereCluster, metav1.Condition{
-			Type:    vmwarev1.VSphereClusterServiceDiscoveryReadyV1Beta2Condition,
+		deprecatedv1beta1conditions.MarkFalse(guestClusterCtx.VSphereCluster, vmwarev1.ServiceDiscoveryReadyV1Beta1Condition, vmwarev1.SupervisorHeadlessServiceSetupFailedV1Beta1Reason,
+			clusterv1.ConditionSeverityWarning, "%v", err)
+		conditions.Set(guestClusterCtx.VSphereCluster, metav1.Condition{
+			Type:    vmwarev1.VSphereClusterServiceDiscoveryReadyCondition,
 			Status:  metav1.ConditionFalse,
-			Reason:  vmwarev1.VSphereClusterServiceDiscoveryNotReadyV1Beta2Reason,
+			Reason:  vmwarev1.VSphereClusterServiceDiscoveryNotReadyReason,
 			Message: err.Error(),
 		})
 		return nil
 	}
 
-	log.Info("Discovered supervisor API server endpoint", "host", supervisorHost, "port", supervisorPort)
+	log.V(5).Info("Discovered supervisor API server endpoint", "host", supervisorHost, "port", supervisorPort)
 	// CreateOrPatch the newEndpoints with the discovered supervisor api server address
 	newEndpoints := newSupervisorHeadlessServiceEndpoints(
 		supervisorHost,
@@ -338,11 +329,11 @@ func (r *serviceDiscoveryReconciler) reconcileSupervisorHeadlessService(ctx cont
 		log.Error(nil, "Unexpected result during createOrPatch service Endpoints", "endpointsSubsets", endpointsSubsetsStr, "operationResult", result)
 	}
 
-	v1beta1conditions.MarkTrue(guestClusterCtx.VSphereCluster, vmwarev1.ServiceDiscoveryReadyCondition)
-	v1beta2conditions.Set(guestClusterCtx.VSphereCluster, metav1.Condition{
-		Type:   vmwarev1.VSphereClusterServiceDiscoveryReadyV1Beta2Condition,
+	deprecatedv1beta1conditions.MarkTrue(guestClusterCtx.VSphereCluster, vmwarev1.ServiceDiscoveryReadyV1Beta1Condition)
+	conditions.Set(guestClusterCtx.VSphereCluster, metav1.Condition{
+		Type:   vmwarev1.VSphereClusterServiceDiscoveryReadyCondition,
 		Status: metav1.ConditionTrue,
-		Reason: vmwarev1.VSphereClusterServiceDiscoveryReadyV1Beta2Reason,
+		Reason: vmwarev1.VSphereClusterServiceDiscoveryReadyReason,
 	})
 	return nil
 }
@@ -499,7 +490,7 @@ func (r *serviceDiscoveryReconciler) serviceToClusters(ctx context.Context, o cl
 
 // configMapToClusters is a mapper function used to enqueue reconcile.Requests
 // It watches for cluster-info configmaps for the supervisor api-server.
-func (r *serviceDiscoveryReconciler) configMapToClusters(ctx context.Context, o *corev1.ConfigMap) []reconcile.Request {
+func (r *serviceDiscoveryReconciler) configMapToClusters(ctx context.Context, o client.Object) []reconcile.Request {
 	if o.GetNamespace() != metav1.NamespacePublic || o.GetName() != bootstrapapi.ConfigMapClusterInfo {
 		return nil
 	}

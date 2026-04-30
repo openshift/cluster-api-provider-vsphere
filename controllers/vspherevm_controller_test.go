@@ -31,15 +31,15 @@ import (
 	apirecord "k8s.io/client-go/tools/record"
 	"k8s.io/utils/ptr"
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
-	ipamv1beta1 "sigs.k8s.io/cluster-api/api/ipam/v1beta1"
+	ipamv1 "sigs.k8s.io/cluster-api/api/ipam/v1beta2"
 	"sigs.k8s.io/cluster-api/controllers/clustercache"
 	"sigs.k8s.io/cluster-api/util"
-	v1beta1conditions "sigs.k8s.io/cluster-api/util/deprecated/v1beta1/conditions"
+	"sigs.k8s.io/cluster-api/util/conditions"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	infrav1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/v1beta1"
+	infrav1 "sigs.k8s.io/cluster-api-provider-vsphere/api/govmomi/v1beta2"
 	"sigs.k8s.io/cluster-api-provider-vsphere/feature"
 	"sigs.k8s.io/cluster-api-provider-vsphere/internal/test/helpers/vcsim"
 	capvcontext "sigs.k8s.io/cluster-api-provider-vsphere/pkg/context"
@@ -59,7 +59,7 @@ func TestReconcileNormal_WaitingForIPAddrAllocation(t *testing.T) {
 		vsphereCluster *infrav1.VSphereCluster
 
 		initObjs       []client.Object
-		ipAddressClaim *ipamv1beta1.IPAddressClaim
+		ipAddressClaim *ipamv1.IPAddressClaim
 	)
 
 	poolAPIGroup := "some.ipam.api.group"
@@ -146,7 +146,7 @@ func TestReconcileNormal_WaitingForIPAddrAllocation(t *testing.T) {
 				Status: infrav1.VSphereVMStatus{},
 			}
 
-			ipAddressClaim = &ipamv1beta1.IPAddressClaim{
+			ipAddressClaim = &ipamv1.IPAddressClaim{
 				TypeMeta: metav1.TypeMeta{
 					Kind: "IPAddressClaim",
 				},
@@ -158,9 +158,9 @@ func TestReconcileNormal_WaitingForIPAddrAllocation(t *testing.T) {
 					},
 					OwnerReferences: []metav1.OwnerReference{{APIVersion: infrav1.GroupVersion.String(), Kind: "VSphereVM", Name: "foo"}},
 				},
-				Spec: ipamv1beta1.IPAddressClaimSpec{
-					PoolRef: corev1.TypedLocalObjectReference{
-						APIGroup: &poolAPIGroup,
+				Spec: ipamv1.IPAddressClaimSpec{
+					PoolRef: ipamv1.IPPoolReference{
+						APIGroup: poolAPIGroup,
 						Kind:     "IPAMPools",
 						Name:     "my-ip-pool",
 					},
@@ -191,10 +191,10 @@ func TestReconcileNormal_WaitingForIPAddrAllocation(t *testing.T) {
 			},
 		})()
 		fakeVMSvc := new(fake_svc.VMService)
-		fakeVMSvc.On("ReconcileVM", mock.Anything).Return(infrav1.VirtualMachine{
+		fakeVMSvc.On("ReconcileVM", mock.Anything).Return(services.VirtualMachine{
 			Name:     vsphereVM.Name,
 			BiosUUID: "265104de-1472-547c-b873-6dc7883fb6cb",
-			State:    infrav1.VirtualMachineStatePending,
+			State:    services.VirtualMachineStatePending,
 			Network:  nil,
 		}, nil)
 		r := setupReconciler(fakeVMSvc)
@@ -209,25 +209,25 @@ func TestReconcileNormal_WaitingForIPAddrAllocation(t *testing.T) {
 		vmKey := util.ObjectKey(vsphereVM)
 		g.Expect(r.Client.Get(context.Background(), vmKey, vm)).NotTo(HaveOccurred())
 
-		g.Expect(v1beta1conditions.Has(vm, infrav1.VMProvisionedCondition)).To(BeTrue())
-		vmProvisionCondition := v1beta1conditions.Get(vm, infrav1.VMProvisionedCondition)
-		g.Expect(vmProvisionCondition.Status).To(Equal(corev1.ConditionFalse))
-		g.Expect(vmProvisionCondition.Reason).To(Equal(infrav1.WaitingForStaticIPAllocationReason))
+		g.Expect(conditions.Has(vm, infrav1.VSphereVMVirtualMachineProvisionedCondition)).To(BeTrue())
+		vmProvisionCondition := conditions.Get(vm, infrav1.VSphereVMVirtualMachineProvisionedCondition)
+		g.Expect(vmProvisionCondition.Status).To(Equal(metav1.ConditionFalse))
+		g.Expect(vmProvisionCondition.Reason).To(Equal(infrav1.VSphereVMVirtualMachineWaitingForStaticIPAllocationReason))
 	})
 
 	t.Run("Waiting for IP addr allocation", func(t *testing.T) {
 		create(infrav1.NetworkSpec{
 			Devices: []infrav1.NetworkDeviceSpec{
-				{NetworkName: "nw-1", DHCP4: true},
+				{NetworkName: "nw-1", DHCP4: ptr.To(true)},
 			},
 		})()
 		fakeVMSvc := new(fake_svc.VMService)
-		fakeVMSvc.On("ReconcileVM", mock.Anything).Return(infrav1.VirtualMachine{
+		fakeVMSvc.On("ReconcileVM", mock.Anything).Return(services.VirtualMachine{
 			Name:     vsphereVM.Name,
 			BiosUUID: "265104de-1472-547c-b873-6dc7883fb6cb",
-			State:    infrav1.VirtualMachineStateReady,
+			State:    services.VirtualMachineStateReady,
 			Network: []infrav1.NetworkStatus{{
-				Connected:   true,
+				Connected:   ptr.To(true),
 				IPAddrs:     []string{}, // empty array to show waiting for IP address
 				MACAddr:     "blah-mac",
 				NetworkName: vsphereVM.Spec.Network.Devices[0].NetworkName,
@@ -245,10 +245,10 @@ func TestReconcileNormal_WaitingForIPAddrAllocation(t *testing.T) {
 		vmKey := util.ObjectKey(vsphereVM)
 		g.Expect(r.Client.Get(context.Background(), vmKey, vm)).NotTo(HaveOccurred())
 
-		g.Expect(v1beta1conditions.Has(vm, infrav1.VMProvisionedCondition)).To(BeTrue())
-		vmProvisionCondition := v1beta1conditions.Get(vm, infrav1.VMProvisionedCondition)
-		g.Expect(vmProvisionCondition.Status).To(Equal(corev1.ConditionFalse))
-		g.Expect(vmProvisionCondition.Reason).To(Equal(infrav1.WaitingForIPAllocationReason))
+		g.Expect(conditions.Has(vm, infrav1.VSphereVMVirtualMachineProvisionedCondition)).To(BeTrue())
+		vmProvisionCondition := conditions.Get(vm, infrav1.VSphereVMVirtualMachineProvisionedCondition)
+		g.Expect(vmProvisionCondition.Status).To(Equal(metav1.ConditionFalse))
+		g.Expect(vmProvisionCondition.Reason).To(Equal(infrav1.VSphereVMVirtualMachineWaitingForIPAllocationReason))
 	})
 
 	t.Run("Deleting a VM with IPAddressClaims", func(t *testing.T) {
@@ -256,9 +256,9 @@ func TestReconcileNormal_WaitingForIPAddrAllocation(t *testing.T) {
 			Devices: []infrav1.NetworkDeviceSpec{
 				{
 					NetworkName: "nw-1",
-					AddressesFromPools: []corev1.TypedLocalObjectReference{
+					AddressesFromPools: []infrav1.IPPoolReference{
 						{
-							APIGroup: &poolAPIGroup,
+							APIGroup: poolAPIGroup,
 							Kind:     "IPAMPools",
 							Name:     "my-ip-pool",
 						},
@@ -270,12 +270,12 @@ func TestReconcileNormal_WaitingForIPAddrAllocation(t *testing.T) {
 		vsphereVM.ObjectMeta.DeletionTimestamp = &metav1.Time{Time: time.Now()}
 
 		fakeVMSvc := new(fake_svc.VMService)
-		fakeVMSvc.On("DestroyVM", mock.Anything).Return(reconcile.Result{}, infrav1.VirtualMachine{
+		fakeVMSvc.On("DestroyVM", mock.Anything).Return(reconcile.Result{}, services.VirtualMachine{
 			Name:     vsphereVM.Name,
 			BiosUUID: "265104de-1472-547c-b873-6dc7883fb6cb",
-			State:    infrav1.VirtualMachineStateNotFound,
+			State:    services.VirtualMachineStateNotFound,
 			Network: []infrav1.NetworkStatus{{
-				Connected:   true,
+				Connected:   ptr.To(true),
 				IPAddrs:     []string{}, // empty array to show waiting for IP address
 				MACAddr:     "blah-mac",
 				NetworkName: vsphereVM.Spec.Network.Devices[0].NetworkName,
@@ -295,7 +295,7 @@ func TestReconcileNormal_WaitingForIPAddrAllocation(t *testing.T) {
 		vmKey := util.ObjectKey(vsphereVM)
 		g.Expect(apierrors.IsNotFound(r.Client.Get(context.Background(), vmKey, vm))).To(BeTrue())
 
-		claim := &ipamv1beta1.IPAddressClaim{}
+		claim := &ipamv1.IPAddressClaim{}
 		ipacKey := util.ObjectKey(ipAddressClaim)
 		g.Expect(r.Client.Get(context.Background(), ipacKey, claim)).NotTo(HaveOccurred())
 		g.Expect(claim.ObjectMeta.Finalizers).NotTo(ContainElement(infrav1.IPAddressClaimFinalizer))
@@ -310,13 +310,13 @@ func TestVmReconciler_WaitingForStaticIPAllocation(t *testing.T) {
 	}{
 		{
 			name:       "for one n/w device with DHCP set to true",
-			devices:    []infrav1.NetworkDeviceSpec{{DHCP4: true, NetworkName: "nw-1"}},
+			devices:    []infrav1.NetworkDeviceSpec{{DHCP4: ptr.To(true), NetworkName: "nw-1"}},
 			shouldWait: false,
 		},
 		{
 			name: "for multiple n/w devices with DHCP set and unset",
 			devices: []infrav1.NetworkDeviceSpec{
-				{DHCP4: true, NetworkName: "nw-1"},
+				{DHCP4: ptr.To(true), NetworkName: "nw-1"},
 				{NetworkName: "nw-2"},
 			},
 			shouldWait: true,
@@ -347,7 +347,7 @@ func TestVmReconciler_WaitingForStaticIPAllocation(t *testing.T) {
 		{
 			name: "for one n/w devices with SkipIPAllocation set",
 			devices: []infrav1.NetworkDeviceSpec{
-				{NetworkName: "nw-1", SkipIPAllocation: true},
+				{NetworkName: "nw-1", SkipIPAllocation: ptr.To(true)},
 			},
 			shouldWait: false,
 		},
@@ -355,7 +355,7 @@ func TestVmReconciler_WaitingForStaticIPAllocation(t *testing.T) {
 			name: "for multiple n/w devices with SkipIPAllocation set for the second one",
 			devices: []infrav1.NetworkDeviceSpec{
 				{NetworkName: "nw-1", IPAddrs: []string{"192.168.1.2/32"}},
-				{NetworkName: "nw-2", SkipIPAllocation: true},
+				{NetworkName: "nw-2", SkipIPAllocation: ptr.To(true)},
 			},
 			shouldWait: false,
 		},
@@ -363,7 +363,7 @@ func TestVmReconciler_WaitingForStaticIPAllocation(t *testing.T) {
 			name: "for multiple n/w devices with SkipIPAllocation set only for one",
 			devices: []infrav1.NetworkDeviceSpec{
 				{NetworkName: "nw-1"},
-				{NetworkName: "nw-2", SkipIPAllocation: true},
+				{NetworkName: "nw-2", SkipIPAllocation: ptr.To(true)},
 			},
 			shouldWait: true,
 		},
@@ -413,7 +413,7 @@ func TestRetrievingVCenterCredentialsFromCluster(t *testing.T) {
 			Namespace: "test",
 		},
 		Spec: infrav1.VSphereClusterSpec{
-			IdentityRef: &infrav1.VSphereIdentityReference{
+			IdentityRef: infrav1.VSphereIdentityReference{
 				Kind: infrav1.SecretKind,
 				Name: secret.Name,
 			},
@@ -501,9 +501,7 @@ func TestRetrievingVCenterCredentialsFromCluster(t *testing.T) {
 		vm := &infrav1.VSphereVM{}
 		vmKey := util.ObjectKey(vsphereVM)
 		g.Expect(r.Client.Get(context.Background(), vmKey, vm)).NotTo(HaveOccurred())
-		g.Expect(v1beta1conditions.Has(vm, infrav1.VCenterAvailableCondition)).To(BeTrue())
-		vCenterCondition := v1beta1conditions.Get(vm, infrav1.VCenterAvailableCondition)
-		g.Expect(vCenterCondition.Status).To(Equal(corev1.ConditionTrue))
+		g.Expect(conditions.IsTrue(vm, infrav1.VSphereVMVCenterAvailableCondition)).To(BeTrue())
 	},
 	)
 
@@ -586,10 +584,10 @@ func Test_reconcile(t *testing.T) {
 		t.Run("when info cannot be fetched", func(t *testing.T) {
 			t.Run("when anti affinity feature gate is turned off", func(t *testing.T) {
 				fakeVMSvc := new(fake_svc.VMService)
-				fakeVMSvc.On("ReconcileVM", mock.Anything).Return(infrav1.VirtualMachine{
+				fakeVMSvc.On("ReconcileVM", mock.Anything).Return(services.VirtualMachine{
 					Name:     vsphereVM.Name,
 					BiosUUID: "265104de-1472-547c-b873-6dc7883fb6cb",
-					State:    infrav1.VirtualMachineStateReady,
+					State:    services.VirtualMachineStateReady,
 				}, nil)
 				r := setupReconciler(fakeVMSvc, initObjs...)
 				_, err := r.reconcile(ctx, &capvcontext.VMContext{
@@ -624,10 +622,10 @@ func Test_reconcile(t *testing.T) {
 			objsWithHierarchy := initObjs
 			objsWithHierarchy = append(objsWithHierarchy, createMachineOwnerHierarchy(machine)...)
 			fakeVMSvc := new(fake_svc.VMService)
-			fakeVMSvc.On("ReconcileVM", mock.Anything).Return(infrav1.VirtualMachine{
+			fakeVMSvc.On("ReconcileVM", mock.Anything).Return(services.VirtualMachine{
 				Name:     vsphereVM.Name,
 				BiosUUID: "265104de-1472-547c-b873-6dc7883fb6cb",
-				State:    infrav1.VirtualMachineStateReady,
+				State:    services.VirtualMachineStateReady,
 				VMRef:    "VirtualMachine:vm-129",
 			}, nil)
 
@@ -652,10 +650,10 @@ func Test_reconcile(t *testing.T) {
 		deletedVM.Finalizers = append(deletedVM.Finalizers, "keep-this-for-the-test")
 
 		fakeVMSvc := new(fake_svc.VMService)
-		fakeVMSvc.On("DestroyVM", mock.Anything).Return(reconcile.Result{}, infrav1.VirtualMachine{
+		fakeVMSvc.On("DestroyVM", mock.Anything).Return(reconcile.Result{}, services.VirtualMachine{
 			Name:     deletedVM.Name,
 			BiosUUID: "265104de-1472-547c-b873-6dc7883fb6cb",
-			State:    infrav1.VirtualMachineStateNotFound,
+			State:    services.VirtualMachineStateNotFound,
 		}, nil)
 
 		initObjs := []client.Object{vsphereCluster, machine, deletedVM}

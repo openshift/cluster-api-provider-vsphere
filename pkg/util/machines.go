@@ -28,12 +28,12 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	apitypes "k8s.io/apimachinery/pkg/types"
-	clusterv1beta1 "sigs.k8s.io/cluster-api/api/core/v1beta1"
+	"k8s.io/utils/ptr"
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	infrav1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/v1beta1"
-	vmwarev1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/vmware/v1beta1"
+	infrav1 "sigs.k8s.io/cluster-api-provider-vsphere/api/govmomi/v1beta2"
+	vmwarev1 "sigs.k8s.io/cluster-api-provider-vsphere/api/supervisor/v1beta2"
 )
 
 // GetVSphereMachine gets a vmware.infrastructure.cluster.x-k8s.io.VSphereMachine resource for the given CAPI Machine.
@@ -58,24 +58,11 @@ var ErrNoMachineIPAddr = errors.New("no IP addresses found for machine")
 // GetMachinePreferredIPAddress returns the preferred IP address for a
 // VSphereMachine resource.
 func GetMachinePreferredIPAddress(machine *infrav1.VSphereMachine) (string, error) {
-	var cidr *net.IPNet
-	if cidrString := machine.Spec.Network.PreferredAPIServerCIDR; cidrString != "" {
-		var err error
-		if _, cidr, err = net.ParseCIDR(cidrString); err != nil {
-			return "", errors.New("error parsing preferred API server CIDR")
-		}
-	}
-
 	for _, machineAddr := range machine.Status.Addresses {
-		if machineAddr.Type != clusterv1beta1.MachineExternalIP {
+		if machineAddr.Type != clusterv1.MachineExternalIP {
 			continue
 		}
-		if cidr == nil {
-			return machineAddr.Address, nil
-		}
-		if cidr.Contains(net.ParseIP(machineAddr.Address)) {
-			return machineAddr.Address, nil
-		}
+		return machineAddr.Address, nil
 	}
 
 	return "", ErrNoMachineIPAddr
@@ -128,10 +115,10 @@ func GetMachineMetadata(hostname string, vsphereVM infrav1.VSphereVM, ipamState 
 			}
 		}
 		// check if DHCP is enabled
-		if vsphereVM.Spec.Network.Devices[i].DHCP4 {
+		if ptr.Deref(vsphereVM.Spec.Network.Devices[i].DHCP4, false) {
 			waitForIPv4 = true
 		}
-		if vsphereVM.Spec.Network.Devices[i].DHCP6 {
+		if ptr.Deref(vsphereVM.Spec.Network.Devices[i].DHCP6, false) {
 			waitForIPv6 = true
 		}
 	}

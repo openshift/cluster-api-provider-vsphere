@@ -44,6 +44,7 @@ import (
 	kerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/klog/v2"
 	"k8s.io/utils/ptr"
+	capicontrollerutil "sigs.k8s.io/cluster-api/util/controller"
 	"sigs.k8s.io/cluster-api/util/deprecated/v1beta1/patch"
 	"sigs.k8s.io/cluster-api/util/finalizers"
 	"sigs.k8s.io/cluster-api/util/predicates"
@@ -62,8 +63,9 @@ const (
 )
 
 type VCenterSimulatorReconciler struct {
-	Client         client.Client
-	SupervisorMode bool
+	Client            client.Client
+	SupervisorMode    bool
+	VMOperatorSimMode bool
 
 	vcsimInstances map[string]*vcsimhelpers.Simulator
 	lock           sync.RWMutex
@@ -74,15 +76,18 @@ type VCenterSimulatorReconciler struct {
 
 // +kubebuilder:rbac:groups=vcsim.infrastructure.cluster.x-k8s.io,resources=vcentersimulators,verbs=get;list;watch;patch
 // +kubebuilder:rbac:groups=vcsim.infrastructure.cluster.x-k8s.io,resources=vcentersimulators/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=topology.tanzu.vmware.com,resources=availabilityzones,verbs=get;list;watch;create;update
+// +kubebuilder:rbac:groups=topology.tanzu.vmware.com,resources=availabilityzones,verbs=get;list;watch;create;update;patch
+// +kubebuilder:rbac:groups=topology.tanzu.vmware.com,resources=zones,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups=vmoperator.vmware.com,resources=virtualmachineclasses,verbs=get;list;watch;create
 // +kubebuilder:rbac:groups=vmoperator.vmware.com,resources=virtualmachineimages,verbs=get;list;watch;create
 // +kubebuilder:rbac:groups=vmoperator.vmware.com,resources=virtualmachineimages/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=cns.vmware.com,resources=storagepolicyusages,verbs=get;list;watch;create
 // +kubebuilder:rbac:groups=storage.k8s.io,resources=storageclasses,verbs=get;list;watch;create
 // +kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create
 // +kubebuilder:rbac:groups="",resources=resourcequotas,verbs=get;list;watch;create
+// +kubebuilder:rbac:groups=apiextensions.k8s.io,resources=customresourcedefinitions,verbs=get;list;watch
 
 func (r *VCenterSimulatorReconciler) Reconcile(ctx context.Context, req ctrl.Request) (_ ctrl.Result, reterr error) {
 	// Fetch the VCenterSimulator instance
@@ -124,7 +129,16 @@ func (r *VCenterSimulatorReconciler) Reconcile(ctx context.Context, req ctrl.Req
 
 func (r *VCenterSimulatorReconciler) reconcileNormal(ctx context.Context, vCenterSimulator *vcsimv1.VCenterSimulator) error {
 	log := ctrl.LoggerFrom(ctx)
-	log.Info("Reconciling VCenter")
+
+	// When simulating vm-operator, there is no need of a vcenter/vcsim.
+	// Note. We keep using the VCenterSimulator CR also in this case to avoid introducing code branches in the test framework.
+	if r.VMOperatorSimMode {
+		vCenterSimulator.Status.Host = "http://1.2.3.4:1234/sdk"
+		vCenterSimulator.Status.Username = "admin"
+		vCenterSimulator.Status.Password = "pass"
+		vCenterSimulator.Status.Thumbprint = "thumbprint"
+		return nil
+	}
 
 	r.lock.Lock()
 	defer r.lock.Unlock()
@@ -292,8 +306,6 @@ func createGovmomiFailureDomainTags(vCenterSimulator *vcsimv1.VCenterSimulator) 
 
 func (r *VCenterSimulatorReconciler) reconcileDelete(ctx context.Context, vCenterSimulator *vcsimv1.VCenterSimulator) {
 	log := ctrl.LoggerFrom(ctx)
-	log.Info("Reconciling delete VCenter server")
-
 	r.lock.Lock()
 	defer r.lock.Unlock()
 
@@ -312,7 +324,7 @@ func (r *VCenterSimulatorReconciler) reconcileDelete(ctx context.Context, vCente
 func (r *VCenterSimulatorReconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manager, options controller.Options) error {
 	predicateLog := ctrl.LoggerFrom(ctx).WithValues("controller", "vcentersimulator")
 
-	err := ctrl.NewControllerManagedBy(mgr).
+	err := capicontrollerutil.NewControllerManagedBy(mgr, predicateLog).
 		For(&vcsimv1.VCenterSimulator{}).
 		WithOptions(options).
 		WithEventFilter(predicates.ResourceNotPausedAndHasFilterLabel(mgr.GetScheme(), predicateLog, r.WatchFilterValue)).

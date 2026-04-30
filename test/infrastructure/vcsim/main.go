@@ -28,19 +28,26 @@ import (
 
 	"github.com/pkg/errors"
 	"github.com/spf13/pflag"
-	vmoprv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha2"
+	vmoprv1alpha2 "github.com/vmware-tanzu/vm-operator/api/v1alpha2"
+	vmoprv1alpha5 "github.com/vmware-tanzu/vm-operator/api/v1alpha5"
+	spqv1 "github.com/vmware-tanzu/vm-operator/external/storage-policy-quota/api/v1alpha2"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	policyv1 "k8s.io/api/policy/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	storagev1 "k8s.io/api/storage/v1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/client-go/tools/leaderelection/resourcelock"
 	cliflag "k8s.io/component-base/cli/flag"
 	"k8s.io/component-base/logs"
 	logsv1 "k8s.io/component-base/logs/api/v1"
+	_ "k8s.io/component-base/logs/json/register"
 	"k8s.io/klog/v2"
+	"k8s.io/utils/ptr"
 	clusterv1beta1 "sigs.k8s.io/cluster-api/api/core/v1beta1"
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/cluster-api/controllers/remote"
@@ -53,12 +60,16 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/config"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	ctrlmgr "sigs.k8s.io/controller-runtime/pkg/manager"
 
-	infrav1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/v1beta1"
-	vmwarev1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/vmware/v1beta1"
+	infrav1beta1 "sigs.k8s.io/cluster-api-provider-vsphere/api/govmomi/v1beta1"
+	vmwarev1beta1 "sigs.k8s.io/cluster-api-provider-vsphere/api/supervisor/v1beta1"
 	topologyv1 "sigs.k8s.io/cluster-api-provider-vsphere/internal/apis/topology/v1alpha1"
+	conversionapi "sigs.k8s.io/cluster-api-provider-vsphere/pkg/conversion/api"
+	vmoprvhub "sigs.k8s.io/cluster-api-provider-vsphere/pkg/conversion/api/vmoperator/hub"
+	conversionclient "sigs.k8s.io/cluster-api-provider-vsphere/pkg/conversion/client"
 	vcsimv1 "sigs.k8s.io/cluster-api-provider-vsphere/test/infrastructure/vcsim/api/v1alpha1"
 	"sigs.k8s.io/cluster-api-provider-vsphere/test/infrastructure/vcsim/controllers"
 )
@@ -91,29 +102,52 @@ var (
 	controlPlaneEndpointConcurrency   int
 	envsubstConcurrency               int
 	vmOperatorDependenciesConcurrency int
+	apiVersionVMOperator              string
+	vmOperatorSimMode                 bool
 )
 
 func init() {
 	// scheme used for operating on the management cluster.
-	_ = corev1.AddToScheme(scheme)
-	_ = clusterv1beta1.AddToScheme(scheme)
-	_ = infrav1.AddToScheme(scheme)
-	_ = vcsimv1.AddToScheme(scheme)
-	_ = topologyv1.AddToScheme(scheme)
-	_ = vmoprv1.AddToScheme(scheme)
-	_ = storagev1.AddToScheme(scheme)
-	_ = vmwarev1.AddToScheme(scheme)
+	utilruntime.Must(corev1.AddToScheme(scheme))
+	utilruntime.Must(clusterv1beta1.AddToScheme(scheme))
+	utilruntime.Must(infrav1beta1.AddToScheme(scheme))
+	utilruntime.Must(vcsimv1.AddToScheme(scheme))
+	utilruntime.Must(topologyv1.AddToScheme(scheme))
+	utilruntime.Must(vmoprvhub.AddToScheme(scheme))
+	utilruntime.Must(vmoprv1alpha2.AddToScheme(scheme))
+	utilruntime.Must(vmoprv1alpha5.AddToScheme(scheme))
+	utilruntime.Must(storagev1.AddToScheme(scheme))
+	utilruntime.Must(vmwarev1beta1.AddToScheme(scheme))
+	utilruntime.Must(apiextensionsv1.AddToScheme(scheme))
+	utilruntime.Must(spqv1.AddToScheme(scheme))
 
 	// scheme used for operating in memory.
-	_ = corev1.AddToScheme(inmemoryScheme)
-	_ = appsv1.AddToScheme(inmemoryScheme)
-	_ = rbacv1.AddToScheme(inmemoryScheme)
-	_ = infrav1.AddToScheme(inmemoryScheme)
+	utilruntime.Must(corev1.AddToScheme(inmemoryScheme))
+	utilruntime.Must(appsv1.AddToScheme(inmemoryScheme))
+	utilruntime.Must(rbacv1.AddToScheme(inmemoryScheme))
+	utilruntime.Must(infrav1beta1.AddToScheme(inmemoryScheme))
+	utilruntime.Must(storagev1.AddToScheme(inmemoryScheme))
+	utilruntime.Must(apiextensionsv1.AddToScheme(inmemoryScheme))
+	utilruntime.Must(policyv1.AddToScheme(inmemoryScheme))
 }
 
 // InitFlags initializes the flags.
 func InitFlags(fs *pflag.FlagSet) {
 	logsv1.AddFlags(logOptions, fs)
+
+	fs.StringVar(
+		&apiVersionVMOperator,
+		"vm-operator-api-version",
+		vmoprv1alpha5.GroupVersion.Version,
+		fmt.Sprintf("the API version to use when reading and writing VM Operator resources in supervisor mode. Valid values are: %s, %s", vmoprv1alpha2.GroupVersion.Version, vmoprv1alpha5.GroupVersion.Version),
+	)
+
+	fs.BoolVar(
+		&vmOperatorSimMode,
+		"vm-operator-sim-mode",
+		false,
+		"Simulate VM operator in supervisor mode.",
+	)
 
 	fs.BoolVar(&enableLeaderElection, "leader-elect", false,
 		"Enable leader election for controller manager. Enabling this will ensure there is only one active controller manager.")
@@ -142,7 +176,7 @@ func InitFlags(fs *pflag.FlagSet) {
 	fs.IntVar(&vSphereVMConcurrency, "vsphere-vm-concurrency", 10,
 		"Number of VSphereVM to process simultaneously")
 
-	fs.IntVar(&virtualMachineConcurrency, "virtual-machine-concurrency", 10,
+	fs.IntVar(&virtualMachineConcurrency, "virtual-machine-concurrency", 100,
 		"Number of VirtualMachine to process simultaneously")
 
 	fs.IntVar(&vCenterSimulatorConcurrency, "vcenter-simulator-concurrency", 10,
@@ -160,10 +194,14 @@ func InitFlags(fs *pflag.FlagSet) {
 	fs.DurationVar(&syncPeriod, "sync-period", 10*time.Minute,
 		"The minimum interval at which watched resources are reconciled (e.g. 15m)")
 
-	fs.Float32Var(&restConfigQPS, "kube-api-qps", 100,
+	// Note: We're using 1000 here instead of the much lower value we usually use in other
+	// production controllers to ensure vcsim does not become the bottleneck in scale tests.
+	fs.Float32Var(&restConfigQPS, "kube-api-qps", 1000,
 		"Maximum queries per second from the controller client to the Kubernetes API server.")
 
-	fs.IntVar(&restConfigBurst, "kube-api-burst", 200,
+	// Note: We're using 1000 here instead of the much lower value we usually use in other
+	// production controllers to ensure vcsim does not become the bottleneck in scale tests.
+	fs.IntVar(&restConfigBurst, "kube-api-burst", 1000,
 		"Maximum number of queries that should be allowed in one burst from the controller client to the Kubernetes API server.")
 
 	fs.StringVar(&healthAddr, "health-addr", ":9440",
@@ -194,11 +232,21 @@ func main() {
 		os.Exit(1)
 	}
 
+	pflag.CommandLine.VisitAll(func(flag *pflag.Flag) {
+		klog.V(1).Infof("FLAG: --%s=%q", flag.Name, flag.Value)
+	})
+
+	if apiVersionVMOperator != vmoprv1alpha2.GroupVersion.Version && apiVersionVMOperator != vmoprv1alpha5.GroupVersion.Version {
+		fmt.Printf("Invalid argument: --vm-operator-api-version must be one of : %s, %s\n", vmoprv1alpha2.GroupVersion.Version, vmoprv1alpha5.GroupVersion.Version)
+		os.Exit(1)
+	}
+
 	// klog.Background will automatically use the right logger.
 	ctrl.SetLogger(klog.Background())
 
 	// Note: setupLog can only be used after ctrl.SetLogger was called
 	setupLog.Info(fmt.Sprintf("Version: %s (git commit: %s)", version.Get().String(), version.Get().GitCommit))
+	setupLog.Info(fmt.Sprintf("Target API Version for group %s: %s", vmoprvhub.GroupVersion.Group, apiVersionVMOperator))
 
 	restConfig := ctrl.GetConfigOrDie()
 	restConfig.QPS = restConfigQPS
@@ -223,6 +271,9 @@ func main() {
 	}
 
 	ctrlOptions := ctrl.Options{
+		Controller: config.Controller{
+			UsePriorityQueue: ptr.To[bool](feature.Gates.Enabled(feature.PriorityQueue)),
+		},
 		Scheme:                     scheme,
 		LeaderElection:             enableLeaderElection,
 		LeaderElectionID:           "vcsim-controller-leader-election-capi",
@@ -264,7 +315,7 @@ func main() {
 	ctx := ctrl.SetupSignalHandler()
 
 	// Check for non-supervisor VSphereCluster and start controller if found
-	gvr := infrav1.GroupVersion.WithResource(reflect.TypeOf(&infrav1.VSphereCluster{}).Elem().Name())
+	gvr := infrav1beta1.GroupVersion.WithResource(reflect.TypeOf(&infrav1beta1.VSphereCluster{}).Elem().Name())
 	govmomiMode, err := isCRDDeployed(mgr, gvr)
 	if err != nil {
 		setupLog.Error(err, "unable to detect govmomi mode")
@@ -272,7 +323,7 @@ func main() {
 	}
 
 	// Check for supervisor VSphereCluster and start controller if found
-	gvr = vmwarev1.GroupVersion.WithResource(reflect.TypeOf(&vmwarev1.VSphereCluster{}).Elem().Name())
+	gvr = vmwarev1beta1.GroupVersion.WithResource(reflect.TypeOf(&vmwarev1beta1.VSphereCluster{}).Elem().Name())
 	supervisorMode, err := isCRDDeployed(mgr, gvr)
 	if err != nil {
 		setupLog.Error(err, "unable to detect supervisor mode")
@@ -329,11 +380,24 @@ func setupReconcilers(ctx context.Context, mgr ctrl.Manager, supervisorMode bool
 		os.Exit(1)
 	}
 
+	converter := conversionapi.DefaultConverterFor(
+		schema.GroupVersion{Group: vmoprvhub.GroupVersion.Group, Version: apiVersionVMOperator},
+	)
+
+	cc, err := conversionclient.NewWithConverter(mgr.GetClient(), converter)
+	if err != nil {
+		setupLog.Error(err, "failed to create a conversion client")
+		os.Exit(1)
+	}
+
 	// Setup reconcilers
 	if err := (&controllers.VCenterSimulatorReconciler{
-		Client:           mgr.GetClient(),
-		SupervisorMode:   supervisorMode,
-		WatchFilterValue: watchFilterValue,
+		// NOTE: use a client that can handle conversions from API versions that exist in the supervisor
+		// and the internal hub version used in the reconciler.
+		Client:            cc,
+		SupervisorMode:    supervisorMode,
+		VMOperatorSimMode: vmOperatorSimMode,
+		WatchFilterValue:  watchFilterValue,
 	}).SetupWithManager(ctx, mgr, concurrency(vCenterSimulatorConcurrency)); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "VCenterSimulatorReconciler")
 		os.Exit(1)
@@ -352,18 +416,24 @@ func setupReconcilers(ctx context.Context, mgr ctrl.Manager, supervisorMode bool
 
 	if supervisorMode {
 		if err := (&controllers.VirtualMachineReconciler{
-			Client:           mgr.GetClient(),
-			InMemoryManager:  inmemoryManager,
-			APIServerMux:     apiServerMux,
-			WatchFilterValue: watchFilterValue,
+			// NOTE: use a client that can handle conversions from API versions that exist in the supervisor
+			// and the internal hub version used in the reconciler.
+			Client:            cc,
+			InMemoryManager:   inmemoryManager,
+			APIServerMux:      apiServerMux,
+			VMOperatorSimMode: vmOperatorSimMode,
+			WatchFilterValue:  watchFilterValue,
 		}).SetupWithManager(ctx, mgr, concurrency(virtualMachineConcurrency)); err != nil {
 			setupLog.Error(err, "unable to create controller", "controller", "VirtualMachineReconciler")
 			os.Exit(1)
 		}
 
 		if err := (&controllers.VMOperatorDependenciesReconciler{
-			Client:           mgr.GetClient(),
-			WatchFilterValue: watchFilterValue,
+			// NOTE: use a client that can handle conversions from API versions that exist in the supervisor
+			// and the internal hub version used in the reconciler.
+			Client:            cc,
+			VMOperatorSimMode: vmOperatorSimMode,
+			WatchFilterValue:  watchFilterValue,
 		}).SetupWithManager(ctx, mgr, concurrency(vmOperatorDependenciesConcurrency)); err != nil {
 			setupLog.Error(err, "unable to create controller", "controller", "VMOperatorDependenciesReconciler")
 			os.Exit(1)

@@ -26,9 +26,11 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	vmoprv1alpha5 "github.com/vmware-tanzu/vm-operator/api/v1alpha5"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/klog/v2"
 	"sigs.k8s.io/cluster-api/test/framework"
@@ -36,6 +38,9 @@ import (
 	. "sigs.k8s.io/cluster-api/test/framework/ginkgoextensions"
 	crclient "sigs.k8s.io/controller-runtime/pkg/client"
 
+	conversionapi "sigs.k8s.io/cluster-api-provider-vsphere/pkg/conversion/api"
+	vmoprvhub "sigs.k8s.io/cluster-api-provider-vsphere/pkg/conversion/api/vmoperator/hub"
+	conversionclient "sigs.k8s.io/cluster-api-provider-vsphere/pkg/conversion/client"
 	vsphereip "sigs.k8s.io/cluster-api-provider-vsphere/test/framework/ip"
 	vspherevcsim "sigs.k8s.io/cluster-api-provider-vsphere/test/framework/vcsim"
 	"sigs.k8s.io/cluster-api-provider-vsphere/test/framework/vmoperator"
@@ -126,9 +131,20 @@ func Setup(specName string, f func(testSpecificSettings func() testSettings), op
 			}
 		}
 
+		// Note: Setting runtimeExtensionProviders to an empty array to ensure that the clusterctl upgrade test does not install
+		// any RuntimeExtensionProviders as a fallback.
+		// Note: Today this variable is only used in the clusterctl upgrade test so it only affects the providers
+		// we install in that test.
+		runtimeExtensionProviders = []string{}
+
 		// Enable additional providers depending on testMode and testTarget.
 		if testMode == SupervisorTestMode {
-			runtimeExtensionProviders = append(runtimeExtensionProviders, "vm-operator", "net-operator")
+			// Use latest vm-operator or the vm-operator version defined in the VM_OPERATOR_VERSION env var.
+			vmOperator := "vm-operator"
+			if e2eConfig.HasVariable("VM_OPERATOR_VERSION") {
+				vmOperator = fmt.Sprintf("%s:%s", vmOperator, e2eConfig.MustGetVariable("VM_OPERATOR_VERSION"))
+			}
+			runtimeExtensionProviders = append(runtimeExtensionProviders, vmOperator, "net-operator")
 		}
 		if testTarget == VCSimTestTarget {
 			runtimeExtensionProviders = append(runtimeExtensionProviders, "vcsim")
@@ -232,8 +248,14 @@ func Setup(specName string, f func(testSpecificSettings func() testSettings), op
 func createVCSimServer(managementClusterProxy framework.ClusterProxy) {
 	Byf("Creating a vcsim server")
 	Eventually(func() error {
-		return vspherevcsim.Create(ctx, managementClusterProxy.GetClient())
-	}, time.Minute, 3*time.Second).ShouldNot(HaveOccurred(), "Failed to create VCenterSimulator")
+		if err := vspherevcsim.Create(ctx, managementClusterProxy.GetClient()); err != nil && !apierrors.IsAlreadyExists(err) {
+			return err
+		}
+		if _, err := vspherevcsim.Get(ctx, managementClusterProxy.GetClient()); err != nil {
+			return err
+		}
+		return nil
+	}, 2*time.Minute, 5*time.Second).ShouldNot(HaveOccurred(), "Failed to create VCenterSimulator")
 }
 
 func allocateIPAddresses(managementClusterProxy framework.ClusterProxy, options *setupOptions) (vsphereip.AddressManager, vsphereip.AddressClaims, map[string]string) {
@@ -363,7 +385,18 @@ func setupNamespaceWithVMOperatorDependenciesVCSim(managementClusterProxy framew
 }
 
 func setupNamespaceWithVMOperatorDependenciesVCenter(managementClusterProxy framework.ClusterProxy, workloadClusterNamespace string) {
-	c := managementClusterProxy.GetClient()
+	// Use latest vm-operator API version or the API version defined in the VM_OPERATOR_API_VERSION env var.
+	apiVersionVMOperator := vmoprv1alpha5.GroupVersion.Version
+	if v := e2eConfig.GetVariableOrEmpty("VM_OPERATOR_API_VERSION"); v != "" {
+		apiVersionVMOperator = v
+	}
+
+	converter := conversionapi.DefaultConverterFor(
+		schema.GroupVersion{Group: vmoprvhub.GroupVersion.Group, Version: apiVersionVMOperator},
+	)
+
+	c, err := conversionclient.NewWithConverter(managementClusterProxy.GetClient(), converter)
+	Expect(err).NotTo(HaveOccurred())
 
 	Byf("Creating VMOperatorDependencies %s", klog.KRef(workloadClusterNamespace, "vcsim"))
 	mustParseInt64 := func(s string) int64 {
@@ -430,6 +463,6 @@ func setupNamespaceWithVMOperatorDependenciesVCenter(managementClusterProxy fram
 		}
 	}
 
-	err := vmoperator.ReconcileDependencies(ctx, c, dependenciesConfig)
+	err = vmoperator.ReconcileDependencies(ctx, c, dependenciesConfig)
 	Expect(err).ToNot(HaveOccurred(), "Failed to reconcile VMOperatorDependencies")
 }

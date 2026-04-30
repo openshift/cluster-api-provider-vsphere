@@ -24,12 +24,12 @@ import (
 	"github.com/pkg/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/klog/v2"
+	"k8s.io/utils/ptr"
 	controlplanev1 "sigs.k8s.io/cluster-api/api/controlplane/kubeadm/v1beta2"
-	clusterv1beta1 "sigs.k8s.io/cluster-api/api/core/v1beta1"
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/cluster-api/util"
-	v1beta1conditions "sigs.k8s.io/cluster-api/util/deprecated/v1beta1/conditions"
-	v1beta2conditions "sigs.k8s.io/cluster-api/util/deprecated/v1beta1/conditions/v1beta2"
+	"sigs.k8s.io/cluster-api/util/conditions"
+	deprecatedv1beta1conditions "sigs.k8s.io/cluster-api/util/conditions/deprecated/v1beta1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
@@ -40,7 +40,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	"sigs.k8s.io/controller-runtime/pkg/source"
 
-	infrav1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/v1beta1"
+	infrav1 "sigs.k8s.io/cluster-api-provider-vsphere/api/govmomi/v1beta2"
 	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/clustermodule"
 	capvcontext "sigs.k8s.io/cluster-api-provider-vsphere/pkg/context"
 )
@@ -69,12 +69,12 @@ func (r Reconciler) Reconcile(ctx context.Context, clusterCtx *capvcontext.Clust
 	log := ctrl.LoggerFrom(ctx)
 
 	if !clustermodule.IsClusterCompatible(clusterCtx) {
-		v1beta1conditions.MarkFalse(clusterCtx.VSphereCluster, infrav1.ClusterModulesAvailableCondition, infrav1.VCenterVersionIncompatibleReason, clusterv1beta1.ConditionSeverityInfo,
+		deprecatedv1beta1conditions.MarkFalse(clusterCtx.VSphereCluster, infrav1.ClusterModulesAvailableV1Beta1Condition, infrav1.VCenterVersionIncompatibleV1Beta1Reason, clusterv1.ConditionSeverityInfo,
 			"vCenter version %s does not support cluster modules", clusterCtx.VSphereCluster.Status.VCenterVersion)
-		v1beta2conditions.Set(clusterCtx.VSphereCluster, metav1.Condition{
-			Type:    infrav1.VSphereClusterClusterModulesReadyV1Beta2Condition,
+		conditions.Set(clusterCtx.VSphereCluster, metav1.Condition{
+			Type:    infrav1.VSphereClusterClusterModulesReadyCondition,
 			Status:  metav1.ConditionFalse,
-			Reason:  infrav1.VSphereClusterModulesInvalidVCenterVersionV1Beta2Reason,
+			Reason:  infrav1.VSphereClusterModulesInvalidVCenterVersionReason,
 			Message: fmt.Sprintf("vCenter version %s does not support cluster modules", clusterCtx.VSphereCluster.Status.VCenterVersion),
 		})
 		log.V(5).Info(fmt.Sprintf("vCenter version %s does not support cluster modules to implement anti affinity (vCenter >= 7 required)", clusterCtx.VSphereCluster.Status.VCenterVersion))
@@ -94,7 +94,7 @@ func (r Reconciler) Reconcile(ctx context.Context, clusterCtx *capvcontext.Clust
 		log := log
 		// It is safe to infer KubeadmControlPlane or MachineDeployment from .ControlPlane as modules
 		// are only implemented for these types.
-		if mod.ControlPlane {
+		if ptr.Deref(mod.ControlPlane, false) {
 			log = log.WithValues("KubeadmControlPlane", klog.KRef(clusterCtx.VSphereCluster.Namespace, mod.TargetObjectName), "moduleUUID", mod.ModuleUUID)
 		} else {
 			log = log.WithValues("MachineDeployment", klog.KRef(clusterCtx.VSphereCluster.Namespace, mod.TargetObjectName), "moduleUUID", mod.ModuleUUID)
@@ -102,7 +102,7 @@ func (r Reconciler) Reconcile(ctx context.Context, clusterCtx *capvcontext.Clust
 		ctx := ctrl.LoggerInto(ctx, log)
 
 		curr := mod.TargetObjectName
-		if mod.ControlPlane {
+		if ptr.Deref(mod.ControlPlane, false) {
 			curr = appendKCPKey(curr)
 		}
 		if obj, ok := objectMap[curr]; !ok {
@@ -119,7 +119,7 @@ func (r Reconciler) Reconcile(ctx context.Context, clusterCtx *capvcontext.Clust
 				log.Error(err, "Failed to check if cluster module for object exists")
 				// Append the module and remove it from objectMap to not create new ones instead.
 				clusterModuleSpecs = append(clusterModuleSpecs, infrav1.ClusterModule{
-					ControlPlane:     obj.IsControlPlane(),
+					ControlPlane:     ptr.To(obj.IsControlPlane()),
 					TargetObjectName: obj.GetName(),
 					ModuleUUID:       mod.ModuleUUID,
 				})
@@ -132,7 +132,7 @@ func (r Reconciler) Reconcile(ctx context.Context, clusterCtx *capvcontext.Clust
 			// needs to be created.
 			if exists {
 				clusterModuleSpecs = append(clusterModuleSpecs, infrav1.ClusterModule{
-					ControlPlane:     obj.IsControlPlane(),
+					ControlPlane:     ptr.To(obj.IsControlPlane()),
 					TargetObjectName: obj.GetName(),
 					ModuleUUID:       mod.ModuleUUID,
 				})
@@ -159,7 +159,7 @@ func (r Reconciler) Reconcile(ctx context.Context, clusterCtx *capvcontext.Clust
 			continue
 		}
 		clusterModuleSpecs = append(clusterModuleSpecs, infrav1.ClusterModule{
-			ControlPlane:     obj.IsControlPlane(),
+			ControlPlane:     ptr.To(obj.IsControlPlane()),
 			TargetObjectName: obj.GetName(),
 			ModuleUUID:       moduleUUID,
 		})
@@ -176,24 +176,24 @@ func (r Reconciler) Reconcile(ctx context.Context, clusterCtx *capvcontext.Clust
 		} else {
 			err = errors.New(generateClusterModuleErrorMessage(modErrs))
 		}
-		v1beta1conditions.MarkFalse(clusterCtx.VSphereCluster, infrav1.ClusterModulesAvailableCondition, infrav1.ClusterModuleSetupFailedReason,
-			clusterv1beta1.ConditionSeverityWarning, "%s", generateClusterModuleErrorMessage(modErrs))
-		v1beta2conditions.Set(clusterCtx.VSphereCluster, metav1.Condition{
-			Type:    infrav1.VSphereClusterClusterModulesReadyV1Beta2Condition,
+		deprecatedv1beta1conditions.MarkFalse(clusterCtx.VSphereCluster, infrav1.ClusterModulesAvailableV1Beta1Condition, infrav1.ClusterModuleSetupFailedV1Beta1Reason,
+			clusterv1.ConditionSeverityWarning, "%s", generateClusterModuleErrorMessage(modErrs))
+		conditions.Set(clusterCtx.VSphereCluster, metav1.Condition{
+			Type:    infrav1.VSphereClusterClusterModulesReadyCondition,
 			Status:  metav1.ConditionFalse,
-			Reason:  infrav1.VSphereClusterClusterModulesNotReadyV1Beta2Reason,
+			Reason:  infrav1.VSphereClusterClusterModulesNotReadyReason,
 			Message: generateClusterModuleErrorMessage(modErrs),
 		})
 		return reconcile.Result{}, err
 	case len(modErrs) == 0 && len(clusterModuleSpecs) > 0:
-		v1beta1conditions.MarkTrue(clusterCtx.VSphereCluster, infrav1.ClusterModulesAvailableCondition)
+		deprecatedv1beta1conditions.MarkTrue(clusterCtx.VSphereCluster, infrav1.ClusterModulesAvailableV1Beta1Condition)
 	default:
-		v1beta1conditions.Delete(clusterCtx.VSphereCluster, infrav1.ClusterModulesAvailableCondition)
+		deprecatedv1beta1conditions.Delete(clusterCtx.VSphereCluster, infrav1.ClusterModulesAvailableV1Beta1Condition)
 	}
-	v1beta2conditions.Set(clusterCtx.VSphereCluster, metav1.Condition{
-		Type:   infrav1.VSphereClusterClusterModulesReadyV1Beta2Condition,
+	conditions.Set(clusterCtx.VSphereCluster, metav1.Condition{
+		Type:   infrav1.VSphereClusterClusterModulesReadyCondition,
 		Status: metav1.ConditionTrue,
-		Reason: infrav1.VSphereClusterClusterModulesReadyV1Beta2Reason,
+		Reason: infrav1.VSphereClusterClusterModulesReadyReason,
 	})
 	return reconcile.Result{}, err
 }

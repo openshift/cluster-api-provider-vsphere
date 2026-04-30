@@ -26,10 +26,9 @@ import (
 	"github.com/vmware/govmomi/simulator"
 	"github.com/vmware/govmomi/vim25"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	clusterv1beta1 "sigs.k8s.io/cluster-api/api/core/v1beta1"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	infrav1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/v1beta1"
+	infrav1 "sigs.k8s.io/cluster-api-provider-vsphere/api/govmomi/v1beta2"
 )
 
 func TestIsSoftPowerOffTimeoutExceeded(t *testing.T) {
@@ -42,9 +41,9 @@ func TestIsSoftPowerOffTimeoutExceeded(t *testing.T) {
 				Namespace: "my-namespace",
 			},
 			Spec: infrav1.VSphereVMSpec{
-				VirtualMachineCloneSpec:  infrav1.VirtualMachineCloneSpec{},
-				PowerOffMode:             infrav1.VirtualMachinePowerOpModeTrySoft,
-				GuestSoftPowerOffTimeout: nil,
+				VirtualMachineCloneSpec:         infrav1.VirtualMachineCloneSpec{},
+				PowerOffMode:                    infrav1.VirtualMachinePowerOpModeTrySoft,
+				GuestSoftPowerOffTimeoutSeconds: 0,
 			},
 		}
 		vms := &VMService{}
@@ -59,41 +58,15 @@ func TestIsSoftPowerOffTimeoutExceeded(t *testing.T) {
 				Namespace: "my-namespace",
 			},
 			Spec: infrav1.VSphereVMSpec{
-				VirtualMachineCloneSpec:  infrav1.VirtualMachineCloneSpec{},
-				PowerOffMode:             infrav1.VirtualMachinePowerOpModeSoft,
-				GuestSoftPowerOffTimeout: nil,
+				VirtualMachineCloneSpec:         infrav1.VirtualMachineCloneSpec{},
+				PowerOffMode:                    infrav1.VirtualMachinePowerOpModeSoft,
+				GuestSoftPowerOffTimeoutSeconds: 0,
 			},
 			Status: infrav1.VSphereVMStatus{
-				Conditions: []clusterv1beta1.Condition{
+				Conditions: []metav1.Condition{
 					{
-						Type:               infrav1.GuestSoftPowerOffSucceededCondition,
-						Status:             infrav1.GuestSoftPowerOffInProgressReason,
-						LastTransitionTime: metav1.NewTime(time.Now().Add(-2 * time.Minute)),
-					},
-				},
-			},
-		}
-		vms := &VMService{}
-
-		g.Expect(vms.isSoftPowerOffTimeoutExceeded(vm)).To(BeFalse())
-	})
-	t.Run("does not time out when guestSoftPowerOffTimeout set to 0", func(t *testing.T) {
-		g = NewWithT(t)
-		vm := &infrav1.VSphereVM{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "vsphereVM1",
-				Namespace: "my-namespace",
-			},
-			Spec: infrav1.VSphereVMSpec{
-				VirtualMachineCloneSpec:  infrav1.VirtualMachineCloneSpec{},
-				PowerOffMode:             infrav1.VirtualMachinePowerOpModeTrySoft,
-				GuestSoftPowerOffTimeout: &metav1.Duration{Duration: 0},
-			},
-			Status: infrav1.VSphereVMStatus{
-				Conditions: []clusterv1beta1.Condition{
-					{
-						Type:               infrav1.GuestSoftPowerOffSucceededCondition,
-						Status:             infrav1.GuestSoftPowerOffInProgressReason,
+						Type:               infrav1.VSphereVMGuestSoftPowerOffSucceededCondition,
+						Status:             infrav1.GuestSoftPowerOffInProgressV1Beta1Reason,
 						LastTransitionTime: metav1.NewTime(time.Now().Add(-2 * time.Minute)),
 					},
 				},
@@ -111,15 +84,15 @@ func TestIsSoftPowerOffTimeoutExceeded(t *testing.T) {
 				Namespace: "my-namespace",
 			},
 			Spec: infrav1.VSphereVMSpec{
-				VirtualMachineCloneSpec:  infrav1.VirtualMachineCloneSpec{},
-				PowerOffMode:             infrav1.VirtualMachinePowerOpModeTrySoft,
-				GuestSoftPowerOffTimeout: &metav1.Duration{Duration: time.Minute},
+				VirtualMachineCloneSpec:         infrav1.VirtualMachineCloneSpec{},
+				PowerOffMode:                    infrav1.VirtualMachinePowerOpModeTrySoft,
+				GuestSoftPowerOffTimeoutSeconds: 60,
 			},
 			Status: infrav1.VSphereVMStatus{
-				Conditions: []clusterv1beta1.Condition{
+				Conditions: []metav1.Condition{
 					{
-						Type:               infrav1.GuestSoftPowerOffSucceededCondition,
-						Status:             infrav1.GuestSoftPowerOffInProgressReason,
+						Type:               infrav1.VSphereVMGuestSoftPowerOffSucceededCondition,
+						Status:             infrav1.GuestSoftPowerOffInProgressV1Beta1Reason,
 						LastTransitionTime: metav1.NewTime(time.Now().Add(-2 * time.Minute)),
 					},
 				},
@@ -159,9 +132,9 @@ func TestTriggerSoftPowerOff(t *testing.T) {
 					Namespace: "my-namespace",
 				},
 				Spec: infrav1.VSphereVMSpec{
-					VirtualMachineCloneSpec:  infrav1.VirtualMachineCloneSpec{},
-					PowerOffMode:             infrav1.VirtualMachinePowerOpModeHard,
-					GuestSoftPowerOffTimeout: nil,
+					VirtualMachineCloneSpec:         infrav1.VirtualMachineCloneSpec{},
+					PowerOffMode:                    infrav1.VirtualMachinePowerOpModeHard,
+					GuestSoftPowerOffTimeoutSeconds: 0,
 				},
 			}
 
@@ -188,15 +161,15 @@ func TestTriggerSoftPowerOff(t *testing.T) {
 					Namespace: "my-namespace",
 				},
 				Spec: infrav1.VSphereVMSpec{
-					VirtualMachineCloneSpec:  infrav1.VirtualMachineCloneSpec{},
-					PowerOffMode:             infrav1.VirtualMachinePowerOpModeSoft,
-					GuestSoftPowerOffTimeout: nil,
+					VirtualMachineCloneSpec:         infrav1.VirtualMachineCloneSpec{},
+					PowerOffMode:                    infrav1.VirtualMachinePowerOpModeSoft,
+					GuestSoftPowerOffTimeoutSeconds: 0,
 				},
 				Status: infrav1.VSphereVMStatus{
-					Conditions: []clusterv1beta1.Condition{
+					Conditions: []metav1.Condition{
 						{
-							Type:               infrav1.GuestSoftPowerOffSucceededCondition,
-							Status:             infrav1.GuestSoftPowerOffInProgressReason,
+							Type:               infrav1.VSphereVMGuestSoftPowerOffSucceededCondition,
+							Status:             infrav1.GuestSoftPowerOffInProgressV1Beta1Reason,
 							LastTransitionTime: metav1.NewTime(time.Now().Add(-2 * time.Minute)),
 						},
 					},
@@ -225,15 +198,15 @@ func TestTriggerSoftPowerOff(t *testing.T) {
 					Namespace: "my-namespace",
 				},
 				Spec: infrav1.VSphereVMSpec{
-					VirtualMachineCloneSpec:  infrav1.VirtualMachineCloneSpec{},
-					PowerOffMode:             infrav1.VirtualMachinePowerOpModeTrySoft,
-					GuestSoftPowerOffTimeout: &metav1.Duration{Duration: 3 * time.Minute},
+					VirtualMachineCloneSpec:         infrav1.VirtualMachineCloneSpec{},
+					PowerOffMode:                    infrav1.VirtualMachinePowerOpModeTrySoft,
+					GuestSoftPowerOffTimeoutSeconds: 3 * 60,
 				},
 				Status: infrav1.VSphereVMStatus{
-					Conditions: []clusterv1beta1.Condition{
+					Conditions: []metav1.Condition{
 						{
-							Type:               infrav1.GuestSoftPowerOffSucceededCondition,
-							Status:             infrav1.GuestSoftPowerOffInProgressReason,
+							Type:               infrav1.VSphereVMGuestSoftPowerOffSucceededCondition,
+							Status:             infrav1.GuestSoftPowerOffInProgressV1Beta1Reason,
 							LastTransitionTime: metav1.NewTime(time.Now().Add(-2 * time.Minute)),
 						},
 					},
@@ -262,15 +235,15 @@ func TestTriggerSoftPowerOff(t *testing.T) {
 					Namespace: "my-namespace",
 				},
 				Spec: infrav1.VSphereVMSpec{
-					VirtualMachineCloneSpec:  infrav1.VirtualMachineCloneSpec{},
-					PowerOffMode:             infrav1.VirtualMachinePowerOpModeTrySoft,
-					GuestSoftPowerOffTimeout: &metav1.Duration{Duration: 1 * time.Minute},
+					VirtualMachineCloneSpec:         infrav1.VirtualMachineCloneSpec{},
+					PowerOffMode:                    infrav1.VirtualMachinePowerOpModeTrySoft,
+					GuestSoftPowerOffTimeoutSeconds: 60,
 				},
 				Status: infrav1.VSphereVMStatus{
-					Conditions: []clusterv1beta1.Condition{
+					Conditions: []metav1.Condition{
 						{
-							Type:               infrav1.GuestSoftPowerOffSucceededCondition,
-							Status:             infrav1.GuestSoftPowerOffInProgressReason,
+							Type:               infrav1.VSphereVMGuestSoftPowerOffSucceededCondition,
+							Status:             infrav1.GuestSoftPowerOffInProgressV1Beta1Reason,
 							LastTransitionTime: metav1.NewTime(time.Now().Add(-2 * time.Minute)),
 						},
 					},
@@ -299,9 +272,9 @@ func TestTriggerSoftPowerOff(t *testing.T) {
 					Namespace: "my-namespace",
 				},
 				Spec: infrav1.VSphereVMSpec{
-					VirtualMachineCloneSpec:  infrav1.VirtualMachineCloneSpec{},
-					PowerOffMode:             infrav1.VirtualMachinePowerOpModeSoft,
-					GuestSoftPowerOffTimeout: nil,
+					VirtualMachineCloneSpec:         infrav1.VirtualMachineCloneSpec{},
+					PowerOffMode:                    infrav1.VirtualMachinePowerOpModeSoft,
+					GuestSoftPowerOffTimeoutSeconds: 0,
 				},
 			}
 
@@ -327,15 +300,15 @@ func TestTriggerSoftPowerOff(t *testing.T) {
 					Namespace: "my-namespace",
 				},
 				Spec: infrav1.VSphereVMSpec{
-					VirtualMachineCloneSpec:  infrav1.VirtualMachineCloneSpec{},
-					PowerOffMode:             infrav1.VirtualMachinePowerOpModeTrySoft,
-					GuestSoftPowerOffTimeout: &metav1.Duration{Duration: 1 * time.Minute},
+					VirtualMachineCloneSpec:         infrav1.VirtualMachineCloneSpec{},
+					PowerOffMode:                    infrav1.VirtualMachinePowerOpModeTrySoft,
+					GuestSoftPowerOffTimeoutSeconds: 60,
 				},
 				Status: infrav1.VSphereVMStatus{
-					Conditions: []clusterv1beta1.Condition{
+					Conditions: []metav1.Condition{
 						{
-							Type:               infrav1.GuestSoftPowerOffSucceededCondition,
-							Status:             infrav1.GuestSoftPowerOffInProgressReason,
+							Type:               infrav1.VSphereVMGuestSoftPowerOffSucceededCondition,
+							Status:             infrav1.GuestSoftPowerOffInProgressV1Beta1Reason,
 							LastTransitionTime: metav1.NewTime(time.Now().Add(-2 * time.Minute)),
 						},
 					},
