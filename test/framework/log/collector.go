@@ -38,7 +38,7 @@ import (
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	vmwarev1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/vmware/v1beta1"
+	vmwarev1 "sigs.k8s.io/cluster-api-provider-vsphere/api/supervisor/v1beta2"
 	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/services/vmoperator"
 )
 
@@ -123,12 +123,16 @@ func (c *MachineLogCollector) machineIPAddresses(ctx context.Context, ctrlClient
 			return nil, errors.Wrapf(err, "getting vmwarev1.VSphereMachine %s/%s", m.Namespace, m.Spec.InfrastructureRef.Name)
 		}
 
-		if vsphereMachine.Status.IPAddr != "" {
-			return []string{vsphereMachine.Status.IPAddr}, nil
+		if len(vsphereMachine.Status.Addresses) > 0 {
+			addresses := []string{}
+			for _, address := range vsphereMachine.Status.Addresses {
+				addresses = append(addresses, address.Address)
+			}
+			return addresses, nil
 		}
 
 		var err error
-		vmName, err = vmoperator.GenerateVirtualMachineName(m.Name, vsphereMachine.Spec.NamingStrategy)
+		vmName, err = vmoperator.GenerateVirtualMachineName(m.Name, vsphereMachine.Spec.Naming)
 		if err != nil {
 			return nil, errors.Wrapf(err, "generating VirtualMachine name for Machine %s/%s", m.Namespace, m.Name)
 		}

@@ -52,8 +52,15 @@ const (
 	// PriorityQueue is a feature gate that controls if the controller uses the controller-runtime PriorityQueue
 	// instead of the default queue implementation.
 	//
-	// alpha: v1.10
+	// alpha: v1.13
+	// beta: v1.16
 	PriorityQueue featuregate.Feature = "PriorityQueue"
+
+	// ReconcilerRateLimiting is a feature gate that controls if reconcilers are rate-limited.
+	// Note: Currently the feature gate is rate-limiting to 1 request / 1 second.
+	//
+	// beta: v1.16
+	ReconcilerRateLimiting featuregate.Feature = "ReconcilerRateLimiting"
 )
 
 func init() {
@@ -63,10 +70,10 @@ func init() {
 // defaultCAPVFeatureGates consists of all known capv-specific feature keys.
 // To add a new feature, define a key for it above and add it here.
 var defaultCAPVFeatureGates = map[featuregate.Feature]featuregate.FeatureSpec{
-	// Every feature should be initiated here:
-	NodeAntiAffinity:     {Default: false, PreRelease: featuregate.Alpha},
-	NamespaceScopedZones: {Default: false, PreRelease: featuregate.Alpha},
-	PriorityQueue:        {Default: false, PreRelease: featuregate.Alpha},
-	NodeAutoPlacement:    {Default: false, PreRelease: featuregate.Alpha},
-	MultiNetworks:        {Default: false, PreRelease: featuregate.Alpha},
+	PriorityQueue:          {Default: true, PreRelease: featuregate.Beta},
+	ReconcilerRateLimiting: {Default: true, PreRelease: featuregate.Beta},
+	NodeAntiAffinity:       {Default: false, PreRelease: featuregate.Alpha},
+	NamespaceScopedZones:   {Default: false, PreRelease: featuregate.Alpha},
+	NodeAutoPlacement:      {Default: false, PreRelease: featuregate.Alpha},
+	MultiNetworks:          {Default: false, PreRelease: featuregate.Alpha},
 }

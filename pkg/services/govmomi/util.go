@@ -28,13 +28,14 @@ import (
 	"github.com/vmware/govmomi/vim25/mo"
 	"github.com/vmware/govmomi/vim25/types"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	clusterv1beta1 "sigs.k8s.io/cluster-api/api/core/v1beta1"
-	v1beta1conditions "sigs.k8s.io/cluster-api/util/deprecated/v1beta1/conditions"
-	v1beta2conditions "sigs.k8s.io/cluster-api/util/deprecated/v1beta1/conditions/v1beta2"
+	"k8s.io/utils/ptr"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
+	"sigs.k8s.io/cluster-api/util/conditions"
+	deprecatedv1beta1conditions "sigs.k8s.io/cluster-api/util/conditions/deprecated/v1beta1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 
-	infrav1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/v1beta1"
+	infrav1 "sigs.k8s.io/cluster-api-provider-vsphere/api/govmomi/v1beta2"
 	capvcontext "sigs.k8s.io/cluster-api-provider-vsphere/pkg/context"
 	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/services/govmomi/net"
 )
@@ -178,11 +179,11 @@ func checkAndRetryTask(ctx context.Context, vmCtx *capvcontext.VMContext, task *
 		}
 
 		log.Info("Task found: Task failed")
-		v1beta1conditions.MarkFalse(vmCtx.VSphereVM, infrav1.VMProvisionedCondition, infrav1.TaskFailure, clusterv1beta1.ConditionSeverityInfo, "%s", errorMessage)
-		v1beta2conditions.Set(vmCtx.VSphereVM, metav1.Condition{
-			Type:   infrav1.VSphereVMVirtualMachineProvisionedV1Beta2Condition,
+		deprecatedv1beta1conditions.MarkFalse(vmCtx.VSphereVM, infrav1.VMProvisionedV1Beta1Condition, infrav1.TaskFailure, clusterv1.ConditionSeverityInfo, "%s", errorMessage)
+		conditions.Set(vmCtx.VSphereVM, metav1.Condition{
+			Type:   infrav1.VSphereVMVirtualMachineProvisionedCondition,
 			Status: metav1.ConditionFalse,
-			Reason: infrav1.VSphereVMVirtualMachineTaskFailedV1Beta2Reason,
+			Reason: infrav1.VSphereVMVirtualMachineTaskFailedReason,
 		})
 
 		// Instead of directly requeuing the failed task, wait for the RetryAfter duration to pass
@@ -277,13 +278,22 @@ func reconcileVSphereVMOnTaskCompletion(ctx context.Context, vmCtx *capvcontext.
 		"taskDescriptionID", task.Info.DescriptionId)
 
 	reconcileVSphereVMOnFuncCompletion(ctx, vmCtx, func() ([]interface{}, error) {
+		// Note: Using a separate context as the ctx passed into reconcileVSphereVMOnTaskCompletion
+		// might timeout or be cancelled at some point (e.g. through controller-runtime ReconciliationTimeout).
+		ctx := context.Background()
 		taskInfo, err := taskHelper.WaitForResult(ctx)
 
 		// An error is only returned if the process of waiting for the result
 		// failed, *not* if the task itself failed.
-		if err != nil && taskInfo == nil {
+		if err != nil {
 			return nil, err
 		}
+
+		// Return if the taskInfo is nil, there is nothing we can do without a task.
+		if taskInfo == nil {
+			return nil, nil
+		}
+
 		// do not queue in the event channel when task fails as we don't
 		// want to retry right away
 		if taskInfo.State == types.TaskInfoStateError {
@@ -517,7 +527,7 @@ func waitForIPAddresses(
 						}
 					case gonet.ParseIP(discoveredIP).To4() != nil:
 						// An IPv4 address...
-						if deviceSpec.DHCP4 {
+						if ptr.Deref(deviceSpec.DHCP4, false) {
 							// Has an IPv4 lease been discovered yet?
 							if _, ok := macToHasIPv4Lease[mac]; !ok {
 								log.Info("Discovered IP address",
@@ -529,7 +539,7 @@ func waitForIPAddresses(
 						}
 					default:
 						// An IPv6 address..
-						if deviceSpec.DHCP6 {
+						if ptr.Deref(deviceSpec.DHCP6, false) {
 							// Has an IPv6 lease been discovered yet?
 							if _, ok := macToHasIPv6Lease[mac]; !ok {
 								log.Info("Discovered IP address",
@@ -549,7 +559,7 @@ func waitForIPAddresses(
 		for i, deviceSpec := range virtualMachineCtx.VSphereVM.Spec.Network.Devices {
 			// If the device spec has SkipIPAllocation set true then
 			// the wait is not required
-			if deviceSpec.SkipIPAllocation {
+			if ptr.Deref(deviceSpec.SkipIPAllocation, false) {
 				continue
 			}
 
@@ -563,7 +573,7 @@ func waitForIPAddresses(
 			}
 			// If the device spec requires DHCP4 then the Wait is not
 			// over if there is no IPv4 lease.
-			if deviceSpec.DHCP4 {
+			if ptr.Deref(deviceSpec.DHCP4, false) {
 				if _, ok := macToHasIPv4Lease[mac]; !ok {
 					log.Info("The VM is missing the requested IP address",
 						"addressType", "dhcp4")
@@ -572,7 +582,7 @@ func waitForIPAddresses(
 			}
 			// If the device spec requires DHCP6 then the Wait is not
 			// over if there is no IPv6 lease.
-			if deviceSpec.DHCP6 {
+			if ptr.Deref(deviceSpec.DHCP6, false) {
 				if _, ok := macToHasIPv6Lease[mac]; !ok {
 					log.Info("The VM is missing the requested IP address",
 						"addressType", "dhcp6")

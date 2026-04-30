@@ -20,9 +20,10 @@ import (
 	"context"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"sigs.k8s.io/cluster-api/util/deprecated/v1beta1/patch"
+	"k8s.io/utils/ptr"
+	"sigs.k8s.io/cluster-api/util/patch"
 
-	infrav1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/v1beta1"
+	infrav1 "sigs.k8s.io/cluster-api-provider-vsphere/api/govmomi/v1beta2"
 	capvcontext "sigs.k8s.io/cluster-api-provider-vsphere/pkg/context"
 )
 
@@ -63,8 +64,8 @@ func newVSphereVM() infrav1.VSphereVM {
 					Devices: []infrav1.NetworkDeviceSpec{
 						{
 							NetworkName: "VM Network",
-							DHCP4:       true,
-							DHCP6:       true,
+							DHCP4:       ptr.To(true),
+							DHCP6:       ptr.To(true),
 						},
 					},
 				},

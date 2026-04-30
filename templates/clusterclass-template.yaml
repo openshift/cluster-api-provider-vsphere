@@ -1,11 +1,8 @@
-apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
+apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
 kind: VSphereClusterTemplate
 metadata:
   name: '${CLUSTER_CLASS_NAME}'
   namespace: '${NAMESPACE}'
-spec:
-  template:
-    spec: {}
 ---
 apiVersion: cluster.x-k8s.io/v1beta2
 kind: ClusterClass
@@ -15,7 +12,7 @@ spec:
   controlPlane:
     machineInfrastructure:
       templateRef:
-        apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
+        apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
         kind: VSphereMachineTemplate
         name: ${CLUSTER_CLASS_NAME}-template
     templateRef:
@@ -24,7 +21,7 @@ spec:
       name: ${CLUSTER_CLASS_NAME}-controlplane
   infrastructure:
     templateRef:
-      apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
+      apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
       kind: VSphereClusterTemplate
       name: '${CLUSTER_CLASS_NAME}'
   patches:
@@ -86,6 +83,11 @@ spec:
   - definitions:
     - jsonPatches:
       - op: add
+        path: /spec
+        value:
+          template:
+            spec: {}
+      - op: add
         path: /spec/template/spec/controlPlaneEndpoint
         valueFrom:
           template: |
@@ -106,7 +108,7 @@ spec:
         valueFrom:
           variable: infraServer.thumbprint
       selector:
-        apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
+        apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
         kind: VSphereClusterTemplate
         matchResources:
           infrastructureCluster: true
@@ -237,11 +239,11 @@ spec:
       class: ${CLUSTER_CLASS_NAME}-worker
       infrastructure:
         templateRef:
-          apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
+          apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
           kind: VSphereMachineTemplate
           name: ${CLUSTER_CLASS_NAME}-worker-machinetemplate
 ---
-apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
+apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
 kind: VSphereMachineTemplate
 metadata:
   name: ${CLUSTER_CLASS_NAME}-template
@@ -258,6 +260,7 @@ spec:
       network:
         devices:
         - dhcp4: true
+          dhcp6: false
           networkName: '${VSPHERE_NETWORK}'
       numCPUs: 2
       os: Linux
@@ -267,7 +270,7 @@ spec:
       storagePolicyName: '${VSPHERE_STORAGE_POLICY}'
       template: '${VSPHERE_TEMPLATE}'
 ---
-apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
+apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
 kind: VSphereMachineTemplate
 metadata:
   name: ${CLUSTER_CLASS_NAME}-worker-machinetemplate
@@ -284,6 +287,7 @@ spec:
       network:
         devices:
         - dhcp4: true
+          dhcp6: false
           networkName: '${VSPHERE_NETWORK}'
       numCPUs: 2
       os: Linux

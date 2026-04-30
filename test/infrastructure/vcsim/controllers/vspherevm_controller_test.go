@@ -22,13 +22,14 @@ import (
 	"time"
 
 	. "github.com/onsi/gomega"
-	vmoprv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha2"
+	vmoprv1alpha5 "github.com/vmware-tanzu/vm-operator/api/v1alpha5"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/klog/v2"
 	"k8s.io/utils/ptr"
 	clusterv1beta1 "sigs.k8s.io/cluster-api/api/core/v1beta1"
@@ -40,8 +41,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	infrav1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/v1beta1"
-	vmwarev1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/vmware/v1beta1"
+	infrav1beta1 "sigs.k8s.io/cluster-api-provider-vsphere/api/govmomi/v1beta1"
+	vmwarev1beta1 "sigs.k8s.io/cluster-api-provider-vsphere/api/supervisor/v1beta1"
+	vmoprvhub "sigs.k8s.io/cluster-api-provider-vsphere/pkg/conversion/api/vmoperator/hub"
 	vcsimv1 "sigs.k8s.io/cluster-api-provider-vsphere/test/infrastructure/vcsim/api/v1alpha1"
 )
 
@@ -54,24 +56,26 @@ var (
 
 func init() {
 	// scheme used for operating on the management cluster.
-	_ = clusterv1.AddToScheme(scheme)
-	_ = infrav1.AddToScheme(scheme)
-	_ = vmwarev1.AddToScheme(scheme)
-	_ = vmoprv1.AddToScheme(scheme)
-	_ = vcsimv1.AddToScheme(scheme)
+	utilruntime.Must(clusterv1.AddToScheme(scheme))
+	utilruntime.Must(clusterv1beta1.AddToScheme(scheme))
+	utilruntime.Must(infrav1beta1.AddToScheme(scheme))
+	utilruntime.Must(vmwarev1beta1.AddToScheme(scheme))
+	utilruntime.Must(vmoprvhub.AddToScheme(scheme))
+	utilruntime.Must(vmoprv1alpha5.AddToScheme(scheme))
+	utilruntime.Must(vcsimv1.AddToScheme(scheme))
 
 	// scheme used for operating on the cloud resource.
-	_ = infrav1.AddToScheme(cloudScheme)
-	_ = corev1.AddToScheme(cloudScheme)
-	_ = appsv1.AddToScheme(cloudScheme)
-	_ = rbacv1.AddToScheme(cloudScheme)
+	utilruntime.Must(infrav1beta1.AddToScheme(cloudScheme))
+	utilruntime.Must(corev1.AddToScheme(cloudScheme))
+	utilruntime.Must(appsv1.AddToScheme(cloudScheme))
+	utilruntime.Must(rbacv1.AddToScheme(cloudScheme))
 }
 
 func Test_Reconcile_VSphereVM(t *testing.T) {
 	t.Run("VSphereMachine not yet provisioned should be ignored", func(t *testing.T) {
 		g := NewWithT(t)
 
-		vsphereCluster := &infrav1.VSphereCluster{
+		vsphereCluster := &infrav1beta1.VSphereCluster{
 			ObjectMeta: metav1.ObjectMeta{
 				Namespace: "foo",
 				Name:      "bar",
@@ -79,38 +83,38 @@ func Test_Reconcile_VSphereVM(t *testing.T) {
 			},
 		}
 
-		cluster := &clusterv1.Cluster{
+		cluster := &clusterv1beta1.Cluster{
 			ObjectMeta: metav1.ObjectMeta{
 				Namespace: "foo",
 				Name:      "bar",
 				UID:       "bar",
 			},
-			Spec: clusterv1.ClusterSpec{
-				InfrastructureRef: clusterv1.ContractVersionedObjectReference{
-					APIGroup: infrav1.GroupVersion.Group,
-					Kind:     "VSphereCluster",
-					Name:     vsphereCluster.Name,
+			Spec: clusterv1beta1.ClusterSpec{
+				InfrastructureRef: &corev1.ObjectReference{
+					APIVersion: infrav1beta1.GroupVersion.String(),
+					Kind:       "VSphereCluster",
+					Name:       vsphereCluster.Name,
 				},
 			},
 		}
 
-		machine := &clusterv1.Machine{
+		machine := &clusterv1beta1.Machine{
 			ObjectMeta: metav1.ObjectMeta{
 				Namespace: "foo",
 				Name:      "bar",
 				Labels: map[string]string{
-					clusterv1.ClusterNameLabel: cluster.Name,
+					clusterv1beta1.ClusterNameLabel: cluster.Name,
 				},
 			},
 		}
 
-		vSphereMachine := &infrav1.VSphereMachine{
+		vSphereMachine := &infrav1beta1.VSphereMachine{
 			ObjectMeta: metav1.ObjectMeta{
 				Namespace: "foo",
 				Name:      "baz",
 				OwnerReferences: []metav1.OwnerReference{
 					{
-						APIVersion: clusterv1.GroupVersion.String(),
+						APIVersion: clusterv1beta1.GroupVersion.String(),
 						Kind:       "Machine",
 						Name:       machine.Name,
 						UID:        machine.UID,
@@ -119,13 +123,13 @@ func Test_Reconcile_VSphereVM(t *testing.T) {
 			},
 		}
 
-		vSphereVM := &infrav1.VSphereVM{
+		vSphereVM := &infrav1beta1.VSphereVM{
 			ObjectMeta: metav1.ObjectMeta{
 				Namespace: "foo",
 				Name:      "bar",
 				OwnerReferences: []metav1.OwnerReference{
 					{
-						APIVersion: infrav1.GroupVersion.String(),
+						APIVersion: infrav1beta1.GroupVersion.String(),
 						Kind:       "VSphereMachine",
 						Name:       vSphereMachine.Name,
 						UID:        vSphereMachine.UID,
@@ -180,7 +184,7 @@ func Test_Reconcile_VSphereVM(t *testing.T) {
 		g.Expect(res).To(Equal(ctrl.Result{RequeueAfter: 5 * time.Second}))
 
 		// Check the conditionsTracker is waiting for infrastructure ready
-		conditionsTracker := &infrav1.VSphereVM{}
+		conditionsTracker := &infrav1beta1.VSphereVM{}
 		err = inmemoryClient.Get(ctx, client.ObjectKeyFromObject(vSphereVM), conditionsTracker)
 		g.Expect(err).ToNot(HaveOccurred())
 
@@ -193,7 +197,7 @@ func Test_Reconcile_VSphereVM(t *testing.T) {
 	t.Run("VSphereMachine provisioned gets a node (worker)", func(t *testing.T) {
 		g := NewWithT(t)
 
-		vsphereCluster := &infrav1.VSphereCluster{
+		vsphereCluster := &infrav1beta1.VSphereCluster{
 			ObjectMeta: metav1.ObjectMeta{
 				Namespace: "foo",
 				Name:      "bar",
@@ -201,43 +205,43 @@ func Test_Reconcile_VSphereVM(t *testing.T) {
 			},
 		}
 
-		cluster := &clusterv1.Cluster{
+		cluster := &clusterv1beta1.Cluster{
 			ObjectMeta: metav1.ObjectMeta{
 				Namespace: "foo",
 				Name:      "bar",
 				UID:       "bar",
 			},
-			Spec: clusterv1.ClusterSpec{
-				InfrastructureRef: clusterv1.ContractVersionedObjectReference{
-					APIGroup: infrav1.GroupVersion.Group,
-					Kind:     "VSphereCluster",
-					Name:     vsphereCluster.Name,
+			Spec: clusterv1beta1.ClusterSpec{
+				InfrastructureRef: &corev1.ObjectReference{
+					APIVersion: infrav1beta1.GroupVersion.String(),
+					Kind:       "VSphereCluster",
+					Name:       vsphereCluster.Name,
 				},
 			},
 		}
 
-		machine := &clusterv1.Machine{
+		machine := &clusterv1beta1.Machine{
 			ObjectMeta: metav1.ObjectMeta{
 				Namespace: "foo",
 				Name:      "bar",
 				Labels: map[string]string{
-					clusterv1.ClusterNameLabel: cluster.Name,
+					clusterv1beta1.ClusterNameLabel: cluster.Name,
 				},
 			},
-			Spec: clusterv1.MachineSpec{
-				Bootstrap: clusterv1.Bootstrap{
+			Spec: clusterv1beta1.MachineSpec{
+				Bootstrap: clusterv1beta1.Bootstrap{
 					DataSecretName: ptr.To("foo"), // this unblocks node provisioning
 				},
 			},
 		}
 
-		vSphereMachine := &infrav1.VSphereMachine{
+		vSphereMachine := &infrav1beta1.VSphereMachine{
 			ObjectMeta: metav1.ObjectMeta{
 				Namespace: "foo",
 				Name:      "bar",
 				OwnerReferences: []metav1.OwnerReference{
 					{
-						APIVersion: clusterv1.GroupVersion.String(),
+						APIVersion: clusterv1beta1.GroupVersion.String(),
 						Kind:       "Machine",
 						Name:       machine.Name,
 						UID:        machine.UID,
@@ -246,13 +250,13 @@ func Test_Reconcile_VSphereVM(t *testing.T) {
 			},
 		}
 
-		vSphereVM := &infrav1.VSphereVM{
+		vSphereVM := &infrav1beta1.VSphereVM{
 			ObjectMeta: metav1.ObjectMeta{
 				Namespace: "foo",
 				Name:      "bar",
 				OwnerReferences: []metav1.OwnerReference{
 					{
-						APIVersion: infrav1.GroupVersion.String(),
+						APIVersion: infrav1beta1.GroupVersion.String(),
 						Kind:       "VSphereMachine",
 						Name:       vSphereMachine.Name,
 						UID:        vSphereMachine.UID,
@@ -262,10 +266,10 @@ func Test_Reconcile_VSphereVM(t *testing.T) {
 					vcsimv1.VMFinalizer, // Adding this to move past the first reconcile
 				},
 			},
-			Spec: infrav1.VSphereVMSpec{
+			Spec: infrav1beta1.VSphereVMSpec{
 				BiosUUID: "foo", // This unblocks provisioning of node
 			},
-			Status: infrav1.VSphereVMStatus{
+			Status: infrav1beta1.VSphereVMStatus{
 				Ready: true, // This unblocks provisioning of node
 			},
 		}
@@ -316,7 +320,7 @@ func Test_Reconcile_VSphereVM(t *testing.T) {
 
 		// Check the mirrorVSphereMachine reports all provisioned
 
-		conditionsTracker := &infrav1.VSphereVM{}
+		conditionsTracker := &infrav1beta1.VSphereVM{}
 		err = inmemoryClient.Get(ctx, client.ObjectKeyFromObject(vSphereVM), conditionsTracker)
 		g.Expect(err).ToNot(HaveOccurred())
 

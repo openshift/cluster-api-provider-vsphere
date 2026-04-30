@@ -29,14 +29,18 @@ import (
 	"github.com/pkg/errors"
 	"github.com/spf13/pflag"
 	netopv1alpha1 "github.com/vmware-tanzu/net-operator-api/api/v1alpha1"
+	vmoprv1alpha2 "github.com/vmware-tanzu/vm-operator/api/v1alpha2"
+	vmoprv1alpha5 "github.com/vmware-tanzu/vm-operator/api/v1alpha5"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/client-go/tools/leaderelection/resourcelock"
 	cliflag "k8s.io/component-base/cli/flag"
 	"k8s.io/component-base/logs"
 	logsv1 "k8s.io/component-base/logs/api/v1"
+	_ "k8s.io/component-base/logs/json/register"
 	"k8s.io/klog/v2"
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/cluster-api/controllers/remote"
@@ -50,7 +54,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	ctrlmgr "sigs.k8s.io/controller-runtime/pkg/manager"
 
-	vmwarev1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/vmware/v1beta1"
+	vmwarev1beta1 "sigs.k8s.io/cluster-api-provider-vsphere/api/supervisor/v1beta1"
+	conversionapi "sigs.k8s.io/cluster-api-provider-vsphere/pkg/conversion/api"
+	vmoprvhub "sigs.k8s.io/cluster-api-provider-vsphere/pkg/conversion/api/vmoperator/hub"
+	conversionclient "sigs.k8s.io/cluster-api-provider-vsphere/pkg/conversion/client"
 	"sigs.k8s.io/cluster-api-provider-vsphere/test/infrastructure/net-operator/controllers"
 )
 
@@ -76,17 +83,29 @@ var (
 	logOptions                  = logs.NewOptions()
 	// net operator specific flags.
 	networkInterfaceConcurrency int
+	virtualMachineConcurrency   int
+	apiVersionVMOperator        string
 )
 
 func init() {
 	// scheme used for operating on the management cluster.
-	_ = corev1.AddToScheme(scheme)
-	_ = netopv1alpha1.AddToScheme(scheme)
+	utilruntime.Must(corev1.AddToScheme(scheme))
+	utilruntime.Must(vmoprvhub.AddToScheme(scheme))
+	utilruntime.Must(vmoprv1alpha2.AddToScheme(scheme))
+	utilruntime.Must(vmoprv1alpha5.AddToScheme(scheme))
+	utilruntime.Must(netopv1alpha1.AddToScheme(scheme))
 }
 
 // InitFlags initializes the flags.
 func InitFlags(fs *pflag.FlagSet) {
 	logsv1.AddFlags(logOptions, fs)
+
+	fs.StringVar(
+		&apiVersionVMOperator,
+		"vm-operator-api-version",
+		vmoprv1alpha5.GroupVersion.Version,
+		fmt.Sprintf("the API version to use when reading and writing VM Operator resources in supervisor mode. Valid values are: %s, %s", vmoprv1alpha2.GroupVersion.Version, vmoprv1alpha5.GroupVersion.Version),
+	)
 
 	fs.BoolVar(&enableLeaderElection, "leader-elect", false,
 		"Enable leader election for controller manager. Enabling this will ensure there is only one active controller manager.")
@@ -115,13 +134,16 @@ func InitFlags(fs *pflag.FlagSet) {
 	fs.IntVar(&networkInterfaceConcurrency, "network-interface-concurrency", 10,
 		"Number of NetworkInterface to process simultaneously")
 
+	fs.IntVar(&virtualMachineConcurrency, "virtual-machine-concurrency", 10,
+		"Number of VirtualMachine to process simultaneously")
+
 	fs.DurationVar(&syncPeriod, "sync-period", 10*time.Minute,
 		"The minimum interval at which watched resources are reconciled (e.g. 15m)")
 
-	fs.Float32Var(&restConfigQPS, "kube-api-qps", 20,
+	fs.Float32Var(&restConfigQPS, "kube-api-qps", 100,
 		"Maximum queries per second from the controller client to the Kubernetes API server.")
 
-	fs.IntVar(&restConfigBurst, "kube-api-burst", 30,
+	fs.IntVar(&restConfigBurst, "kube-api-burst", 200,
 		"Maximum number of queries that should be allowed in one burst from the controller client to the Kubernetes API server.")
 
 	fs.StringVar(&healthAddr, "health-addr", ":9440",
@@ -152,11 +174,21 @@ func main() {
 		os.Exit(1)
 	}
 
+	pflag.CommandLine.VisitAll(func(flag *pflag.Flag) {
+		klog.V(1).Infof("FLAG: --%s=%q", flag.Name, flag.Value)
+	})
+
+	if apiVersionVMOperator != vmoprv1alpha2.GroupVersion.Version && apiVersionVMOperator != vmoprv1alpha5.GroupVersion.Version {
+		fmt.Printf("Invalid argument: --vm-operator-api-version must be one of : %s, %s\n", vmoprv1alpha2.GroupVersion.Version, vmoprv1alpha5.GroupVersion.Version)
+		os.Exit(1)
+	}
+
 	// klog.Background will automatically use the right logger.
 	ctrl.SetLogger(klog.Background())
 
 	// Note: setupLog can only be used after ctrl.SetLogger was called
 	setupLog.Info(fmt.Sprintf("Version: %s (git commit: %s)", version.Get().String(), version.Get().GitCommit))
+	setupLog.Info(fmt.Sprintf("Target API Version for group %s: %s", vmoprvhub.GroupVersion.Group, apiVersionVMOperator))
 
 	restConfig := ctrl.GetConfigOrDie()
 	restConfig.QPS = restConfigQPS
@@ -216,7 +248,7 @@ func main() {
 	ctx := ctrl.SetupSignalHandler()
 
 	// Check for supervisor VSphereCluster and start controller if found
-	gvr := vmwarev1.GroupVersion.WithResource(reflect.TypeOf(&vmwarev1.VSphereCluster{}).Elem().Name())
+	gvr := vmwarev1beta1.GroupVersion.WithResource(reflect.TypeOf(&vmwarev1beta1.VSphereCluster{}).Elem().Name())
 	supervisorMode, err := isCRDDeployed(mgr, gvr)
 	if err != nil {
 		setupLog.Error(err, "unable to detect supervisor mode")
@@ -263,6 +295,25 @@ func setupReconcilers(ctx context.Context, mgr ctrl.Manager, _ bool) {
 		WatchFilterValue: watchFilterValue,
 	}).SetupWithManager(ctx, mgr, concurrency(networkInterfaceConcurrency)); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "NetworkInterfaceReconciler")
+		os.Exit(1)
+	}
+
+	converter := conversionapi.DefaultConverterFor(
+		schema.GroupVersion{Group: vmoprvhub.GroupVersion.Group, Version: apiVersionVMOperator},
+	)
+
+	cc, err := conversionclient.NewWithConverter(mgr.GetClient(), converter)
+	if err != nil {
+		setupLog.Error(err, "failed to create a conversion client")
+		os.Exit(1)
+	}
+
+	if err := (&controllers.VirtualMachineReconciler{
+		// NOTE: use a client that can handle conversions from API versions that exist in the supervisor
+		// and the internal hub version used in the reconciler.
+		Client: cc,
+	}).SetupWithManager(ctx, mgr, concurrency(virtualMachineConcurrency)); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "VirtualMachineReconciler")
 		os.Exit(1)
 	}
 }

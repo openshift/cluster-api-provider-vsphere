@@ -18,33 +18,41 @@ package vmoperator
 
 import (
 	"context"
+	"fmt"
+	"strings"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	netopv1 "github.com/vmware-tanzu/net-operator-api/api/v1alpha1"
-	vmoprv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha2"
+	vmoprv1alpha5 "github.com/vmware-tanzu/vm-operator/api/v1alpha5"
 	ncpv1 "github.com/vmware-tanzu/vm-operator/external/ncp/api/v1alpha1"
-	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	clusterv1beta1 "sigs.k8s.io/cluster-api/api/core/v1beta1"
+	"k8s.io/apimachinery/pkg/types"
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
-	v1beta1conditions "sigs.k8s.io/cluster-api/util/deprecated/v1beta1/conditions"
+	"sigs.k8s.io/cluster-api/util/conditions"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 
-	vmwarev1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/vmware/v1beta1"
+	vmwarev1 "sigs.k8s.io/cluster-api-provider-vsphere/api/supervisor/v1beta2"
 	capvcontext "sigs.k8s.io/cluster-api-provider-vsphere/pkg/context"
 	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/context/vmware"
+	vmoprvhub "sigs.k8s.io/cluster-api-provider-vsphere/pkg/conversion/api/vmoperator/hub"
 	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/services/network"
 	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/util"
 )
 
-func getVirtualMachineService(ctx context.Context, clusterCtx *vmware.ClusterContext, _ ctrlclient.Client, cpService CPService) *vmoprv1.VirtualMachineService {
+func getVirtualMachineService(ctx context.Context, clusterCtx *vmware.ClusterContext, _ ctrlclient.Client, cpService CPService) *vmoprvhub.VirtualMachineService {
 	vms, err := cpService.getVMControlPlaneService(ctx, clusterCtx)
-	if apierrors.IsNotFound(err) {
-		return nil
+	if err != nil {
+		// If it's a NotFound OR our specific Zombie errors, return nil so verifyOutput can run
+		if apierrors.IsNotFound(err) || strings.Contains(err.Error(), "owned by a different VSphereCluster instance") ||
+			strings.Contains(err.Error(), "exists but is being deleted") {
+			return nil
+		}
+		// If it's any other error, the test should fail immediately
+		Expect(err).NotTo(HaveOccurred())
 	}
-	Expect(err).ToNot(HaveOccurred())
+
 	return vms
 }
 
@@ -74,8 +82,16 @@ func createDefaultNetwork(ctx context.Context, clusterCtx *vmware.ClusterContext
 
 func updateVMServiceWithVIP(ctx context.Context, clusterCtx *vmware.ClusterContext, c ctrlclient.Client, cpService CPService, vip string) {
 	vmService := getVirtualMachineService(ctx, clusterCtx, c, cpService)
-	vmService.Status.LoadBalancer.Ingress = []vmoprv1.LoadBalancerIngress{{IP: vip}}
-	err := c.Status().Update(ctx, vmService)
+
+	// NOTE: use vm-operator native types for testing (the reconciler uses the internal hub version).
+	s := &vmoprv1alpha5.VirtualMachineService{}
+	err := c.Get(ctx, ctrlclient.ObjectKeyFromObject(vmService), s)
+	Expect(err).ShouldNot(HaveOccurred())
+
+	sOriginal := s.DeepCopy()
+	s.Status.LoadBalancer.Ingress = []vmoprv1alpha5.LoadBalancerIngress{{IP: vip}}
+
+	err = c.Status().Patch(ctx, s, ctrlclient.MergeFrom(sOriginal))
 	Expect(err).ShouldNot(HaveOccurred())
 }
 
@@ -91,12 +107,12 @@ var _ = Describe("ControlPlaneEndpoint Tests", func() {
 		expectReconcileError        bool
 		expectAPIEndpoint           bool
 		expectVMS                   bool
-		expectedType                vmoprv1.VirtualMachineServiceType
+		expectedType                vmoprvhub.VirtualMachineServiceType
 		expectedHost                string
 		expectedPort                int
 		expectedAnnotations         map[string]string
 		expectedClusterRoleVMLabels map[string]string
-		expectedConditions          clusterv1beta1.Conditions
+		expectedConditions          []metav1.Condition
 
 		cluster                  *clusterv1.Cluster
 		vsphereCluster           *vmwarev1.VSphereCluster
@@ -105,8 +121,8 @@ var _ = Describe("ControlPlaneEndpoint Tests", func() {
 		controllerManagerContext *capvcontext.ControllerManagerContext
 		c                        ctrlclient.Client
 
-		apiEndpoint *clusterv1beta1.APIEndpoint
-		vms         *vmoprv1.VirtualMachineService
+		apiEndpoint *vmwarev1.APIEndpoint
+		vms         *vmoprvhub.VirtualMachineService
 
 		cpService CPService
 	)
@@ -155,7 +171,7 @@ var _ = Describe("ControlPlaneEndpoint Tests", func() {
 			}
 
 			for _, expectedCondition := range expectedConditions {
-				c := v1beta1conditions.Get(clusterCtx.VSphereCluster, expectedCondition.Type)
+				c := conditions.Get(clusterCtx.VSphereCluster, expectedCondition.Type)
 				Expect(c).NotTo(BeNil())
 				Expect(c.Status).To(Equal(expectedCondition.Status))
 				Expect(c.Reason).To(Equal(expectedCondition.Reason))
@@ -167,13 +183,94 @@ var _ = Describe("ControlPlaneEndpoint Tests", func() {
 			}
 		}
 
+		Specify("Handle Zombie VSphereCluster owned VirtualMachineService", func() {
+			By("Creating a VirtualMachineService with a stale Owner UID")
+			vmServiceName := controlPlaneVMServiceName(clusterCtx.Cluster.Name)
+			staleUID := types.UID("stale-cluster-uid-123")
+			zombieVMS := &vmoprvhub.VirtualMachineService{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      vmServiceName,
+					Namespace: clusterCtx.Cluster.Namespace,
+					OwnerReferences: []metav1.OwnerReference{
+						{
+							APIVersion: vmwarev1.GroupVersion.String(),
+							Kind:       "VSphereCluster",
+							Name:       clusterCtx.VSphereCluster.Name,
+							UID:        staleUID,
+						},
+					},
+				},
+			}
+			Expect(c.Create(ctx, zombieVMS)).To(Succeed())
+
+			By("Expect the specific UID mismatch error")
+			expectReconcileError = true
+			expectAPIEndpoint = false
+			expectVMS = false
+			expectedConditions = []metav1.Condition{
+				{
+					Type:    vmwarev1.VSphereClusterLoadBalancerReadyCondition,
+					Status:  metav1.ConditionFalse,
+					Reason:  vmwarev1.VSphereClusterLoadBalancerNotReadyReason,
+					Message: fmt.Sprintf("owned by a different VSphereCluster instance %s", staleUID),
+				},
+			}
+
+			apiEndpoint, err = cpService.ReconcileControlPlaneEndpointService(ctx, clusterCtx, network.DummyLBNetworkProvider())
+
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("owned by a different VSphereCluster instance"))
+			verifyOutput()
+		})
+
+		Specify("Handle Zombie resource being deleted", func() {
+			By("Creating a VirtualMachineService with a DeletionTimestamp")
+			vmServiceName := controlPlaneVMServiceName(clusterCtx.Cluster.Name)
+			deletingVMS := &vmoprvhub.VirtualMachineService{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:       vmServiceName,
+					Namespace:  clusterCtx.Cluster.Namespace,
+					Finalizers: []string{"capv.vmware.com/test-finalizer"},
+					OwnerReferences: []metav1.OwnerReference{
+						{
+							APIVersion: vmwarev1.GroupVersion.String(),
+							Kind:       "VSphereCluster",
+							Name:       clusterCtx.VSphereCluster.Name,
+							UID:        clusterCtx.VSphereCluster.UID,
+						},
+					},
+				},
+			}
+			Expect(c.Create(ctx, deletingVMS)).To(Succeed())
+			Expect(c.Delete(ctx, deletingVMS)).To(Succeed())
+
+			By("Expect the specific deletion error and condition update")
+			expectReconcileError = true
+			expectAPIEndpoint = false
+			expectVMS = false
+			expectedConditions = []metav1.Condition{
+				{
+					Type:    vmwarev1.VSphereClusterLoadBalancerReadyCondition,
+					Status:  metav1.ConditionFalse,
+					Reason:  vmwarev1.VSphereClusterLoadBalancerNotReadyReason,
+					Message: "exists but is being deleted",
+				},
+			}
+
+			apiEndpoint, err = cpService.ReconcileControlPlaneEndpointService(ctx, clusterCtx, network.DummyLBNetworkProvider())
+
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("exists but is being deleted"))
+			verifyOutput()
+		})
+
 		// If there is no load balancer, Reconcile should be a no-op
 		Specify("NetworkProvider has no LoadBalancer", func() {
 			expectReconcileError = false
 			expectAPIEndpoint = false
 			expectVMS = false
 			apiEndpoint, err = cpService.ReconcileControlPlaneEndpointService(ctx, clusterCtx, network.DummyNetworkProvider())
-			Expect(v1beta1conditions.Get(clusterCtx.VSphereCluster, vmwarev1.LoadBalancerReadyCondition)).To(BeNil())
+			Expect(conditions.Get(clusterCtx.VSphereCluster, vmwarev1.VSphereClusterLoadBalancerReadyCondition)).To(BeNil())
 			verifyOutput()
 		})
 
@@ -181,7 +278,7 @@ var _ = Describe("ControlPlaneEndpoint Tests", func() {
 			expectReconcileError = true // VirtualMachineService LB does not yet have VIP assigned
 			expectAPIEndpoint = false
 			expectVMS = true
-			expectedType = vmoprv1.VirtualMachineServiceTypeLoadBalancer
+			expectedType = vmoprvhub.VirtualMachineServiceTypeLoadBalancer
 			apiEndpoint, err = cpService.ReconcileControlPlaneEndpointService(ctx, clusterCtx, network.DummyLBNetworkProvider())
 			verifyOutput()
 
@@ -215,16 +312,16 @@ var _ = Describe("ControlPlaneEndpoint Tests", func() {
 			expectAPIEndpoint = false
 			// A VirtualMachineService is only created once all prerequisites have been met
 			expectVMS = false
-			expectedType = vmoprv1.VirtualMachineServiceTypeLoadBalancer
+			expectedType = vmoprvhub.VirtualMachineServiceTypeLoadBalancer
 
 			// The NetOp network provider looks a Network. If one does not exist, it will fail.
 			By("NetOp NetworkProvider has no Network")
 			netOpProvider := network.NetOpNetworkProvider(c)
 			// we expect the reconciliation fail because lack of bootstrap data
-			expectedConditions = append(expectedConditions, clusterv1beta1.Condition{
-				Type:    vmwarev1.LoadBalancerReadyCondition,
-				Status:  corev1.ConditionFalse,
-				Reason:  vmwarev1.LoadBalancerCreationFailedReason,
+			expectedConditions = append(expectedConditions, metav1.Condition{
+				Type:    vmwarev1.VSphereClusterLoadBalancerReadyCondition,
+				Status:  metav1.ConditionFalse,
+				Reason:  vmwarev1.VSphereClusterLoadBalancerNotReadyReason,
 				Message: noNetworkFailure,
 			})
 			apiEndpoint, err = cpService.ReconcileControlPlaneEndpointService(ctx, clusterCtx, netOpProvider)
@@ -236,7 +333,7 @@ var _ = Describe("ControlPlaneEndpoint Tests", func() {
 			expectedAnnotations["netoperator.vmware.com/network-name"] = "dummy-network"
 			expectVMS = true
 			createDefaultNetwork(ctx, clusterCtx, c)
-			expectedConditions[0].Reason = vmwarev1.WaitingForLoadBalancerIPReason
+			expectedConditions[0].Reason = vmwarev1.VSphereClusterLoadBalancerWaitingForIPReason
 			expectedConditions[0].Message = waitingForVIPFailure
 			apiEndpoint, err = cpService.ReconcileControlPlaneEndpointService(ctx, clusterCtx, netOpProvider)
 			verifyOutput()
@@ -248,8 +345,8 @@ var _ = Describe("ControlPlaneEndpoint Tests", func() {
 			expectedPort = defaultAPIBindPort
 			expectedHost = vip
 			updateVMServiceWithVIP(ctx, clusterCtx, c, cpService, vip)
-			expectedConditions[0].Status = corev1.ConditionTrue
-			expectedConditions[0].Reason = ""
+			expectedConditions[0].Status = metav1.ConditionTrue
+			expectedConditions[0].Reason = vmwarev1.VSphereClusterLoadBalancerReadyReason
 			expectedConditions[0].Message = ""
 			apiEndpoint, err = cpService.ReconcileControlPlaneEndpointService(ctx, clusterCtx, netOpProvider)
 			verifyOutput()
@@ -262,11 +359,11 @@ var _ = Describe("ControlPlaneEndpoint Tests", func() {
 			expectAPIEndpoint = false
 			// A VirtualMachineService is only created once all prerequisites have been met
 			expectVMS = false
-			expectedType = vmoprv1.VirtualMachineServiceTypeLoadBalancer
-			expectedConditions = append(expectedConditions, clusterv1beta1.Condition{
-				Type:    vmwarev1.LoadBalancerReadyCondition,
-				Status:  corev1.ConditionFalse,
-				Reason:  vmwarev1.LoadBalancerCreationFailedReason,
+			expectedType = vmoprvhub.VirtualMachineServiceTypeLoadBalancer
+			expectedConditions = append(expectedConditions, metav1.Condition{
+				Type:    vmwarev1.VSphereClusterLoadBalancerReadyCondition,
+				Status:  metav1.ConditionFalse,
+				Reason:  vmwarev1.VSphereClusterLoadBalancerNotReadyReason,
 				Message: noNetworkFailure,
 			})
 
@@ -282,7 +379,7 @@ var _ = Describe("ControlPlaneEndpoint Tests", func() {
 			expectedVnetName := network.GetNSXTVirtualNetworkName(clusterName)
 			expectedAnnotations["ncp.vmware.com/virtual-network-name"] = expectedVnetName
 			expectVMS = true
-			expectedConditions[0].Reason = vmwarev1.WaitingForLoadBalancerIPReason
+			expectedConditions[0].Reason = vmwarev1.VSphereClusterLoadBalancerWaitingForIPReason
 			expectedConditions[0].Message = waitingForVIPFailure
 			createVnet(ctx, clusterCtx, c)
 			apiEndpoint, err = cpService.ReconcileControlPlaneEndpointService(ctx, clusterCtx, nsxtProvider)
@@ -294,8 +391,8 @@ var _ = Describe("ControlPlaneEndpoint Tests", func() {
 			expectAPIEndpoint = true
 			expectedPort = defaultAPIBindPort
 			expectedHost = vip
-			expectedConditions[0].Status = corev1.ConditionTrue
-			expectedConditions[0].Reason = ""
+			expectedConditions[0].Status = metav1.ConditionTrue
+			expectedConditions[0].Reason = vmwarev1.VSphereClusterLoadBalancerReadyReason
 			expectedConditions[0].Message = ""
 			updateVMServiceWithVIP(ctx, clusterCtx, c, cpService, vip)
 			apiEndpoint, err = cpService.ReconcileControlPlaneEndpointService(ctx, clusterCtx, nsxtProvider)

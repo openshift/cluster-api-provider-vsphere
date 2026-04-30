@@ -29,10 +29,10 @@ import (
 	"k8s.io/utils/ptr"
 	bootstrapv1 "sigs.k8s.io/cluster-api/api/bootstrap/kubeadm/v1beta2"
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
-	v1beta1conditions "sigs.k8s.io/cluster-api/util/deprecated/v1beta1/conditions"
+	"sigs.k8s.io/cluster-api/util/conditions"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	infrav1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/v1beta1"
+	infrav1 "sigs.k8s.io/cluster-api-provider-vsphere/api/govmomi/v1beta2"
 	"sigs.k8s.io/cluster-api-provider-vsphere/internal/test/helpers/vcsim"
 	capvcontext "sigs.k8s.io/cluster-api-provider-vsphere/pkg/context"
 	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/context/fake"
@@ -80,20 +80,18 @@ var _ = Describe("VSphereDeploymentZoneReconciler", func() {
 			},
 			Spec: infrav1.VSphereFailureDomainSpec{
 				Region: infrav1.FailureDomain{
-					Name:          "k8s-region-west",
-					Type:          infrav1.DatacenterFailureDomain,
-					TagCategory:   "k8s-region",
-					AutoConfigure: ptr.To(false),
+					Name:        "k8s-region-west",
+					Type:        infrav1.DatacenterFailureDomain,
+					TagCategory: "k8s-region",
 				},
 				Zone: infrav1.FailureDomain{
-					Name:          "k8s-zone-west-1",
-					Type:          infrav1.ComputeClusterFailureDomain,
-					TagCategory:   "k8s-zone",
-					AutoConfigure: ptr.To(false),
+					Name:        "k8s-zone-west-1",
+					Type:        infrav1.ComputeClusterFailureDomain,
+					TagCategory: "k8s-zone",
 				},
 				Topology: infrav1.Topology{
 					Datacenter:     "DC0",
-					ComputeCluster: ptr.To("DC0_C0"),
+					ComputeCluster: "DC0_C0",
 					Datastore:      "LocalDS_0",
 					Networks:       []string{"VM Network"},
 				},
@@ -137,9 +135,9 @@ var _ = Describe("VSphereDeploymentZoneReconciler", func() {
 			if err := testEnv.Get(ctx, deploymentZoneKey, vsphereDeploymentZone); err != nil {
 				return false
 			}
-			return v1beta1conditions.IsTrue(vsphereDeploymentZone, infrav1.VCenterAvailableCondition) &&
-				v1beta1conditions.IsTrue(vsphereDeploymentZone, infrav1.PlacementConstraintMetCondition) &&
-				v1beta1conditions.IsTrue(vsphereDeploymentZone, infrav1.VSphereFailureDomainValidatedCondition)
+			return conditions.IsTrue(vsphereDeploymentZone, infrav1.VSphereDeploymentZoneVCenterAvailableCondition) &&
+				conditions.IsTrue(vsphereDeploymentZone, infrav1.VSphereDeploymentZonePlacementConstraintReadyCondition) &&
+				conditions.IsTrue(vsphereDeploymentZone, infrav1.VSphereDeploymentZoneFailureDomainValidatedCondition)
 		}, timeout).Should(BeTrue())
 
 		Expect(testEnv.Get(ctx, failureDomainKey, vsphereFailureDomain)).To(Succeed())
@@ -161,20 +159,18 @@ var _ = Describe("VSphereDeploymentZoneReconciler", func() {
 				},
 				Spec: infrav1.VSphereFailureDomainSpec{
 					Region: infrav1.FailureDomain{
-						Name:          "k8s-region-west",
-						Type:          infrav1.DatacenterFailureDomain,
-						TagCategory:   "k8s-region",
-						AutoConfigure: ptr.To(false),
+						Name:        "k8s-region-west",
+						Type:        infrav1.DatacenterFailureDomain,
+						TagCategory: "k8s-region",
 					},
 					Zone: infrav1.FailureDomain{
-						Name:          "k8s-zone-west-1",
-						Type:          infrav1.ComputeClusterFailureDomain,
-						TagCategory:   "k8s-zone",
-						AutoConfigure: ptr.To(false),
+						Name:        "k8s-zone-west-1",
+						Type:        infrav1.ComputeClusterFailureDomain,
+						TagCategory: "k8s-zone",
 					},
 					Topology: infrav1.Topology{
 						Datacenter:     "DC0",
-						ComputeCluster: ptr.To("DC0_C0"),
+						ComputeCluster: "DC0_C0",
 						Datastore:      "LocalDS_0",
 						Networks:       []string{"VM Network"},
 					},
@@ -204,7 +200,7 @@ var _ = Describe("VSphereDeploymentZoneReconciler", func() {
 				if err := testEnv.Get(ctx, deploymentZoneKey, vsphereDeploymentZone); err != nil {
 					return false
 				}
-				return v1beta1conditions.IsFalse(vsphereDeploymentZone, infrav1.PlacementConstraintMetCondition)
+				return conditions.IsFalse(vsphereDeploymentZone, infrav1.VSphereDeploymentZonePlacementConstraintReadyCondition)
 			}, timeout).Should(BeTrue())
 		})
 	})
@@ -330,20 +326,18 @@ func TestVSphereDeploymentZone_Reconcile(t *testing.T) {
 			},
 			Spec: infrav1.VSphereFailureDomainSpec{
 				Region: infrav1.FailureDomain{
-					Name:          "k8s-region-west",
-					Type:          infrav1.DatacenterFailureDomain,
-					TagCategory:   "k8s-region",
-					AutoConfigure: ptr.To(false),
+					Name:        "k8s-region-west",
+					Type:        infrav1.DatacenterFailureDomain,
+					TagCategory: "k8s-region",
 				},
 				Zone: infrav1.FailureDomain{
-					Name:          "k8s-zone-west-1",
-					Type:          infrav1.ComputeClusterFailureDomain,
-					TagCategory:   "k8s-zone",
-					AutoConfigure: ptr.To(false),
+					Name:        "k8s-zone-west-1",
+					Type:        infrav1.ComputeClusterFailureDomain,
+					TagCategory: "k8s-zone",
 				},
 				Topology: infrav1.Topology{
 					Datacenter:     "DC0",
-					ComputeCluster: ptr.To("DC0_C0"),
+					ComputeCluster: "DC0_C0",
 					Datastore:      "LocalDS_0",
 					Networks:       []string{"VM Network"},
 				},
@@ -381,9 +375,9 @@ func TestVSphereDeploymentZone_Reconcile(t *testing.T) {
 			if err := testEnv.Get(ctx, client.ObjectKeyFromObject(vsphereDeploymentZone), vsphereDeploymentZone); err != nil {
 				return false
 			}
-			return v1beta1conditions.IsTrue(vsphereDeploymentZone, infrav1.VCenterAvailableCondition) &&
-				v1beta1conditions.IsTrue(vsphereDeploymentZone, infrav1.PlacementConstraintMetCondition) &&
-				v1beta1conditions.IsTrue(vsphereDeploymentZone, infrav1.VSphereFailureDomainValidatedCondition)
+			return conditions.IsTrue(vsphereDeploymentZone, infrav1.VSphereDeploymentZoneVCenterAvailableCondition) &&
+				conditions.IsTrue(vsphereDeploymentZone, infrav1.VSphereDeploymentZonePlacementConstraintReadyCondition) &&
+				conditions.IsTrue(vsphereDeploymentZone, infrav1.VSphereDeploymentZoneFailureDomainValidatedCondition)
 		}, timeout).Should(BeTrue())
 
 		g.Expect(testEnv.Get(ctx, client.ObjectKeyFromObject(vsphereFailureDomain), vsphereFailureDomain)).To(Succeed())
@@ -402,20 +396,18 @@ func TestVSphereDeploymentZone_Reconcile(t *testing.T) {
 			},
 			Spec: infrav1.VSphereFailureDomainSpec{
 				Region: infrav1.FailureDomain{
-					Name:          "k8s-region-west",
-					Type:          infrav1.DatacenterFailureDomain,
-					TagCategory:   "k8s-region",
-					AutoConfigure: ptr.To(false),
+					Name:        "k8s-region-west",
+					Type:        infrav1.DatacenterFailureDomain,
+					TagCategory: "k8s-region",
 				},
 				Zone: infrav1.FailureDomain{
-					Name:          "k8s-zone-west-1",
-					Type:          infrav1.ComputeClusterFailureDomain,
-					TagCategory:   "k8s-zone",
-					AutoConfigure: ptr.To(false),
+					Name:        "k8s-zone-west-1",
+					Type:        infrav1.ComputeClusterFailureDomain,
+					TagCategory: "k8s-zone",
 				},
 				Topology: infrav1.Topology{
 					Datacenter:     "DC0",
-					ComputeCluster: ptr.To("DC0_C0"),
+					ComputeCluster: "DC0_C0",
 					Datastore:      "LocalDS_0",
 					Networks:       []string{"VM Network"},
 				},
@@ -618,7 +610,7 @@ func TestVsphereDeploymentZone_Failed_ReconcilePlacementConstraint(t *testing.T)
 				Spec: infrav1.VSphereFailureDomainSpec{
 					Topology: infrav1.Topology{
 						Datacenter:     "DC0",
-						ComputeCluster: ptr.To("DC0_C0"),
+						ComputeCluster: "DC0_C0",
 					},
 				},
 			})).To(Succeed())
@@ -662,7 +654,7 @@ func TestVSphereDeploymentZoneReconciler_ReconcileDelete(t *testing.T) {
 		Spec: infrav1.VSphereFailureDomainSpec{
 			Topology: infrav1.Topology{
 				Datacenter:     "DC0",
-				ComputeCluster: ptr.To("DC0_C0"),
+				ComputeCluster: "DC0_C0",
 			},
 		},
 	}

@@ -45,6 +45,10 @@ var _ = Describe("When testing the machinery for scale testing using vcsim provi
 			if testTarget != VCSimTestTarget {
 				Skip("Test should only be run using vcsim provider")
 			}
+			flavor := testSpecificSettingsGetter().FlavorForMode("topology-scale")
+			if testMode == GovmomiTestMode {
+				flavor = testSpecificSettingsGetter().FlavorForMode("topology-runtimesdk")
+			}
 
 			return capi_e2e.ScaleSpecInput{
 				E2EConfig:              e2eConfig,
@@ -52,9 +56,10 @@ var _ = Describe("When testing the machinery for scale testing using vcsim provi
 				InfrastructureProvider: ptr.To(clusterctl.DefaultInfrastructureProvider),
 				BootstrapClusterProxy:  bootstrapClusterProxy,
 				ArtifactFolder:         artifactFolder,
-				Flavor:                 ptr.To(testSpecificSettingsGetter().FlavorForMode("topology-runtimesdk")),
+				Flavor:                 ptr.To(flavor),
 				SkipUpgrade:            false,
 				SkipCleanup:            skipCleanup,
+				DumpResources:          true,
 				ClusterClassName:       getVariableOrFallback(testSpecificSettingsGetter().Variables["CLUSTER_CLASS_NAME"], e2eConfig.MustGetVariable("CLUSTER_CLASS_NAME")),
 
 				// ClusterCount can be overwritten via `CAPI_SCALE_CLUSTER_COUNT`.

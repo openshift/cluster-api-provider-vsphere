@@ -38,17 +38,16 @@ import (
 	addonsv1 "sigs.k8s.io/cluster-api/api/addons/v1beta2"
 	bootstrapv1 "sigs.k8s.io/cluster-api/api/bootstrap/kubeadm/v1beta2"
 	controlplanev1 "sigs.k8s.io/cluster-api/api/controlplane/kubeadm/v1beta2"
-	clusterv1beta1 "sigs.k8s.io/cluster-api/api/core/v1beta1"
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	clusterctlcluster "sigs.k8s.io/cluster-api/cmd/clusterctl/client/cluster"
 	capi_e2e "sigs.k8s.io/cluster-api/test/e2e"
 	"sigs.k8s.io/cluster-api/test/framework"
 	"sigs.k8s.io/cluster-api/util/conditions"
-	"sigs.k8s.io/cluster-api/util/deprecated/v1beta1/patch"
+	"sigs.k8s.io/cluster-api/util/patch"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 
-	infrav1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/v1beta1"
-	vmwarev1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/vmware/v1beta1"
+	infrav1 "sigs.k8s.io/cluster-api-provider-vsphere/api/govmomi/v1beta2"
+	vmwarev1 "sigs.k8s.io/cluster-api-provider-vsphere/api/supervisor/v1beta2"
 	topologyv1 "sigs.k8s.io/cluster-api-provider-vsphere/internal/apis/topology/v1alpha1"
 	vcsimv1 "sigs.k8s.io/cluster-api-provider-vsphere/test/infrastructure/vcsim/api/v1alpha1"
 )
@@ -111,7 +110,7 @@ var _ = Describe("Ensure OwnerReferences and Finalizers are resilient [vcsim] [s
 					framework.ValidateOwnerReferencesResilience(ctx, proxy, namespace, clusterName, clusterctlcluster.FilterClusterObjectsWithNameFilter(clusterName),
 						framework.CoreOwnerReferenceAssertion,
 						framework.KubeadmBootstrapOwnerReferenceAssertions,
-						framework.KubeadmControlPlaneOwnerReferenceAssertions,
+						framework.KubeadmControlPlaneOwnerReferenceAssertions(false),
 						framework.ExpOwnerReferenceAssertions,
 						VSphereKubernetesReferenceAssertions,
 						VSphereReferenceAssertions(),
@@ -121,7 +120,7 @@ var _ = Describe("Ensure OwnerReferences and Finalizers are resilient [vcsim] [s
 					framework.ValidateOwnerReferencesOnUpdate(ctx, proxy, namespace, clusterName, clusterctlcluster.FilterClusterObjectsWithNameFilter(clusterName),
 						framework.CoreOwnerReferenceAssertion,
 						framework.KubeadmBootstrapOwnerReferenceAssertions,
-						framework.KubeadmControlPlaneOwnerReferenceAssertions,
+						framework.KubeadmControlPlaneOwnerReferenceAssertions(false),
 						framework.ExpOwnerReferenceAssertions,
 						VSphereKubernetesReferenceAssertions,
 						VSphereReferenceAssertions(),
@@ -152,7 +151,7 @@ var _ = Describe("Ensure OwnerReferences and Finalizers are resilient [vcsim] [s
 
 						for _, machine := range machineList.Items {
 							if !conditions.IsTrue(&machine, clusterv1.MachineNodeHealthyCondition) {
-								return errors.Errorf("machine %q does not have %q condition set to true", machine.GetName(), clusterv1.MachineNodeHealthyV1Beta1Condition)
+								return errors.Errorf("machine %q does not have %q condition set to true", machine.GetName(), clusterv1.MachineNodeHealthyCondition)
 							}
 						}
 
@@ -173,7 +172,11 @@ var _ = Describe("Ensure OwnerReferences and Finalizers are resilient [vcsim] [s
 					// Note: we are not checking resourceVersions on VirtualMachine (reconciled by VM-Operator)
 					// as well as other VM Operator related kinds.
 					By("Checking that resourceVersions are stable")
-					framework.ValidateResourceVersionStable(ctx, proxy, namespace, FilterObjectsWithKindAndName(clusterName))
+					framework.ValidateResourceVersionStable(ctx, framework.ValidateResourceVersionStableInput{
+						ClusterProxy:             proxy,
+						Namespace:                namespace,
+						OwnerGraphFilterFunction: FilterObjectsWithKindAndName(clusterName),
+					})
 				},
 			}
 		})
@@ -198,7 +201,7 @@ var (
 				[]metav1.OwnerReference{kubeadmConfigController},
 				// Secrets created as a resource for a ClusterResourceSet can be owned by the ClusterResourceSet.
 				[]metav1.OwnerReference{clusterResourceSetOwner},
-				// Secrets created as an identityReference for a vSphereCluster should be owned but the vSphereCluster.
+				// Secrets created as an identityReference for a vSphereCluster should be owned by the vSphereCluster.
 				[]metav1.OwnerReference{vSphereClusterOwner},
 			)
 		},
@@ -214,7 +217,9 @@ var (
 		if testMode == SupervisorTestMode {
 			return map[string]func(types.NamespacedName, []metav1.OwnerReference) error{
 				"VSphereCluster": func(_ types.NamespacedName, owners []metav1.OwnerReference) error {
-					return framework.HasExactOwners(owners, clusterController)
+					// Note: As our test case is using a Cluster without ClusterClass the ownerRef is only a
+					// regular ownerRef and not a controller ownerRef.
+					return framework.HasExactOwners(owners, clusterOwner)
 				},
 				"VSphereClusterTemplate": func(_ types.NamespacedName, owners []metav1.OwnerReference) error {
 					return framework.HasExactOwners(owners, clusterClassOwner)
@@ -229,21 +234,27 @@ var (
 				"VirtualMachine": func(_ types.NamespacedName, owners []metav1.OwnerReference) error {
 					return framework.HasExactOwners(owners, vmwareVSphereMachineController)
 				},
+				"VirtualMachineSetResourcePolicy": func(_ types.NamespacedName, owners []metav1.OwnerReference) error {
+					return framework.HasExactOwners(owners, vmwareVSphereClusterOwner)
+				},
 
 				// Following objects are for vm-operator (not managed by CAPV), so checking ownerReferences is not relevant.
-				"VirtualMachineImage":             func(_ types.NamespacedName, _ []metav1.OwnerReference) error { return nil },
-				"NetworkInterface":                func(_ types.NamespacedName, _ []metav1.OwnerReference) error { return nil },
-				"ContentSourceBinding":            func(_ types.NamespacedName, _ []metav1.OwnerReference) error { return nil },
-				"VirtualMachineSetResourcePolicy": func(_ types.NamespacedName, _ []metav1.OwnerReference) error { return nil },
-				"VirtualMachineClassBinding":      func(_ types.NamespacedName, _ []metav1.OwnerReference) error { return nil },
-				"VirtualMachineClass":             func(_ types.NamespacedName, _ []metav1.OwnerReference) error { return nil },
-				"VMOperatorDependencies":          func(_ types.NamespacedName, _ []metav1.OwnerReference) error { return nil },
+				"VirtualMachineImage":        func(_ types.NamespacedName, _ []metav1.OwnerReference) error { return nil },
+				"NetworkInterface":           func(_ types.NamespacedName, _ []metav1.OwnerReference) error { return nil },
+				"ContentSourceBinding":       func(_ types.NamespacedName, _ []metav1.OwnerReference) error { return nil },
+				"VirtualMachineClassBinding": func(_ types.NamespacedName, _ []metav1.OwnerReference) error { return nil },
+				"VirtualMachineClass":        func(_ types.NamespacedName, _ []metav1.OwnerReference) error { return nil },
+				"VMOperatorDependencies":     func(_ types.NamespacedName, _ []metav1.OwnerReference) error { return nil },
+				"StoragePolicyUsage":         func(_ types.NamespacedName, _ []metav1.OwnerReference) error { return nil },
+				"Zone":                       func(_ types.NamespacedName, _ []metav1.OwnerReference) error { return nil },
 			}
 		}
 
 		return map[string]func(types.NamespacedName, []metav1.OwnerReference) error{
 			"VSphereCluster": func(_ types.NamespacedName, owners []metav1.OwnerReference) error {
-				return framework.HasExactOwners(owners, clusterController)
+				// Note: As our test case is using a Cluster without ClusterClass the ownerRef is only a
+				// regular ownerRef and not a controller ownerRef.
+				return framework.HasExactOwners(owners, clusterOwner)
 			},
 			"VSphereClusterTemplate": func(_ types.NamespacedName, owners []metav1.OwnerReference) error {
 				return framework.HasExactOwners(owners, clusterClassOwner)
@@ -282,12 +293,12 @@ var (
 	vSphereDeploymentZoneOwner  = metav1.OwnerReference{Kind: "VSphereDeploymentZone", APIVersion: infrav1.GroupVersion.String()}
 	vSphereClusterIdentityOwner = metav1.OwnerReference{Kind: "VSphereClusterIdentity", APIVersion: infrav1.GroupVersion.String()}
 
+	vmwareVSphereClusterOwner      = metav1.OwnerReference{Kind: "VSphereCluster", APIVersion: vmwarev1.GroupVersion.String()}
 	vmwareVSphereMachineController = metav1.OwnerReference{Kind: "VSphereMachine", APIVersion: vmwarev1.GroupVersion.String(), Controller: ptr.To(true)}
 
 	// CAPI owners.
 	clusterClassOwner       = metav1.OwnerReference{Kind: "ClusterClass", APIVersion: clusterv1.GroupVersion.String()}
 	clusterOwner            = metav1.OwnerReference{Kind: "Cluster", APIVersion: clusterv1.GroupVersion.String()}
-	clusterController       = metav1.OwnerReference{Kind: "Cluster", APIVersion: clusterv1.GroupVersion.String(), Controller: ptr.To(true)}
 	machineController       = metav1.OwnerReference{Kind: "Machine", APIVersion: clusterv1.GroupVersion.String(), Controller: ptr.To(true)}
 	clusterResourceSetOwner = metav1.OwnerReference{Kind: "ClusterResourceSet", APIVersion: addonsv1.GroupVersion.String()}
 
@@ -311,6 +322,7 @@ var vSphereFinalizers = func() map[string]func(types.NamespacedName) []string {
 		return map[string]func(types.NamespacedName) []string{
 			"VSphereMachine": func(_ types.NamespacedName) []string { return []string{infrav1.MachineFinalizer} },
 			"VSphereCluster": func(_ types.NamespacedName) []string { return []string{vmwarev1.ClusterFinalizer} },
+			"Zone":           func(_ types.NamespacedName) []string { return []string{"vmoperator.vmware.com/zone-finalizer"} },
 		}
 	}
 
@@ -379,9 +391,10 @@ func checkGovmomiVSphereClusterFailureDomains(ctx context.Context, proxy framewo
 	}
 	Expect(proxy.GetClient().Get(ctx, ctrlclient.ObjectKeyFromObject(vSphereCluster), vSphereCluster)).To(Succeed())
 
-	Expect(vSphereCluster.Status.FailureDomains).To(BeEquivalentTo(clusterv1beta1.FailureDomains{
-		"ownerrefs-finalizers": clusterv1beta1.FailureDomainSpec{
-			ControlPlane: true,
+	Expect(vSphereCluster.Status.FailureDomains).To(BeEquivalentTo([]clusterv1.FailureDomain{
+		{
+			Name:         "ownerrefs-finalizers",
+			ControlPlane: ptr.To(true),
 		},
 	}))
 }
@@ -390,11 +403,12 @@ func checkSupervisorVSphereClusterFailureDomains(ctx context.Context, proxy fram
 	avalabilityZones := &topologyv1.AvailabilityZoneList{}
 	Expect(proxy.GetClient().List(ctx, avalabilityZones)).To(Succeed())
 
-	wantFailureDomains := clusterv1beta1.FailureDomains{}
+	wantFailureDomains := []clusterv1.FailureDomain{}
 	for _, zone := range avalabilityZones.Items {
-		wantFailureDomains[zone.Name] = clusterv1beta1.FailureDomainSpec{
-			ControlPlane: true,
-		}
+		wantFailureDomains = append(wantFailureDomains, clusterv1.FailureDomain{
+			Name:         zone.Name,
+			ControlPlane: ptr.To(true),
+		})
 	}
 
 	vSphereCluster := &vmwarev1.VSphereCluster{

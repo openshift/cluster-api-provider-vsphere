@@ -26,7 +26,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	"github.com/onsi/ginkgo/v2/types"
 	. "github.com/onsi/gomega"
-	vmoprv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha2"
+	vmoprv1alpha5 "github.com/vmware-tanzu/vm-operator/api/v1alpha5"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -39,10 +39,11 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 
-	infrav1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/v1beta1"
-	vmwarev1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/vmware/v1beta1"
+	infrav1 "sigs.k8s.io/cluster-api-provider-vsphere/api/govmomi/v1beta2"
+	vmwarev1 "sigs.k8s.io/cluster-api-provider-vsphere/api/supervisor/v1beta2"
 	topologyv1 "sigs.k8s.io/cluster-api-provider-vsphere/internal/apis/topology/v1alpha1"
 	"sigs.k8s.io/cluster-api-provider-vsphere/internal/test/helpers"
+	vmoprvhub "sigs.k8s.io/cluster-api-provider-vsphere/pkg/conversion/api/vmoperator/hub"
 	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/manager"
 )
 
@@ -63,17 +64,18 @@ var (
 )
 
 func TestMain(m *testing.M) {
-	testEnv, clusterCache = setup(ctx)
+	testEnv, _, clusterCache = setup(ctx)
 	code := m.Run()
 	teardown()
 	os.Exit(code)
 }
 
-func setup(ctx context.Context) (*helpers.TestEnvironment, clustercache.ClusterCache) {
+func setup(ctx context.Context) (*helpers.TestEnvironment, client.Client, clustercache.ClusterCache) {
 	utilruntime.Must(infrav1.AddToScheme(scheme.Scheme))
 	utilruntime.Must(clusterv1.AddToScheme(scheme.Scheme))
 	utilruntime.Must(vmwarev1.AddToScheme(scheme.Scheme))
-	utilruntime.Must(vmoprv1.AddToScheme(scheme.Scheme))
+	utilruntime.Must(vmoprvhub.AddToScheme(scheme.Scheme))
+	utilruntime.Must(vmoprv1alpha5.AddToScheme(scheme.Scheme))
 	utilruntime.Must(topologyv1.AddToScheme(scheme.Scheme))
 
 	testEnv := helpers.NewTestEnvironment(ctx)
@@ -111,7 +113,7 @@ func setup(ctx context.Context) (*helpers.TestEnvironment, clustercache.ClusterC
 
 	controllerOpts := controller.Options{MaxConcurrentReconciles: 10, SkipNameValidation: ptr.To(true)}
 
-	if err := AddServiceAccountProviderControllerToManager(ctx, testEnv.GetControllerManagerContext(), testEnv.Manager, clusterCache, controllerOpts); err != nil {
+	if err := AddServiceAccountProviderControllerToManager(ctx, testEnv.GetControllerManagerContext(), testEnv.Manager, clusterCache, secretCachingClient, controllerOpts); err != nil {
 		panic(fmt.Sprintf("unable to setup ServiceAccount controller: %v", err))
 	}
 	if err := AddServiceDiscoveryControllerToManager(ctx, testEnv.GetControllerManagerContext(), testEnv.Manager, clusterCache, controllerOpts); err != nil {
@@ -139,7 +141,7 @@ func setup(ctx context.Context) (*helpers.TestEnvironment, clustercache.ClusterC
 		panic(fmt.Sprintf("unable to create controller namespace: %v", err))
 	}
 
-	return testEnv, clusterCache
+	return testEnv, secretCachingClient, clusterCache
 }
 
 func teardown() {

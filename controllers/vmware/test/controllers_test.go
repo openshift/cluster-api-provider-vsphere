@@ -20,13 +20,12 @@ import (
 	"context"
 	"fmt"
 	"net"
-	"reflect"
 	"strconv"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	vmoprv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha2"
+	vmoprv1alpha5 "github.com/vmware-tanzu/vm-operator/api/v1alpha5"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -44,19 +43,19 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
-	infrav1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/v1beta1"
-	vmwarev1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/vmware/v1beta1"
+	infrav1 "sigs.k8s.io/cluster-api-provider-vsphere/api/govmomi/v1beta2"
+	vmwarev1 "sigs.k8s.io/cluster-api-provider-vsphere/api/supervisor/v1beta2"
 	"sigs.k8s.io/cluster-api-provider-vsphere/controllers"
 	"sigs.k8s.io/cluster-api-provider-vsphere/controllers/vmware"
 	"sigs.k8s.io/cluster-api-provider-vsphere/feature"
 	vmwarewebhooks "sigs.k8s.io/cluster-api-provider-vsphere/internal/webhooks/vmware"
 	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/constants"
 	capvcontext "sigs.k8s.io/cluster-api-provider-vsphere/pkg/context"
+	conversionapi "sigs.k8s.io/cluster-api-provider-vsphere/pkg/conversion/api"
 	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/manager"
 )
 
 const (
-	defaultNamespace    = "default"
 	useLoadBalancer     = true
 	dontUseLoadBalancer = false
 )
@@ -93,15 +92,9 @@ func newInfraMachine(namespace string, machine *clusterv1.Machine) client.Object
 			Name:      machine.Name,
 			Namespace: namespace,
 		},
-	}
-}
-
-// newInfraMachine creates an Infra machine with a generated name.
-func newAnonInfraMachine(namespace string) client.Object {
-	return &vmwarev1.VSphereMachine{
-		ObjectMeta: metav1.ObjectMeta{
-			GenerateName: "test-",
-			Namespace:    namespace,
+		Spec: vmwarev1.VSphereMachineSpec{
+			ImageName: "image-1",
+			ClassName: "class-1",
 		},
 	}
 }
@@ -254,6 +247,7 @@ func getManager(cfg *rest.Config, networkProvider string, withWebhooks bool) man
 		},
 		KubeConfig:      cfg,
 		NetworkProvider: networkProvider,
+		Converter:       conversionapi.DefaultConverterFor(vmoprv1alpha5.GroupVersion),
 	}
 
 	if withWebhooks {
@@ -350,63 +344,6 @@ func prepareClient(isLoadBalanced bool) (cli client.Client, cancelation context.
 	return
 }
 
-// Cache the type names of the infrastructure cluster and machine.
-var (
-	infraClusterTypeName = reflect.TypeOf(newAnonInfraCluster(defaultNamespace)).Elem().Name()
-	infraMachineTypeName = reflect.TypeOf(newAnonInfraMachine(defaultNamespace)).Elem().Name()
-)
-
-var _ = Describe("Conformance tests", func() {
-	var (
-		k8sClient     client.Client
-		managerCancel context.CancelFunc
-		key           *client.ObjectKey
-		obj           *client.Object
-	)
-
-	// assertObjEventuallyExists is used to assert that eventually obj can be
-	// retrieved from the API server.
-	assertObjEventuallyExists := func() {
-		EventuallyWithOffset(1, func() error {
-			return k8sClient.Get(ctx, *key, *obj)
-		}, time.Second*30).Should(Succeed())
-	}
-
-	JustAfterEach(func() {
-		Expect(k8sClient.Delete(ctx, *obj)).To(Succeed())
-	})
-
-	AfterEach(func() {
-		k8sClient = nil
-		obj = nil
-		key = nil
-	})
-
-	DescribeTable("Check infra cluster spec conformance",
-		func(objectGenerator func(string) client.Object) {
-			k8sClient, managerCancel = prepareClient(false)
-			defer managerCancel()
-
-			ns := deployNamespace(k8sClient)
-			defer dropNamespace(ns, k8sClient)
-
-			targetObject := objectGenerator(ns.Name)
-
-			Expect(k8sClient.Create(ctx, targetObject)).To(Succeed())
-			obj = &targetObject
-			key = &client.ObjectKey{
-				Namespace: targetObject.GetNamespace(),
-				Name:      targetObject.GetName(),
-			}
-
-			assertObjEventuallyExists()
-		},
-		Entry("For infra-cluster "+infraClusterTypeName, newAnonInfraCluster),
-		Entry("For infra-machine "+infraMachineTypeName, newAnonInfraMachine),
-	)
-
-})
-
 var _ = Describe("Reconciliation tests", func() {
 	var (
 		k8sClient     client.Client
@@ -424,13 +361,13 @@ var _ = Describe("Reconciliation tests", func() {
 		}, time.Second*30).Should(BeNumerically(">", 0))
 	}
 
-	assertEventuallyVMStatus := func(key client.ObjectKey, obj client.Object, expectedState vmwarev1.VirtualMachineState) {
-		EventuallyWithOffset(1, func() (vmwarev1.VirtualMachineState, error) {
+	assertEventuallyPhase := func(key client.ObjectKey, obj client.Object, expectedState vmwarev1.VSphereMachinePhase) {
+		EventuallyWithOffset(1, func() (vmwarev1.VSphereMachinePhase, error) {
 			if err := k8sClient.Get(ctx, key, obj); err != nil {
 				return "", err
 			}
 			vSphereMachine := obj.(*vmwarev1.VSphereMachine)
-			return vSphereMachine.Status.VMStatus, nil
+			return vSphereMachine.Status.Phase, nil
 		}, time.Second*30).Should(Equal(expectedState))
 	}
 
@@ -493,7 +430,8 @@ var _ = Describe("Reconciliation tests", func() {
 
 			By("Expect a ResourcePolicy to exist")
 			rpKey := client.ObjectKey{Namespace: infraCluster.GetNamespace(), Name: infraCluster.GetName()}
-			resourcePolicy := &vmoprv1.VirtualMachineSetResourcePolicy{}
+			// NOTE: use vm-operator native types for testing (the reconciler uses the internal hub version).
+			resourcePolicy := &vmoprv1alpha5.VirtualMachineSetResourcePolicy{}
 			Eventually(func() error {
 				return k8sClient.Get(ctx, rpKey, resourcePolicy)
 			}, time.Second*30).Should(Succeed())
@@ -657,11 +595,12 @@ var _ = Describe("Reconciliation tests", func() {
 			// going through its various stages of initialization due to vmoperator
 			// code returning reconcile errors
 
-			By("Expect the VSphereMachine to have its Status.VMStatus initialized to a new VM")
-			assertEventuallyVMStatus(infraMachineKey, infraMachine, vmwarev1.VirtualMachineStatePending)
+			By("Expect the VSphereMachine to have its Status.Phase initialized to a new VM")
+			assertEventuallyPhase(infraMachineKey, infraMachine, vmwarev1.VSphereMachinePhasePending)
 
 			By("Expect the VM to have been successfully created")
-			newVM := &vmoprv1.VirtualMachine{}
+			// NOTE: use vm-operator native types for testing (the reconciler uses the internal hub version).
+			newVM := &vmoprv1alpha5.VirtualMachine{}
 			Eventually(func(g Gomega) {
 				g.Expect(k8sClient.Get(ctx, machineKey, newVM)).Should(Succeed())
 			}, time.Second*10).Should(Succeed())
@@ -673,9 +612,9 @@ var _ = Describe("Reconciliation tests", func() {
 					return err
 				}
 				// These two lines must be initialized as requirements of having valid Status
-				newVM.Status.Volumes = []vmoprv1.VirtualMachineVolumeStatus{}
+				newVM.Status.Volumes = []vmoprv1alpha5.VirtualMachineVolumeStatus{}
 				newVM.Status.Conditions = append(newVM.Status.Conditions, metav1.Condition{
-					Type:               vmoprv1.VirtualMachineConditionCreated,
+					Type:               vmoprv1alpha5.VirtualMachineConditionCreated,
 					Status:             metav1.ConditionTrue,
 					LastTransitionTime: metav1.NewTime(time.Now().UTC().Truncate(time.Second)),
 					Reason:             string(metav1.ConditionTrue),
@@ -684,7 +623,7 @@ var _ = Describe("Reconciliation tests", func() {
 			}, time.Second*30).Should(Succeed())
 
 			By("Expect the VSphereMachine VM status to reflect VM Created status")
-			assertEventuallyVMStatus(infraMachineKey, infraMachine, vmwarev1.VirtualMachineStateCreated)
+			assertEventuallyPhase(infraMachineKey, infraMachine, vmwarev1.VSphereMachinePhaseCreated)
 
 			By("Modifying the VM to simulate it having been powered on")
 			Eventually(func() error {
@@ -692,12 +631,12 @@ var _ = Describe("Reconciliation tests", func() {
 				if err != nil {
 					return err
 				}
-				newVM.Status.PowerState = vmoprv1.VirtualMachinePowerStateOn
+				newVM.Status.PowerState = vmoprv1alpha5.VirtualMachinePowerStateOn
 				return k8sClient.Status().Update(ctx, newVM)
 			}, time.Second*30).Should(Succeed())
 
 			By("Expect the VSphereMachine VM status to reflect VM PoweredOn status")
-			assertEventuallyVMStatus(infraMachineKey, infraMachine, vmwarev1.VirtualMachineStatePoweredOn)
+			assertEventuallyPhase(infraMachineKey, infraMachine, vmwarev1.VSphereMachinePhasePoweredOn)
 
 			By("Modifying the VM to simulate it having been successfully booted")
 			Eventually(func() error {
@@ -706,16 +645,16 @@ var _ = Describe("Reconciliation tests", func() {
 					return err
 				}
 				if newVM.Status.Network == nil {
-					newVM.Status.Network = &vmoprv1.VirtualMachineNetworkStatus{}
+					newVM.Status.Network = &vmoprv1alpha5.VirtualMachineNetworkStatus{}
 				}
 				newVM.Status.Network.PrimaryIP4 = "1.2.3.4"
 				newVM.Status.BiosUUID = "test-bios-uuid"
-				newVM.Status.Host = "some-esxi-host"
+				newVM.Status.NodeName = "some-esxi-host"
 				return k8sClient.Status().Update(ctx, newVM)
 			}, time.Second*30).Should(Succeed())
 
 			By("Expect the VSphereMachine VM status to reflect VM Ready status")
-			assertEventuallyVMStatus(infraMachineKey, infraMachine, vmwarev1.VirtualMachineStateReady)
+			assertEventuallyPhase(infraMachineKey, infraMachine, vmwarev1.VSphereMachinePhaseReady)
 
 			By("Expect the Machine's label to reflect the ESXi host")
 			EventuallyWithOffset(1, func() (string, error) {
