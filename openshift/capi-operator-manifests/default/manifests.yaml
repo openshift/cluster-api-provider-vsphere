@@ -449,6 +449,8 @@ spec:
         - --insecure-diagnostics=${CAPI_INSECURE_DIAGNOSTICS:=false}
         - --v=4
         - --feature-gates=MultiNetworks=${EXP_MULTI_NETWORKS:=false},NodeAntiAffinity=${EXP_NODE_ANTI_AFFINITY:=false},NamespaceScopedZones=${EXP_NAMESPACE_SCOPED_ZONES:=false},NodeAutoPlacement=${EXP_NODE_AUTO_PLACEMENT:=false},PriorityQueue=${EXP_PRIORITY_QUEUE:=false}
+        - --tls-min-version=${TLS_MIN_VERSION}
+        - --tls-cipher-suites=${TLS_CIPHER_SUITES}
         env:
         - name: POD_NAMESPACE
           valueFrom:
