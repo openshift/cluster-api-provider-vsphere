@@ -8561,6 +8561,9 @@ webhooks:
   failurePolicy: Fail
   matchPolicy: Equivalent
   name: default.vspheredeploymentzone.infrastructure.cluster.x-k8s.io
+  namespaceSelector:
+    matchLabels:
+      kubernetes.io/metadata.name: openshift-cluster-api
   rules:
   - apiGroups:
     - infrastructure.cluster.x-k8s.io
@@ -8582,6 +8585,9 @@ webhooks:
   failurePolicy: Fail
   matchPolicy: Equivalent
   name: default.vspherefailuredomain.infrastructure.cluster.x-k8s.io
+  namespaceSelector:
+    matchLabels:
+      kubernetes.io/metadata.name: openshift-cluster-api
   rules:
   - apiGroups:
     - infrastructure.cluster.x-k8s.io
@@ -8603,6 +8609,9 @@ webhooks:
   failurePolicy: Fail
   matchPolicy: Equivalent
   name: default.vspheremachine.infrastructure.cluster.x-k8s.io
+  namespaceSelector:
+    matchLabels:
+      kubernetes.io/metadata.name: openshift-cluster-api
   rules:
   - apiGroups:
     - infrastructure.cluster.x-k8s.io
@@ -8624,6 +8633,9 @@ webhooks:
   failurePolicy: Fail
   matchPolicy: Equivalent
   name: default.vspherevm.infrastructure.cluster.x-k8s.io
+  namespaceSelector:
+    matchLabels:
+      kubernetes.io/metadata.name: openshift-cluster-api
   rules:
   - apiGroups:
     - infrastructure.cluster.x-k8s.io
@@ -8655,6 +8667,9 @@ webhooks:
   failurePolicy: Fail
   matchPolicy: Equivalent
   name: validation.vsphereclustertemplate.infrastructure.cluster.x-k8s.io
+  namespaceSelector:
+    matchLabels:
+      kubernetes.io/metadata.name: openshift-cluster-api
   rules:
   - apiGroups:
     - infrastructure.cluster.x-k8s.io
@@ -8676,6 +8691,9 @@ webhooks:
   failurePolicy: Fail
   matchPolicy: Equivalent
   name: validation.vspherefailuredomain.infrastructure.cluster.x-k8s.io
+  namespaceSelector:
+    matchLabels:
+      kubernetes.io/metadata.name: openshift-cluster-api
   rules:
   - apiGroups:
     - infrastructure.cluster.x-k8s.io
@@ -8697,6 +8715,9 @@ webhooks:
   failurePolicy: Fail
   matchPolicy: Equivalent
   name: validation.vspheremachine.infrastructure.cluster.x-k8s.io
+  namespaceSelector:
+    matchLabels:
+      kubernetes.io/metadata.name: openshift-cluster-api
   rules:
   - apiGroups:
     - infrastructure.cluster.x-k8s.io
@@ -8718,6 +8739,9 @@ webhooks:
   failurePolicy: Fail
   matchPolicy: Equivalent
   name: validation.vspheremachinetemplate.infrastructure.cluster.x-k8s.io
+  namespaceSelector:
+    matchLabels:
+      kubernetes.io/metadata.name: openshift-cluster-api
   rules:
   - apiGroups:
     - infrastructure.cluster.x-k8s.io
@@ -8739,6 +8763,9 @@ webhooks:
   failurePolicy: Fail
   matchPolicy: Equivalent
   name: validation.vspherevm.infrastructure.cluster.x-k8s.io
+  namespaceSelector:
+    matchLabels:
+      kubernetes.io/metadata.name: openshift-cluster-api
   rules:
   - apiGroups:
     - infrastructure.cluster.x-k8s.io
