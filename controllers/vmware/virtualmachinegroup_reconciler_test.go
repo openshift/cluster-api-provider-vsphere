@@ -106,6 +106,22 @@ func Test_shouldCreateVirtualMachineGroup(t *testing.T) {
 			want: false, // tot replicas = 4, 3 VSphereMachine exist
 		},
 		{
+			name: "Should create a VMG when more VSphereMachines than expected replicas exist",
+			mds: []clusterv1.MachineDeployment{
+				*createMD("md1", "test-cluster", "", 2),
+				*createMD("md2", "test-cluster", "", 1),
+				*createMD("md3", "test-cluster", "zone1", 1),
+			},
+			vSphereMachines: []vmwarev1.VSphereMachine{
+				*createVSphereMachine("m1", "test-cluster", "md1", ""),
+				*createVSphereMachine("m2", "test-cluster", "md1", ""),
+				*createVSphereMachine("m3", "test-cluster", "md1", ""), // surge: one extra for md1
+				*createVSphereMachine("m4", "test-cluster", "md2", ""),
+				*createVSphereMachine("m5", "test-cluster", "md3", "zone1"),
+			},
+			want: true, // tot replicas = 4, 5 VSphereMachines (current > expected)
+		},
+		{
 			name:            "Should not create a VMG there are no expected VSphereMachines",
 			mds:             []clusterv1.MachineDeployment{}, // No Machine deployments
 			vSphereMachines: []vmwarev1.VSphereMachine{},     // No VSphereMachine
@@ -313,6 +329,41 @@ func Test_getMachineDeploymentToFailureDomainMapping(t *testing.T) {
 			},
 		},
 		{
+			name: "MachineDeployment mapping should use already-placed message from VirtualMachineGroup status if not nil",
+			mds: []clusterv1.MachineDeployment{
+				*createMD("md1", "test-cluster", "", 1), // failure domain not explicitly set
+			},
+			singleZoneName: "",
+			existingVMG: &vmoprv1.VirtualMachineGroup{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						// Placement decision for md1 not yet reported into annotation
+					},
+				},
+				Status: vmoprv1.VirtualMachineGroupStatus{
+					Members: []vmoprv1.VirtualMachineGroupMemberStatus{
+						{
+							Name: "m1-vm",
+							Conditions: []metav1.Condition{
+								{
+									Type:    vmoprv1.VirtualMachineGroupMemberConditionPlacementReady,
+									Status:  metav1.ConditionTrue,
+									Reason:  "AlreadyPlaced",
+									Message: "zone-from-message",
+								},
+							},
+						},
+					},
+				},
+			},
+			virtualMachineNameToMachineDeployment: map[string]string{
+				"m1-vm": "md1",
+			},
+			want: map[string]string{
+				"md1": "zone-from-message",
+			},
+		},
+		{
 			name: "MachineDeployment not yet placed (VirtualMachineGroup not yet created)",
 			mds: []clusterv1.MachineDeployment{
 				*createMD("md1", "test-cluster", "", 1), // failure domain not explicitly set
@@ -343,6 +394,38 @@ func Test_getMachineDeploymentToFailureDomainMapping(t *testing.T) {
 			},
 			virtualMachineNameToMachineDeployment: nil,
 			want:                                  map[string]string{}, // "md1" not yet placed
+		},
+		{
+			name: "MachineDeployment not go through placement process (VirtualMachineGroup status not reporting already-placed message)",
+			mds: []clusterv1.MachineDeployment{
+				*createMD("md1", "test-cluster", "", 1), // failure domain not explicitly set
+			},
+			singleZoneName: "",
+			existingVMG: &vmoprv1.VirtualMachineGroup{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						// Placement decision for md1 not yet reported into annotation
+					},
+				},
+				Spec: vmoprv1.VirtualMachineGroupSpec{},
+				Status: vmoprv1.VirtualMachineGroupStatus{
+					Members: []vmoprv1.VirtualMachineGroupMemberStatus{
+						{
+							Name: "m1-vm",
+							Conditions: []metav1.Condition{
+								{
+									Type:    vmoprv1.VirtualMachineGroupMemberConditionPlacementReady,
+									Status:  metav1.ConditionTrue,
+									Reason:  "AlreadyPlaced",
+									Message: "", // already-placed but no location reported
+								},
+							},
+						},
+					},
+				},
+			},
+			virtualMachineNameToMachineDeployment: nil,
+			want:                                  map[string]string{},
 		},
 		{
 			name: "MachineDeployment not yet placed (VirtualMachineGroup status not yet reporting placement completed for MachineDeployment's VirtualMachines)",
@@ -448,6 +531,81 @@ func Test_getMachineDeploymentToFailureDomainMapping(t *testing.T) {
 			},
 			want: map[string]string{
 				// "md1" not yet placed
+			},
+		},
+		{
+			name: "MachineDeployment mapping should not use single-zone failure domain when MD has been already placed without placement process",
+			mds: []clusterv1.MachineDeployment{
+				*createMD("md1", "test-cluster", "", 1),
+			},
+			singleZoneName: "zone1",
+			existingVMG: &vmoprv1.VirtualMachineGroup{
+				Spec: vmoprv1.VirtualMachineGroupSpec{
+					BootOrder: []vmoprv1.VirtualMachineGroupBootOrderGroup{
+						{
+							Members: []vmoprv1.GroupMember{{Name: "m1-vm"}},
+						},
+					},
+				},
+				Status: vmoprv1.VirtualMachineGroupStatus{
+					Members: []vmoprv1.VirtualMachineGroupMemberStatus{
+						{
+							Name:      "m1-vm",
+							Placement: nil, // Simulate Adopted VM where placement struct is missing
+							Conditions: []metav1.Condition{
+								{
+									Type:    vmoprv1.VirtualMachineGroupMemberConditionPlacementReady,
+									Status:  metav1.ConditionTrue,
+									Reason:  "AlreadyPlaced",
+									Message: "zone-from-message",
+								},
+							},
+						},
+					},
+				},
+			},
+			virtualMachineNameToMachineDeployment: map[string]string{
+				"m1-vm": "md1",
+			},
+			want: map[string]string{
+				"md1": "zone-from-message",
+			},
+		},
+		{
+			name: "MachineDeployment mapping should not use single-zone failure domain when MD has been already placed but message is empty",
+			mds: []clusterv1.MachineDeployment{
+				*createMD("md1", "test-cluster", "", 1),
+			},
+			singleZoneName: "zone1",
+			existingVMG: &vmoprv1.VirtualMachineGroup{
+				Spec: vmoprv1.VirtualMachineGroupSpec{
+					BootOrder: []vmoprv1.VirtualMachineGroupBootOrderGroup{
+						{
+							Members: []vmoprv1.GroupMember{{Name: "m1-vm"}},
+						},
+					},
+				},
+				Status: vmoprv1.VirtualMachineGroupStatus{
+					Members: []vmoprv1.VirtualMachineGroupMemberStatus{
+						{
+							Name: "m1-vm",
+							Conditions: []metav1.Condition{
+								{
+									Type:    vmoprv1.VirtualMachineGroupMemberConditionPlacementReady,
+									Status:  metav1.ConditionTrue,
+									Reason:  "AlreadyPlaced",
+									Message: "", // No location reported
+								},
+							},
+						},
+					},
+				},
+			},
+			virtualMachineNameToMachineDeployment: map[string]string{
+				"m1-vm": "md1",
+			},
+			want: map[string]string{
+				// No location reported for "md1"
 			},
 		},
 		{
@@ -958,6 +1116,45 @@ func TestVirtualMachineGroupReconciler_ReconcileSequence(t *testing.T) {
 								{Name: "m1-vm", Kind: "VirtualMachine"},
 								{Name: "m2-vm", Kind: "VirtualMachine"},
 								{Name: "m3", Kind: "VirtualMachine"},
+							},
+						},
+					},
+				},
+			},
+		},
+		{
+			name:    "VirtualMachineGroup should be created when more vSphereMachines than replicas exist",
+			cluster: clusterInitialized,
+			mds: []clusterv1.MachineDeployment{
+				*createMD("md1", clusterInitialized.Name, "zone1", 2),
+				*createMD("md2", clusterInitialized.Name, "", 1),
+			},
+			vSphereMachines: []vmwarev1.VSphereMachine{
+				*createVSphereMachine("m1", clusterInitialized.Name, "md1", "zone1", withCustomNamingStrategy()),
+				*createVSphereMachine("m2", clusterInitialized.Name, "md1", "zone1", withCustomNamingStrategy()),
+				*createVSphereMachine("m3", clusterInitialized.Name, "md1", "zone1", withCustomNamingStrategy()), // surge: extra worker for md1
+				*createVSphereMachine("m4", clusterInitialized.Name, "md2", ""),
+			},
+			existingVMG: nil,
+			wantResult:  ctrl.Result{},
+			wantVMG: &vmoprv1.VirtualMachineGroup{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: clusterInitialized.Namespace,
+					Name:      clusterInitialized.Name,
+					UID:       types.UID("uid"),
+					Annotations: map[string]string{
+						fmt.Sprintf("%s/%s", vmoperator.ZoneAnnotationPrefix, "md1"): "zone1", // failureDomain for md1 is explicitly set by the user
+					},
+					// Not setting labels and ownerReferences for sake of simplicity
+				},
+				Spec: vmoprv1.VirtualMachineGroupSpec{
+					BootOrder: []vmoprv1.VirtualMachineGroupBootOrderGroup{
+						{
+							Members: []vmoprv1.GroupMember{
+								{Name: "m1-vm", Kind: "VirtualMachine"},
+								{Name: "m2-vm", Kind: "VirtualMachine"},
+								{Name: "m3-vm", Kind: "VirtualMachine"},
+								{Name: "m4", Kind: "VirtualMachine"},
 							},
 						},
 					},
