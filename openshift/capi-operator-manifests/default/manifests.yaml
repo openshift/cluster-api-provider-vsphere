@@ -253,6 +253,8 @@ rules:
 - apiGroups:
   - vmoperator.vmware.com
   resources:
+  - virtualmachinegroups
+  - virtualmachinegroups/status
   - virtualmachineimages
   - virtualmachineimages/status
   - virtualmachines
@@ -330,7 +332,7 @@ roleRef:
   name: capv-aggregated-manager-role
 subjects:
 - kind: ServiceAccount
-  name: default
+  name: capv-manager
   namespace: openshift-cluster-api
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -393,7 +395,7 @@ roleRef:
   name: capv-leader-election-role
 subjects:
 - kind: ServiceAccount
-  name: default
+  name: capv-manager
   namespace: openshift-cluster-api
 ---
 aggregationRule:
@@ -407,6 +409,14 @@ metadata:
     cluster.x-k8s.io/provider: infrastructure-vsphere
   name: capv-aggregated-manager-role
 rules: []
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  labels:
+    cluster.x-k8s.io/provider: infrastructure-vsphere
+  name: capv-manager
+  namespace: openshift-cluster-api
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -426,6 +436,7 @@ spec:
   template:
     metadata:
       annotations:
+        openshift.io/required-scc: restricted-v2
         target.workload.openshift.io/management: '{"effect": "PreferredDuringScheduling"}'
       labels:
         cluster.x-k8s.io/provider: infrastructure-vsphere
@@ -437,7 +448,9 @@ spec:
         - --diagnostics-address=${CAPI_DIAGNOSTICS_ADDRESS:=:8443}
         - --insecure-diagnostics=${CAPI_INSECURE_DIAGNOSTICS:=false}
         - --v=4
-        - --feature-gates=MultiNetworks=${EXP_MULTI_NETWORKS:=false},NodeAntiAffinity=${EXP_NODE_ANTI_AFFINITY:=false},NamespaceScopedZones=${EXP_NAMESPACE_SCOPED_ZONES:=false},PriorityQueue=${EXP_PRIORITY_QUEUE:=false}
+        - --feature-gates=MultiNetworks=${EXP_MULTI_NETWORKS:=false},NodeAntiAffinity=${EXP_NODE_ANTI_AFFINITY:=false},NamespaceScopedZones=${EXP_NAMESPACE_SCOPED_ZONES:=false},NodeAutoPlacement=${EXP_NODE_AUTO_PLACEMENT:=false},PriorityQueue=${EXP_PRIORITY_QUEUE:=false}
+        - --tls-min-version=${TLS_MIN_VERSION}
+        - --tls-cipher-suites=${TLS_CIPHER_SUITES}
         env:
         - name: POD_NAMESPACE
           valueFrom:
@@ -496,6 +509,7 @@ spec:
         runAsNonRoot: true
         seccompProfile:
           type: RuntimeDefault
+      serviceAccountName: capv-manager
       terminationGracePeriodSeconds: 10
       tolerations:
       - effect: NoSchedule
@@ -516,7 +530,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.18.0
+    controller-gen.kubebuilder.io/version: v0.19.0
     service.beta.openshift.io/inject-cabundle: "true"
   labels:
     cluster.x-k8s.io/provider: infrastructure-vsphere
@@ -1987,6 +2001,77 @@ spec:
                   ResourcePool is the name, inventory path, managed object reference or the managed
                   object ID in which the virtual machine is created/located.
                 type: string
+              resources:
+                description: |-
+                  resources is the definition of the VM's cpu and memory
+                  reservations, limits and shares.
+                minProperties: 1
+                properties:
+                  limits:
+                    description: |-
+                      limits is the definition of the VM's cpu (in hertz, rounded up to the nearest MHz)
+                      and memory (in bytes, rounded up to the nearest MiB) limits
+                    minProperties: 1
+                    properties:
+                      cpu:
+                        anyOf:
+                        - type: integer
+                        - type: string
+                        description: cpu is the definition of the cpu quantity for
+                          the given VM hardware policy
+                        pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                        x-kubernetes-int-or-string: true
+                      memory:
+                        anyOf:
+                        - type: integer
+                        - type: string
+                        description: memory is the definition of the memory quantity
+                          for the given VM hardware policy
+                        pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                        x-kubernetes-int-or-string: true
+                    type: object
+                  requests:
+                    description: |-
+                      requests is the definition of the VM's cpu (in hertz, rounded up to the nearest MHz)
+                      and memory (in bytes, rounded up to the nearest MiB) reservations
+                    minProperties: 1
+                    properties:
+                      cpu:
+                        anyOf:
+                        - type: integer
+                        - type: string
+                        description: cpu is the definition of the cpu quantity for
+                          the given VM hardware policy
+                        pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                        x-kubernetes-int-or-string: true
+                      memory:
+                        anyOf:
+                        - type: integer
+                        - type: string
+                        description: memory is the definition of the memory quantity
+                          for the given VM hardware policy
+                        pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                        x-kubernetes-int-or-string: true
+                    type: object
+                  shares:
+                    description: shares is the definition of the VM's cpu and memory
+                      shares
+                    minProperties: 1
+                    properties:
+                      cpu:
+                        description: cpu is the number of spu shares to assign to
+                          the VM
+                        format: int32
+                        minimum: 1
+                        type: integer
+                      memory:
+                        description: memory is the number of memory shares to assign
+                          to the VM
+                        format: int32
+                        minimum: 1
+                        type: integer
+                    type: object
+                type: object
               server:
                 description: |-
                   Server is the IP address or FQDN of the vSphere server on which
@@ -2258,7 +2343,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.18.0
+    controller-gen.kubebuilder.io/version: v0.19.0
     service.beta.openshift.io/inject-cabundle: "true"
   labels:
     cluster.x-k8s.io/provider: infrastructure-vsphere
@@ -2960,9 +3045,6 @@ spec:
                     description: The port on which the API server is serving.
                     format: int32
                     type: integer
-                required:
-                - host
-                - port
                 type: object
               disableClusterModule:
                 description: |-
@@ -3210,7 +3292,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.18.0
+    controller-gen.kubebuilder.io/version: v0.19.0
     service.beta.openshift.io/inject-cabundle: "true"
   labels:
     cluster.x-k8s.io/provider: infrastructure-vsphere
@@ -4557,6 +4639,77 @@ spec:
                           ResourcePool is the name, inventory path, managed object reference or the managed
                           object ID in which the virtual machine is created/located.
                         type: string
+                      resources:
+                        description: |-
+                          resources is the definition of the VM's cpu and memory
+                          reservations, limits and shares.
+                        minProperties: 1
+                        properties:
+                          limits:
+                            description: |-
+                              limits is the definition of the VM's cpu (in hertz, rounded up to the nearest MHz)
+                              and memory (in bytes, rounded up to the nearest MiB) limits
+                            minProperties: 1
+                            properties:
+                              cpu:
+                                anyOf:
+                                - type: integer
+                                - type: string
+                                description: cpu is the definition of the cpu quantity
+                                  for the given VM hardware policy
+                                pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                                x-kubernetes-int-or-string: true
+                              memory:
+                                anyOf:
+                                - type: integer
+                                - type: string
+                                description: memory is the definition of the memory
+                                  quantity for the given VM hardware policy
+                                pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                                x-kubernetes-int-or-string: true
+                            type: object
+                          requests:
+                            description: |-
+                              requests is the definition of the VM's cpu (in hertz, rounded up to the nearest MHz)
+                              and memory (in bytes, rounded up to the nearest MiB) reservations
+                            minProperties: 1
+                            properties:
+                              cpu:
+                                anyOf:
+                                - type: integer
+                                - type: string
+                                description: cpu is the definition of the cpu quantity
+                                  for the given VM hardware policy
+                                pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                                x-kubernetes-int-or-string: true
+                              memory:
+                                anyOf:
+                                - type: integer
+                                - type: string
+                                description: memory is the definition of the memory
+                                  quantity for the given VM hardware policy
+                                pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                                x-kubernetes-int-or-string: true
+                            type: object
+                          shares:
+                            description: shares is the definition of the VM's cpu
+                              and memory shares
+                            minProperties: 1
+                            properties:
+                              cpu:
+                                description: cpu is the number of spu shares to assign
+                                  to the VM
+                                format: int32
+                                minimum: 1
+                                type: integer
+                              memory:
+                                description: memory is the number of memory shares
+                                  to assign to the VM
+                                format: int32
+                                minimum: 1
+                                type: integer
+                            type: object
+                        type: object
                       server:
                         description: |-
                           Server is the IP address or FQDN of the vSphere server on which
@@ -4611,7 +4764,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.18.0
+    controller-gen.kubebuilder.io/version: v0.19.0
     service.beta.openshift.io/inject-cabundle: "true"
   labels:
     cluster.x-k8s.io/provider: infrastructure-vsphere
@@ -6140,6 +6293,77 @@ spec:
                   ResourcePool is the name, inventory path, managed object reference or the managed
                   object ID in which the virtual machine is created/located.
                 type: string
+              resources:
+                description: |-
+                  resources is the definition of the VM's cpu and memory
+                  reservations, limits and shares.
+                minProperties: 1
+                properties:
+                  limits:
+                    description: |-
+                      limits is the definition of the VM's cpu (in hertz, rounded up to the nearest MHz)
+                      and memory (in bytes, rounded up to the nearest MiB) limits
+                    minProperties: 1
+                    properties:
+                      cpu:
+                        anyOf:
+                        - type: integer
+                        - type: string
+                        description: cpu is the definition of the cpu quantity for
+                          the given VM hardware policy
+                        pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                        x-kubernetes-int-or-string: true
+                      memory:
+                        anyOf:
+                        - type: integer
+                        - type: string
+                        description: memory is the definition of the memory quantity
+                          for the given VM hardware policy
+                        pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                        x-kubernetes-int-or-string: true
+                    type: object
+                  requests:
+                    description: |-
+                      requests is the definition of the VM's cpu (in hertz, rounded up to the nearest MHz)
+                      and memory (in bytes, rounded up to the nearest MiB) reservations
+                    minProperties: 1
+                    properties:
+                      cpu:
+                        anyOf:
+                        - type: integer
+                        - type: string
+                        description: cpu is the definition of the cpu quantity for
+                          the given VM hardware policy
+                        pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                        x-kubernetes-int-or-string: true
+                      memory:
+                        anyOf:
+                        - type: integer
+                        - type: string
+                        description: memory is the definition of the memory quantity
+                          for the given VM hardware policy
+                        pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                        x-kubernetes-int-or-string: true
+                    type: object
+                  shares:
+                    description: shares is the definition of the VM's cpu and memory
+                      shares
+                    minProperties: 1
+                    properties:
+                      cpu:
+                        description: cpu is the number of spu shares to assign to
+                          the VM
+                        format: int32
+                        minimum: 1
+                        type: integer
+                      memory:
+                        description: memory is the number of memory shares to assign
+                          to the VM
+                        format: int32
+                        minimum: 1
+                        type: integer
+                    type: object
+                type: object
               server:
                 description: |-
                   Server is the IP address or FQDN of the vSphere server on which
@@ -6429,7 +6653,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.18.0
+    controller-gen.kubebuilder.io/version: v0.19.0
     service.beta.openshift.io/inject-cabundle: "true"
   labels:
     cluster.x-k8s.io/provider: infrastructure-vsphere
@@ -7038,7 +7262,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.18.0
+    controller-gen.kubebuilder.io/version: v0.19.0
     service.beta.openshift.io/inject-cabundle: "true"
   labels:
     cluster.x-k8s.io/provider: infrastructure-vsphere
@@ -7494,7 +7718,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.18.0
+    controller-gen.kubebuilder.io/version: v0.19.0
   labels:
     cluster.x-k8s.io/provider: infrastructure-vsphere
     cluster.x-k8s.io/v1beta1: v1beta1
@@ -8018,7 +8242,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.18.0
+    controller-gen.kubebuilder.io/version: v0.19.0
     service.beta.openshift.io/inject-cabundle: "true"
   labels:
     cluster.x-k8s.io/provider: infrastructure-vsphere
@@ -8206,9 +8430,6 @@ spec:
                             description: The port on which the API server is serving.
                             format: int32
                             type: integer
-                        required:
-                        - host
-                        - port
                         type: object
                       disableClusterModule:
                         description: |-
@@ -8340,6 +8561,9 @@ webhooks:
   failurePolicy: Fail
   matchPolicy: Equivalent
   name: default.vspheredeploymentzone.infrastructure.cluster.x-k8s.io
+  namespaceSelector:
+    matchLabels:
+      kubernetes.io/metadata.name: openshift-cluster-api
   rules:
   - apiGroups:
     - infrastructure.cluster.x-k8s.io
@@ -8361,6 +8585,9 @@ webhooks:
   failurePolicy: Fail
   matchPolicy: Equivalent
   name: default.vspherefailuredomain.infrastructure.cluster.x-k8s.io
+  namespaceSelector:
+    matchLabels:
+      kubernetes.io/metadata.name: openshift-cluster-api
   rules:
   - apiGroups:
     - infrastructure.cluster.x-k8s.io
@@ -8382,6 +8609,9 @@ webhooks:
   failurePolicy: Fail
   matchPolicy: Equivalent
   name: default.vspheremachine.infrastructure.cluster.x-k8s.io
+  namespaceSelector:
+    matchLabels:
+      kubernetes.io/metadata.name: openshift-cluster-api
   rules:
   - apiGroups:
     - infrastructure.cluster.x-k8s.io
@@ -8403,6 +8633,9 @@ webhooks:
   failurePolicy: Fail
   matchPolicy: Equivalent
   name: default.vspherevm.infrastructure.cluster.x-k8s.io
+  namespaceSelector:
+    matchLabels:
+      kubernetes.io/metadata.name: openshift-cluster-api
   rules:
   - apiGroups:
     - infrastructure.cluster.x-k8s.io
@@ -8434,6 +8667,9 @@ webhooks:
   failurePolicy: Fail
   matchPolicy: Equivalent
   name: validation.vsphereclustertemplate.infrastructure.cluster.x-k8s.io
+  namespaceSelector:
+    matchLabels:
+      kubernetes.io/metadata.name: openshift-cluster-api
   rules:
   - apiGroups:
     - infrastructure.cluster.x-k8s.io
@@ -8455,6 +8691,9 @@ webhooks:
   failurePolicy: Fail
   matchPolicy: Equivalent
   name: validation.vspherefailuredomain.infrastructure.cluster.x-k8s.io
+  namespaceSelector:
+    matchLabels:
+      kubernetes.io/metadata.name: openshift-cluster-api
   rules:
   - apiGroups:
     - infrastructure.cluster.x-k8s.io
@@ -8476,6 +8715,9 @@ webhooks:
   failurePolicy: Fail
   matchPolicy: Equivalent
   name: validation.vspheremachine.infrastructure.cluster.x-k8s.io
+  namespaceSelector:
+    matchLabels:
+      kubernetes.io/metadata.name: openshift-cluster-api
   rules:
   - apiGroups:
     - infrastructure.cluster.x-k8s.io
@@ -8497,6 +8739,9 @@ webhooks:
   failurePolicy: Fail
   matchPolicy: Equivalent
   name: validation.vspheremachinetemplate.infrastructure.cluster.x-k8s.io
+  namespaceSelector:
+    matchLabels:
+      kubernetes.io/metadata.name: openshift-cluster-api
   rules:
   - apiGroups:
     - infrastructure.cluster.x-k8s.io
@@ -8518,6 +8763,9 @@ webhooks:
   failurePolicy: Fail
   matchPolicy: Equivalent
   name: validation.vspherevm.infrastructure.cluster.x-k8s.io
+  namespaceSelector:
+    matchLabels:
+      kubernetes.io/metadata.name: openshift-cluster-api
   rules:
   - apiGroups:
     - infrastructure.cluster.x-k8s.io
