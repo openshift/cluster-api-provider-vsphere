@@ -78,7 +78,7 @@ func (vp *nsxtVPCNetworkProvider) verifyNsxtVpcSubnetSetStatus(vspherecluster *v
 		}
 		hasReadyCondition = true
 		if condition.Status != corev1.ConditionTrue {
-			conditions.MarkFalse(vspherecluster, vmwarev1.ClusterNetworkReadyCondition, vmwarev1.ClusterNetworkProvisionFailedReason, clusterv1.ConditionSeverityWarning, condition.Message)
+			conditions.MarkFalse(vspherecluster, vmwarev1.ClusterNetworkReadyCondition, vmwarev1.ClusterNetworkProvisionFailedReason, clusterv1.ConditionSeverityWarning, "%s", condition.Message)
 			v1beta2conditions.Set(vspherecluster, metav1.Condition{
 				Type:    vmwarev1.VSphereClusterNetworkReadyV1Beta2Condition,
 				Status:  metav1.ConditionFalse,
@@ -157,7 +157,7 @@ func (vp *nsxtVPCNetworkProvider) ProvisionClusterNetwork(ctx context.Context, c
 		return nil
 	})
 	if err != nil {
-		conditions.MarkFalse(clusterCtx.VSphereCluster, vmwarev1.ClusterNetworkReadyCondition, vmwarev1.ClusterNetworkProvisionFailedReason, clusterv1.ConditionSeverityWarning, err.Error())
+		conditions.MarkFalse(clusterCtx.VSphereCluster, vmwarev1.ClusterNetworkReadyCondition, vmwarev1.ClusterNetworkProvisionFailedReason, clusterv1.ConditionSeverityWarning, "%s", err.Error())
 		v1beta2conditions.Set(clusterCtx.VSphereCluster, metav1.Condition{
 			Type:    vmwarev1.VSphereClusterNetworkReadyV1Beta2Condition,
 			Status:  metav1.ConditionFalse,

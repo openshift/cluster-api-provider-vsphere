@@ -271,7 +271,7 @@ func (r *clusterReconciler) reconcileNormal(ctx context.Context, clusterCtx *cap
 
 	// Reconcile vCenter availability.
 	if err := r.reconcileIdentitySecret(ctx, clusterCtx); err != nil {
-		conditions.MarkFalse(clusterCtx.VSphereCluster, infrav1.VCenterAvailableCondition, infrav1.VCenterUnreachableReason, clusterv1.ConditionSeverityError, err.Error())
+		conditions.MarkFalse(clusterCtx.VSphereCluster, infrav1.VCenterAvailableCondition, infrav1.VCenterUnreachableReason, clusterv1.ConditionSeverityError, "%s", err.Error())
 		v1beta2conditions.Set(clusterCtx.VSphereCluster, metav1.Condition{
 			Type:    infrav1.VSphereClusterVCenterAvailableV1Beta2Condition,
 			Status:  metav1.ConditionFalse,
@@ -283,7 +283,7 @@ func (r *clusterReconciler) reconcileNormal(ctx context.Context, clusterCtx *cap
 
 	vcenterSession, err := r.reconcileVCenterConnectivity(ctx, clusterCtx)
 	if err != nil {
-		conditions.MarkFalse(clusterCtx.VSphereCluster, infrav1.VCenterAvailableCondition, infrav1.VCenterUnreachableReason, clusterv1.ConditionSeverityError, err.Error())
+		conditions.MarkFalse(clusterCtx.VSphereCluster, infrav1.VCenterAvailableCondition, infrav1.VCenterUnreachableReason, clusterv1.ConditionSeverityError, "%s", err.Error())
 		v1beta2conditions.Set(clusterCtx.VSphereCluster, metav1.Condition{
 			Type:    infrav1.VSphereClusterVCenterAvailableV1Beta2Condition,
 			Status:  metav1.ConditionFalse,
@@ -303,7 +303,7 @@ func (r *clusterReconciler) reconcileNormal(ctx context.Context, clusterCtx *cap
 	// Reconcile cluster modules.
 	err = r.reconcileVCenterVersion(clusterCtx, vcenterSession)
 	if err != nil || clusterCtx.VSphereCluster.Status.VCenterVersion == "" {
-		conditions.MarkFalse(clusterCtx.VSphereCluster, infrav1.ClusterModulesAvailableCondition, infrav1.MissingVCenterVersionReason, clusterv1.ConditionSeverityWarning, err.Error())
+		conditions.MarkFalse(clusterCtx.VSphereCluster, infrav1.ClusterModulesAvailableCondition, infrav1.MissingVCenterVersionReason, clusterv1.ConditionSeverityWarning, "%s", err.Error())
 		v1beta2conditions.Set(clusterCtx.VSphereCluster, metav1.Condition{
 			Type:    infrav1.VSphereClusterClusterModulesReadyV1Beta2Condition,
 			Status:  metav1.ConditionFalse,
@@ -315,7 +315,7 @@ func (r *clusterReconciler) reconcileNormal(ctx context.Context, clusterCtx *cap
 
 	affinityReconcileResult, err := r.reconcileClusterModules(ctx, clusterCtx)
 	if err != nil {
-		conditions.MarkFalse(clusterCtx.VSphereCluster, infrav1.ClusterModulesAvailableCondition, infrav1.ClusterModuleSetupFailedReason, clusterv1.ConditionSeverityWarning, err.Error())
+		conditions.MarkFalse(clusterCtx.VSphereCluster, infrav1.ClusterModulesAvailableCondition, infrav1.ClusterModuleSetupFailedReason, clusterv1.ConditionSeverityWarning, "%s", err.Error())
 		v1beta2conditions.Set(clusterCtx.VSphereCluster, metav1.Condition{
 			Type:    infrav1.VSphereClusterClusterModulesReadyV1Beta2Condition,
 			Status:  metav1.ConditionFalse,
