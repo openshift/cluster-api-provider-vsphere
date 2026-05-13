@@ -90,7 +90,7 @@ func (vms *VMService) ReconcileVM(ctx context.Context, vmCtx *capvcontext.VMCont
 		// but sometimes this error is transient, for instance, if the storage was temporarily disconnected but
 		// later recovered, the machine will recover from this error.
 		if wasNotFoundByBIOSUUID(err) {
-			conditions.MarkFalse(vmCtx.VSphereVM, infrav1.VMProvisionedCondition, infrav1.NotFoundByBIOSUUIDReason, clusterv1.ConditionSeverityWarning, err.Error())
+			conditions.MarkFalse(vmCtx.VSphereVM, infrav1.VMProvisionedCondition, infrav1.NotFoundByBIOSUUIDReason, clusterv1.ConditionSeverityWarning, "%s", err.Error())
 			v1beta2conditions.Set(vmCtx.VSphereVM, metav1.Condition{
 				Type:    infrav1.VSphereVMVirtualMachineProvisionedV1Beta2Condition,
 				Status:  metav1.ConditionFalse,
@@ -116,7 +116,7 @@ func (vms *VMService) ReconcileVM(ctx context.Context, vmCtx *capvcontext.VMCont
 		// Get the bootstrap data.
 		bootstrapData, format, err := vms.getBootstrapData(ctx, vmCtx)
 		if err != nil {
-			conditions.MarkFalse(vmCtx.VSphereVM, infrav1.VMProvisionedCondition, infrav1.CloningFailedReason, clusterv1.ConditionSeverityWarning, err.Error())
+			conditions.MarkFalse(vmCtx.VSphereVM, infrav1.VMProvisionedCondition, infrav1.CloningFailedReason, clusterv1.ConditionSeverityWarning, "%s", err.Error())
 			v1beta2conditions.Set(vmCtx.VSphereVM, metav1.Condition{
 				Type:    infrav1.VSphereVMVirtualMachineProvisionedV1Beta2Condition,
 				Status:  metav1.ConditionFalse,
@@ -129,7 +129,7 @@ func (vms *VMService) ReconcileVM(ctx context.Context, vmCtx *capvcontext.VMCont
 		// Create the VM.
 		err = createVM(ctx, vmCtx, bootstrapData, format)
 		if err != nil {
-			conditions.MarkFalse(vmCtx.VSphereVM, infrav1.VMProvisionedCondition, infrav1.CloningFailedReason, clusterv1.ConditionSeverityWarning, err.Error())
+			conditions.MarkFalse(vmCtx.VSphereVM, infrav1.VMProvisionedCondition, infrav1.CloningFailedReason, clusterv1.ConditionSeverityWarning, "%s", err.Error())
 			v1beta2conditions.Set(vmCtx.VSphereVM, metav1.Condition{
 				Type:    infrav1.VSphereVMVirtualMachineProvisionedV1Beta2Condition,
 				Status:  metav1.ConditionFalse,
@@ -197,7 +197,7 @@ func (vms *VMService) ReconcileVM(ctx context.Context, vmCtx *capvcontext.VMCont
 	}
 
 	if err := vms.reconcileTags(ctx, virtualMachineCtx); err != nil {
-		conditions.MarkFalse(vmCtx.VSphereVM, infrav1.VMProvisionedCondition, infrav1.TagsAttachmentFailedReason, clusterv1.ConditionSeverityError, err.Error())
+		conditions.MarkFalse(vmCtx.VSphereVM, infrav1.VMProvisionedCondition, infrav1.TagsAttachmentFailedReason, clusterv1.ConditionSeverityError, "%s", err.Error())
 		v1beta2conditions.Set(vmCtx.VSphereVM, metav1.Condition{
 			Type:    infrav1.VSphereVMVirtualMachineProvisionedV1Beta2Condition,
 			Status:  metav1.ConditionFalse,
@@ -343,7 +343,7 @@ func (vms *VMService) reconcileIPAddresses(ctx context.Context, virtualMachineCt
 		return false, err
 	}
 	if errors.Is(err, ipam.ErrWaitingForIPAddr) {
-		conditions.MarkFalse(virtualMachineCtx.VSphereVM, infrav1.VMProvisionedCondition, infrav1.WaitingForIPAddressReason, clusterv1.ConditionSeverityInfo, err.Error())
+		conditions.MarkFalse(virtualMachineCtx.VSphereVM, infrav1.VMProvisionedCondition, infrav1.WaitingForIPAddressReason, clusterv1.ConditionSeverityInfo, "%s", err.Error())
 		v1beta2conditions.Set(virtualMachineCtx.VSphereVM, metav1.Condition{
 			Type:    infrav1.VSphereVMVirtualMachineProvisionedV1Beta2Condition,
 			Status:  metav1.ConditionFalse,
@@ -397,7 +397,7 @@ func (vms *VMService) reconcilePowerState(ctx context.Context, virtualMachineCtx
 		log.Info("Powering on VM")
 		task, err := virtualMachineCtx.Obj.PowerOn(ctx)
 		if err != nil {
-			conditions.MarkFalse(virtualMachineCtx.VSphereVM, infrav1.VMProvisionedCondition, infrav1.PoweringOnFailedReason, clusterv1.ConditionSeverityWarning, err.Error())
+			conditions.MarkFalse(virtualMachineCtx.VSphereVM, infrav1.VMProvisionedCondition, infrav1.PoweringOnFailedReason, clusterv1.ConditionSeverityWarning, "%s", err.Error())
 			v1beta2conditions.Set(virtualMachineCtx.VSphereVM, metav1.Condition{
 				Type:    infrav1.VSphereVMVirtualMachineProvisionedV1Beta2Condition,
 				Status:  metav1.ConditionFalse,

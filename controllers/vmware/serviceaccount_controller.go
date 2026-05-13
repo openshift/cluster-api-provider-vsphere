@@ -207,7 +207,7 @@ func (r *ServiceAccountReconciler) reconcileNormal(ctx context.Context, guestClu
 	defer func() {
 		if reterr != nil {
 			conditions.MarkFalse(guestClusterCtx.VSphereCluster, vmwarev1.ProviderServiceAccountsReadyCondition, vmwarev1.ProviderServiceAccountsReconciliationFailedReason,
-				clusterv1.ConditionSeverityWarning, reterr.Error())
+				clusterv1.ConditionSeverityWarning, "%s", reterr.Error())
 			v1beta2conditions.Set(guestClusterCtx.VSphereCluster, metav1.Condition{
 				Type:    vmwarev1.VSphereClusterProviderServiceAccountsReadyV1Beta2Condition,
 				Status:  metav1.ConditionFalse,

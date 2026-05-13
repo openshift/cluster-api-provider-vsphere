@@ -238,7 +238,7 @@ func (r *serviceDiscoveryReconciler) patch(ctx context.Context, clusterCtx *vmwa
 func (r *serviceDiscoveryReconciler) reconcileNormal(ctx context.Context, guestClusterCtx *vmwarecontext.GuestClusterContext) error {
 	if err := r.reconcileSupervisorHeadlessService(ctx, guestClusterCtx); err != nil {
 		conditions.MarkFalse(guestClusterCtx.VSphereCluster, vmwarev1.ServiceDiscoveryReadyCondition, vmwarev1.SupervisorHeadlessServiceSetupFailedReason,
-			clusterv1.ConditionSeverityWarning, err.Error())
+			clusterv1.ConditionSeverityWarning, "%s", err.Error())
 		v1beta2conditions.Set(guestClusterCtx.VSphereCluster, metav1.Condition{
 			Type:    vmwarev1.VSphereClusterServiceDiscoveryReadyV1Beta2Condition,
 			Status:  metav1.ConditionFalse,
@@ -282,7 +282,7 @@ func (r *serviceDiscoveryReconciler) reconcileSupervisorHeadlessService(ctx cont
 		// Note: We have watches on the LB Svc (VIP) & the cluster-info configmap (FIP).
 		// There is no need to return an error to keep re-trying.
 		conditions.MarkFalse(guestClusterCtx.VSphereCluster, vmwarev1.ServiceDiscoveryReadyCondition, vmwarev1.SupervisorHeadlessServiceSetupFailedReason,
-			clusterv1.ConditionSeverityWarning, err.Error())
+			clusterv1.ConditionSeverityWarning, "%s", err.Error())
 		v1beta2conditions.Set(guestClusterCtx.VSphereCluster, metav1.Condition{
 			Type:    vmwarev1.VSphereClusterServiceDiscoveryReadyV1Beta2Condition,
 			Status:  metav1.ConditionFalse,
