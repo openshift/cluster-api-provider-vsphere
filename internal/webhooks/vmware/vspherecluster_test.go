@@ -21,13 +21,12 @@ import (
 	"testing"
 
 	. "github.com/onsi/gomega"
-	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	featuregatetesting "k8s.io/component-base/featuregate/testing"
 	"k8s.io/utils/ptr"
 
-	vmwarev1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/vmware/v1beta1"
+	vmwarev1 "sigs.k8s.io/cluster-api-provider-vsphere/api/supervisor/v1beta2"
 	"sigs.k8s.io/cluster-api-provider-vsphere/feature"
 	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/manager"
 )
@@ -207,40 +206,6 @@ func TestVSphereCluster_ValidateDelete(t *testing.T) {
 	warnings, err := webhook.ValidateDelete(context.Background(), cluster)
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(warnings).To(BeNil())
-}
-
-func TestVSphereCluster_ValidateCreate_InvalidObjectType(t *testing.T) {
-	g := NewWithT(t)
-
-	webhook := &VSphereCluster{}
-	// Create an invalid object that implements runtime.Object but is not a VSphereCluster
-	invalidObj := &corev1.ConfigMap{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: "test-configmap",
-		},
-	}
-
-	_, err := webhook.ValidateCreate(context.Background(), invalidObj)
-	g.Expect(err).To(HaveOccurred())
-	g.Expect(err).To(BeAssignableToTypeOf(&apierrors.StatusError{}))
-	g.Expect(err.Error()).To(ContainSubstring("expected a VSphereCluster but got a"))
-}
-
-func TestVSphereCluster_ValidateUpdate_InvalidObjectType(t *testing.T) {
-	g := NewWithT(t)
-
-	webhook := &VSphereCluster{}
-	// Create an invalid object that implements runtime.Object but is not a VSphereCluster
-	invalidObj := &corev1.ConfigMap{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: "test-configmap",
-		},
-	}
-
-	_, err := webhook.ValidateUpdate(context.Background(), nil, invalidObj)
-	g.Expect(err).To(HaveOccurred())
-	g.Expect(err).To(BeAssignableToTypeOf(&apierrors.StatusError{}))
-	g.Expect(err.Error()).To(ContainSubstring("expected a VSphereCluster but got a"))
 }
 
 // Helper functions.

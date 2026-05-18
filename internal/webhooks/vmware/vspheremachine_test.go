@@ -23,7 +23,7 @@ import (
 	. "github.com/onsi/gomega"
 	featuregatetesting "k8s.io/component-base/featuregate/testing"
 
-	vmwarev1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/vmware/v1beta1"
+	vmwarev1 "sigs.k8s.io/cluster-api-provider-vsphere/api/supervisor/v1beta2"
 	"sigs.k8s.io/cluster-api-provider-vsphere/feature"
 	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/manager"
 	pkgnetwork "sigs.k8s.io/cluster-api-provider-vsphere/pkg/services/network"
@@ -39,32 +39,32 @@ func TestVSphereMachine_ValidateUpdate(t *testing.T) {
 	}{
 		{
 			name:              "updating ProviderID can be done",
-			oldVSphereMachine: createVSphereMachine(nil, "tkgs-old-imagename", "best-effort-xsmall", "wcpglobalstorageprofile", "vmx-15"),
-			vsphereMachine:    createVSphereMachine(&fakeProviderID, "tkgs-old-imagename", "best-effort-xsmall", "wcpglobalstorageprofile", "vmx-15"),
+			oldVSphereMachine: createVSphereMachine("", "tkgs-old-imagename", "best-effort-xsmall", "wcpglobalstorageprofile", "vmx-15"),
+			vsphereMachine:    createVSphereMachine(fakeProviderID, "tkgs-old-imagename", "best-effort-xsmall", "wcpglobalstorageprofile", "vmx-15"),
 			wantErr:           false,
 		},
 		{
 			name:              "updating ImageName cannot be done",
-			oldVSphereMachine: createVSphereMachine(nil, "tkgs-old-imagename", "best-effort-xsmall", "wcpglobalstorageprofile", "vmx-15"),
-			vsphereMachine:    createVSphereMachine(nil, "tkgs-new-imagename", "best-effort-xsmall", "wcpglobalstorageprofile", "vmx-15"),
+			oldVSphereMachine: createVSphereMachine("", "tkgs-old-imagename", "best-effort-xsmall", "wcpglobalstorageprofile", "vmx-15"),
+			vsphereMachine:    createVSphereMachine("", "tkgs-new-imagename", "best-effort-xsmall", "wcpglobalstorageprofile", "vmx-15"),
 			wantErr:           true,
 		},
 		{
 			name:              "updating ClassName cannot be done",
-			oldVSphereMachine: createVSphereMachine(nil, "tkgs-imagename", "old-best-effort-xsmall", "wcpglobalstorageprofile", "vmx-15"),
-			vsphereMachine:    createVSphereMachine(nil, "tkgs-imagename", "new-best-effort-xsmall", "wcpglobalstorageprofile", "vmx-15"),
+			oldVSphereMachine: createVSphereMachine("", "tkgs-imagename", "old-best-effort-xsmall", "wcpglobalstorageprofile", "vmx-15"),
+			vsphereMachine:    createVSphereMachine("", "tkgs-imagename", "new-best-effort-xsmall", "wcpglobalstorageprofile", "vmx-15"),
 			wantErr:           true,
 		},
 		{
 			name:              "updating StorageClass cannot be done",
-			oldVSphereMachine: createVSphereMachine(nil, "tkgs-imagename", "best-effort-xsmall", "old-wcpglobalstorageprofile", "vmx-15"),
-			vsphereMachine:    createVSphereMachine(nil, "tkgs-imagename", "best-effort-xsmall", "new-wcpglobalstorageprofile", "vmx-15"),
+			oldVSphereMachine: createVSphereMachine("", "tkgs-imagename", "best-effort-xsmall", "old-wcpglobalstorageprofile", "vmx-15"),
+			vsphereMachine:    createVSphereMachine("", "tkgs-imagename", "best-effort-xsmall", "new-wcpglobalstorageprofile", "vmx-15"),
 			wantErr:           true,
 		},
 		{
 			name:              "updating MinHardwareVersion cannot be done",
-			oldVSphereMachine: createVSphereMachine(nil, "tkgs-imagename", "best-effort-xsmall", "wcpglobalstorageprofile", "vmx-15"),
-			vsphereMachine:    createVSphereMachine(nil, "tkgs-imagename", "best-effort-xsmall", "wcpglobalstorageprofile", "vmx-16"),
+			oldVSphereMachine: createVSphereMachine("", "tkgs-imagename", "best-effort-xsmall", "wcpglobalstorageprofile", "vmx-15"),
+			vsphereMachine:    createVSphereMachine("", "tkgs-imagename", "best-effort-xsmall", "wcpglobalstorageprofile", "vmx-16"),
 			wantErr:           true,
 		},
 	}
@@ -83,7 +83,7 @@ func TestVSphereMachine_ValidateUpdate(t *testing.T) {
 	}
 }
 
-func createVSphereMachine(providerID *string, imageName, className, storageClass, minHardwareVersion string) *vmwarev1.VSphereMachine {
+func createVSphereMachine(providerID string, imageName, className, storageClass, minHardwareVersion string) *vmwarev1.VSphereMachine {
 	vSphereMachine := &vmwarev1.VSphereMachine{
 		Spec: vmwarev1.VSphereMachineSpec{
 			ProviderID:         providerID,
@@ -113,7 +113,7 @@ func TestVSphereMachine_ValidateCreate_MultiNetwork(t *testing.T) {
 			network: vmwarev1.VSphereMachineNetworkSpec{
 				Interfaces: vmwarev1.InterfacesSpec{
 					Primary: vmwarev1.InterfaceSpec{
-						Network: vmwarev1.InterfaceNetworkReference{
+						NetworkRef: vmwarev1.InterfaceNetworkReference{
 							Kind:       pkgnetwork.NetworkGVKNSXTVPCSubnetSet.Kind,
 							APIVersion: pkgnetwork.NetworkGVKNSXTVPCSubnetSet.GroupVersion().String(),
 							Name:       "primary-subnetset",
@@ -131,7 +131,7 @@ func TestVSphereMachine_ValidateCreate_MultiNetwork(t *testing.T) {
 			network: vmwarev1.VSphereMachineNetworkSpec{
 				Interfaces: vmwarev1.InterfacesSpec{
 					Primary: vmwarev1.InterfaceSpec{
-						Network: vmwarev1.InterfaceNetworkReference{
+						NetworkRef: vmwarev1.InterfaceNetworkReference{
 							Kind:       "WrongKind",
 							APIVersion: "wrong/v1",
 							Name:       "primary-wrong",
@@ -151,7 +151,7 @@ func TestVSphereMachine_ValidateCreate_MultiNetwork(t *testing.T) {
 					Secondary: []vmwarev1.SecondaryInterfaceSpec{{
 						Name: "eth1",
 						InterfaceSpec: vmwarev1.InterfaceSpec{
-							Network: vmwarev1.InterfaceNetworkReference{
+							NetworkRef: vmwarev1.InterfaceNetworkReference{
 								Kind:       "WrongKind",
 								APIVersion: "wrong/v1",
 								Name:       "secondary-wrong",
@@ -170,7 +170,7 @@ func TestVSphereMachine_ValidateCreate_MultiNetwork(t *testing.T) {
 			network: vmwarev1.VSphereMachineNetworkSpec{
 				Interfaces: vmwarev1.InterfacesSpec{
 					Primary: vmwarev1.InterfaceSpec{
-						Network: vmwarev1.InterfaceNetworkReference{
+						NetworkRef: vmwarev1.InterfaceNetworkReference{
 							Kind:       pkgnetwork.NetworkGVKNetOperator.Kind,
 							APIVersion: pkgnetwork.NetworkGVKNetOperator.GroupVersion().String(),
 							Name:       "primary-netop",
@@ -190,7 +190,7 @@ func TestVSphereMachine_ValidateCreate_MultiNetwork(t *testing.T) {
 					Secondary: []vmwarev1.SecondaryInterfaceSpec{{
 						Name: "eth1",
 						InterfaceSpec: vmwarev1.InterfaceSpec{
-							Network: vmwarev1.InterfaceNetworkReference{
+							NetworkRef: vmwarev1.InterfaceNetworkReference{
 								Kind:       "WrongKind",
 								APIVersion: "wrong/v1",
 								Name:       "secondary-wrong",
@@ -211,7 +211,7 @@ func TestVSphereMachine_ValidateCreate_MultiNetwork(t *testing.T) {
 					Secondary: []vmwarev1.SecondaryInterfaceSpec{{
 						Name: pkgnetwork.PrimaryInterfaceName,
 						InterfaceSpec: vmwarev1.InterfaceSpec{
-							Network: vmwarev1.InterfaceNetworkReference{
+							NetworkRef: vmwarev1.InterfaceNetworkReference{
 								Kind:       pkgnetwork.NetworkGVKNSXTVPCSubnet.Kind,
 								APIVersion: pkgnetwork.NetworkGVKNSXTVPCSubnet.GroupVersion().String(),
 								Name:       "secondary-dup",
@@ -230,7 +230,7 @@ func TestVSphereMachine_ValidateCreate_MultiNetwork(t *testing.T) {
 			network: vmwarev1.VSphereMachineNetworkSpec{
 				Interfaces: vmwarev1.InterfacesSpec{
 					Primary: vmwarev1.InterfaceSpec{
-						Network: vmwarev1.InterfaceNetworkReference{
+						NetworkRef: vmwarev1.InterfaceNetworkReference{
 							Kind:       pkgnetwork.NetworkGVKNSXTVPCSubnetSet.Kind,
 							APIVersion: pkgnetwork.NetworkGVKNSXTVPCSubnetSet.GroupVersion().String(),
 							Name:       "primary-subnetset",
@@ -239,7 +239,7 @@ func TestVSphereMachine_ValidateCreate_MultiNetwork(t *testing.T) {
 					Secondary: []vmwarev1.SecondaryInterfaceSpec{{
 						Name: "eth1",
 						InterfaceSpec: vmwarev1.InterfaceSpec{
-							Network: vmwarev1.InterfaceNetworkReference{
+							NetworkRef: vmwarev1.InterfaceNetworkReference{
 								Kind:       pkgnetwork.NetworkGVKNSXTVPCSubnet.Kind,
 								APIVersion: pkgnetwork.NetworkGVKNSXTVPCSubnet.GroupVersion().String(),
 								Name:       "secondary-subnet1",
@@ -248,7 +248,7 @@ func TestVSphereMachine_ValidateCreate_MultiNetwork(t *testing.T) {
 					}, {
 						Name: "eth2",
 						InterfaceSpec: vmwarev1.InterfaceSpec{
-							Network: vmwarev1.InterfaceNetworkReference{
+							NetworkRef: vmwarev1.InterfaceNetworkReference{
 								Kind:       pkgnetwork.NetworkGVKNSXTVPCSubnet.Kind,
 								APIVersion: pkgnetwork.NetworkGVKNSXTVPCSubnet.GroupVersion().String(),
 								Name:       "secondary-subnet2",
@@ -268,7 +268,7 @@ func TestVSphereMachine_ValidateCreate_MultiNetwork(t *testing.T) {
 					Secondary: []vmwarev1.SecondaryInterfaceSpec{{
 						Name: "eth1",
 						InterfaceSpec: vmwarev1.InterfaceSpec{
-							Network: vmwarev1.InterfaceNetworkReference{
+							NetworkRef: vmwarev1.InterfaceNetworkReference{
 								Kind:       pkgnetwork.NetworkGVKNetOperator.Kind,
 								APIVersion: pkgnetwork.NetworkGVKNetOperator.GroupVersion().String(),
 								Name:       "secondary-netop1",
@@ -277,7 +277,7 @@ func TestVSphereMachine_ValidateCreate_MultiNetwork(t *testing.T) {
 					}, {
 						Name: "eth2",
 						InterfaceSpec: vmwarev1.InterfaceSpec{
-							Network: vmwarev1.InterfaceNetworkReference{
+							NetworkRef: vmwarev1.InterfaceNetworkReference{
 								Kind:       pkgnetwork.NetworkGVKNetOperator.Kind,
 								APIVersion: pkgnetwork.NetworkGVKNetOperator.GroupVersion().String(),
 								Name:       "secondary-netop2",
@@ -298,7 +298,7 @@ func TestVSphereMachine_ValidateCreate_MultiNetwork(t *testing.T) {
 						{
 							Name: "eth1",
 							InterfaceSpec: vmwarev1.InterfaceSpec{
-								Network: vmwarev1.InterfaceNetworkReference{
+								NetworkRef: vmwarev1.InterfaceNetworkReference{
 									Kind:       pkgnetwork.NetworkGVKNSXTVPCSubnet.Kind,
 									APIVersion: pkgnetwork.NetworkGVKNSXTVPCSubnet.GroupVersion().String(),
 									Name:       "secondary-dup1",
@@ -308,7 +308,7 @@ func TestVSphereMachine_ValidateCreate_MultiNetwork(t *testing.T) {
 						{
 							Name: "eth1",
 							InterfaceSpec: vmwarev1.InterfaceSpec{
-								Network: vmwarev1.InterfaceNetworkReference{
+								NetworkRef: vmwarev1.InterfaceNetworkReference{
 									Kind:       pkgnetwork.NetworkGVKNSXTVPCSubnet.Kind,
 									APIVersion: pkgnetwork.NetworkGVKNSXTVPCSubnet.GroupVersion().String(),
 									Name:       "secondary-dup2",
@@ -352,7 +352,7 @@ func TestVSphereMachine_ValidateUpdate_MultiNetwork(t *testing.T) {
 			Network: vmwarev1.VSphereMachineNetworkSpec{
 				Interfaces: vmwarev1.InterfacesSpec{
 					Primary: vmwarev1.InterfaceSpec{
-						Network: vmwarev1.InterfaceNetworkReference{
+						NetworkRef: vmwarev1.InterfaceNetworkReference{
 							Kind:       pkgnetwork.NetworkGVKNSXTVPCSubnetSet.Kind,
 							APIVersion: pkgnetwork.NetworkGVKNSXTVPCSubnetSet.GroupVersion().String(),
 							Name:       "primary-subnetset",
@@ -369,7 +369,7 @@ func TestVSphereMachine_ValidateUpdate_MultiNetwork(t *testing.T) {
 	newVSphereMachine.Spec.Network.Interfaces.Secondary = append(newVSphereMachine.Spec.Network.Interfaces.Secondary, vmwarev1.SecondaryInterfaceSpec{
 		Name: "eth1",
 		InterfaceSpec: vmwarev1.InterfaceSpec{
-			Network: vmwarev1.InterfaceNetworkReference{
+			NetworkRef: vmwarev1.InterfaceNetworkReference{
 				Kind:       pkgnetwork.NetworkGVKNSXTVPCSubnet.Kind,
 				APIVersion: pkgnetwork.NetworkGVKNSXTVPCSubnet.GroupVersion().String(),
 				Name:       "secondary-subnet",

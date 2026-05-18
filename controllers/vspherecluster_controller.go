@@ -25,6 +25,7 @@ import (
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	clusterutilv1 "sigs.k8s.io/cluster-api/util"
 	"sigs.k8s.io/cluster-api/util/annotations"
+	capicontrollerutil "sigs.k8s.io/cluster-api/util/controller"
 	"sigs.k8s.io/cluster-api/util/predicates"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -34,8 +35,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	"sigs.k8s.io/controller-runtime/pkg/source"
 
-	infrav1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/v1beta1"
-	vmwarev1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/vmware/v1beta1"
+	infrav1 "sigs.k8s.io/cluster-api-provider-vsphere/api/govmomi/v1beta2"
+	vmwarev1 "sigs.k8s.io/cluster-api-provider-vsphere/api/supervisor/v1beta2"
 	"sigs.k8s.io/cluster-api-provider-vsphere/controllers/vmware"
 	"sigs.k8s.io/cluster-api-provider-vsphere/feature"
 	topologyv1 "sigs.k8s.io/cluster-api-provider-vsphere/internal/apis/topology/v1alpha1"
@@ -76,7 +77,7 @@ func AddClusterControllerToManager(ctx context.Context, controllerManagerCtx *ca
 			},
 			NetworkProvider: networkProvider,
 		}
-		builder := ctrl.NewControllerManagedBy(mgr).
+		builder := capicontrollerutil.NewControllerManagedBy(mgr, predicateLog).
 			For(&vmwarev1.VSphereCluster{}).
 			WithOptions(options).
 			Watches(
@@ -103,7 +104,7 @@ func AddClusterControllerToManager(ctx context.Context, controllerManagerCtx *ca
 		vmService:                services.VimMachineService{Client: controllerManagerCtx.Client},
 	}
 	clusterToInfraFn := clusterToInfrastructureMapFunc(ctx, controllerManagerCtx)
-	c, err := ctrl.NewControllerManagedBy(mgr).
+	c, err := capicontrollerutil.NewControllerManagedBy(mgr, predicateLog).
 		// Watch the controlled, infrastructure resource.
 		For(&infrav1.VSphereCluster{}).
 		WithOptions(options).

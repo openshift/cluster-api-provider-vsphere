@@ -31,20 +31,19 @@ import (
 	"k8s.io/client-go/tools/record"
 	"k8s.io/klog/v2"
 	"k8s.io/utils/ptr"
-	clusterv1beta1 "sigs.k8s.io/cluster-api/api/core/v1beta1"
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
-	ipamv1beta1 "sigs.k8s.io/cluster-api/api/ipam/v1beta1"
+	ipamv1 "sigs.k8s.io/cluster-api/api/ipam/v1beta2"
 	"sigs.k8s.io/cluster-api/controllers/clustercache"
 	clusterutilv1 "sigs.k8s.io/cluster-api/util"
-	v1beta1conditions "sigs.k8s.io/cluster-api/util/deprecated/v1beta1/conditions"
-	v1beta2conditions "sigs.k8s.io/cluster-api/util/deprecated/v1beta1/conditions/v1beta2"
-	"sigs.k8s.io/cluster-api/util/deprecated/v1beta1/patch"
-	"sigs.k8s.io/cluster-api/util/deprecated/v1beta1/paused"
+	"sigs.k8s.io/cluster-api/util/conditions"
+	deprecatedv1beta1conditions "sigs.k8s.io/cluster-api/util/conditions/deprecated/v1beta1"
+	capicontrollerutil "sigs.k8s.io/cluster-api/util/controller"
 	"sigs.k8s.io/cluster-api/util/finalizers"
 	clog "sigs.k8s.io/cluster-api/util/log"
+	"sigs.k8s.io/cluster-api/util/patch"
+	"sigs.k8s.io/cluster-api/util/paused"
 	"sigs.k8s.io/cluster-api/util/predicates"
 	ctrl "sigs.k8s.io/controller-runtime"
-	ctrlbldr "sigs.k8s.io/controller-runtime/pkg/builder"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	ctrlutil "sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -55,7 +54,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	"sigs.k8s.io/controller-runtime/pkg/source"
 
-	infrav1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/v1beta1"
+	infrav1 "sigs.k8s.io/cluster-api-provider-vsphere/api/govmomi/v1beta2"
 	"sigs.k8s.io/cluster-api-provider-vsphere/feature"
 	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/clustermodule"
 	capvcontext "sigs.k8s.io/cluster-api-provider-vsphere/pkg/context"
@@ -83,7 +82,7 @@ func AddVMControllerToManager(ctx context.Context, controllerManagerCtx *capvcon
 	}
 	predicateLog := ctrl.LoggerFrom(ctx).WithValues("controller", "vspherevm")
 
-	return ctrl.NewControllerManagedBy(mgr).
+	return capicontrollerutil.NewControllerManagedBy(mgr, predicateLog).
 		// Watch the controlled, infrastructure resource.
 		For(&infrav1.VSphereVM{}).
 		WithOptions(options).
@@ -106,20 +105,19 @@ func AddVMControllerToManager(ctx context.Context, controllerManagerCtx *capvcon
 		Watches(
 			&infrav1.VSphereCluster{},
 			handler.EnqueueRequestsFromMapFunc(r.vsphereClusterToVSphereVMs),
-			ctrlbldr.WithPredicates(
-				predicate.Funcs{
-					UpdateFunc: func(e event.UpdateEvent) bool {
-						oldCluster := e.ObjectOld.(*infrav1.VSphereCluster)
-						newCluster := e.ObjectNew.(*infrav1.VSphereCluster)
-						return !clustermodule.Compare(oldCluster.Spec.ClusterModules, newCluster.Spec.ClusterModules)
-					},
-					CreateFunc:  func(event.CreateEvent) bool { return false },
-					DeleteFunc:  func(event.DeleteEvent) bool { return false },
-					GenericFunc: func(event.GenericEvent) bool { return false },
-				}),
+			predicate.Funcs{
+				UpdateFunc: func(e event.UpdateEvent) bool {
+					oldCluster := e.ObjectOld.(*infrav1.VSphereCluster)
+					newCluster := e.ObjectNew.(*infrav1.VSphereCluster)
+					return !clustermodule.Compare(oldCluster.Spec.ClusterModules, newCluster.Spec.ClusterModules)
+				},
+				CreateFunc:  func(event.CreateEvent) bool { return false },
+				DeleteFunc:  func(event.DeleteEvent) bool { return false },
+				GenericFunc: func(event.GenericEvent) bool { return false },
+			},
 		).
 		Watches(
-			&ipamv1beta1.IPAddressClaim{},
+			&ipamv1.IPAddressClaim{},
 			handler.EnqueueRequestsFromMapFunc(r.ipAddressClaimToVSphereVM),
 		).
 		WatchesRawSource(r.clusterCache.GetClusterSource("vspherevm", r.clusterToVSphereVMs)).
@@ -173,20 +171,20 @@ func (r vmReconciler) Reconcile(ctx context.Context, req ctrl.Request) (_ ctrl.R
 
 	authSession, err := r.retrieveVcenterSession(ctx, vsphereVM)
 	if err != nil {
-		v1beta1conditions.MarkFalse(vsphereVM, infrav1.VCenterAvailableCondition, infrav1.VCenterUnreachableReason, clusterv1beta1.ConditionSeverityError, "%v", err)
-		v1beta2conditions.Set(vsphereVM, metav1.Condition{
-			Type:    infrav1.VSphereVMVCenterAvailableV1Beta2Condition,
+		deprecatedv1beta1conditions.MarkFalse(vsphereVM, infrav1.VCenterAvailableV1Beta1Condition, infrav1.VCenterUnreachableV1Beta1Reason, clusterv1.ConditionSeverityError, "%v", err)
+		conditions.Set(vsphereVM, metav1.Condition{
+			Type:    infrav1.VSphereVMVCenterAvailableCondition,
 			Status:  metav1.ConditionFalse,
-			Reason:  infrav1.VSphereVMVCenterUnreachableV1Beta2Reason,
+			Reason:  infrav1.VSphereVMVCenterUnreachableReason,
 			Message: err.Error(),
 		})
 		return reconcile.Result{}, err
 	}
-	v1beta1conditions.MarkTrue(vsphereVM, infrav1.VCenterAvailableCondition)
-	v1beta2conditions.Set(vsphereVM, metav1.Condition{
-		Type:   infrav1.VSphereVMVCenterAvailableV1Beta2Condition,
+	deprecatedv1beta1conditions.MarkTrue(vsphereVM, infrav1.VCenterAvailableV1Beta1Condition)
+	conditions.Set(vsphereVM, metav1.Condition{
+		Type:   infrav1.VSphereVMVCenterAvailableCondition,
 		Status: metav1.ConditionTrue,
-		Reason: infrav1.VSphereVMVCenterAvailableV1Beta2Reason,
+		Reason: infrav1.VSphereVMVCenterAvailableReason,
 	})
 
 	// Fetch the owner VSphereMachine.
@@ -234,9 +232,6 @@ func (r vmReconciler) Reconcile(ctx context.Context, req ctrl.Request) (_ ctrl.R
 	}
 
 	failureDomain := machine.Spec.FailureDomain
-	if failureDomain == "" && vsphereMachine.Spec.FailureDomain != nil {
-		failureDomain = *vsphereMachine.Spec.FailureDomain
-	}
 
 	var vsphereFailureDomain *infrav1.VSphereFailureDomain
 	if failureDomain != "" {
@@ -273,54 +268,54 @@ func (r vmReconciler) Reconcile(ctx context.Context, req ctrl.Request) (_ ctrl.R
 		// Before computing ready condition, make sure that VirtualMachineProvisioned is always set.
 		// NOTE: This is required because v1beta2 conditions comply to guideline requiring conditions to be set at the
 		// first reconcile.
-		if c := v1beta2conditions.Get(vmContext.VSphereVM, infrav1.VSphereVMVirtualMachineProvisionedV1Beta2Condition); c != nil {
-			if vmContext.VSphereVM.Status.Ready {
-				v1beta2conditions.Set(vmContext.VSphereVM, metav1.Condition{
-					Type:   infrav1.VSphereVMVirtualMachineProvisionedV1Beta2Condition,
+		if c := conditions.Get(vmContext.VSphereVM, infrav1.VSphereVMVirtualMachineProvisionedCondition); c == nil {
+			if ptr.Deref(vmContext.VSphereVM.Status.Ready, false) {
+				conditions.Set(vmContext.VSphereVM, metav1.Condition{
+					Type:   infrav1.VSphereVMVirtualMachineProvisionedCondition,
 					Status: metav1.ConditionTrue,
-					Reason: infrav1.VSphereVMVirtualMachineProvisionedV1Beta2Reason,
+					Reason: infrav1.VSphereVMVirtualMachineProvisionedReason,
 				})
 			} else {
-				v1beta2conditions.Set(vmContext.VSphereVM, metav1.Condition{
-					Type:   infrav1.VSphereVMVirtualMachineProvisionedV1Beta2Condition,
+				conditions.Set(vmContext.VSphereVM, metav1.Condition{
+					Type:   infrav1.VSphereVMVirtualMachineProvisionedCondition,
 					Status: metav1.ConditionFalse,
-					Reason: infrav1.VSphereVMVirtualMachineNotProvisionedV1Beta2Reason,
+					Reason: infrav1.VSphereVMVirtualMachineNotProvisionedReason,
 				})
 			}
 		}
 
 		// always update the readyCondition.
-		v1beta1conditions.SetSummary(vmContext.VSphereVM,
-			v1beta1conditions.WithConditions(
-				infrav1.VCenterAvailableCondition,
-				infrav1.IPAddressClaimedCondition,
-				infrav1.VMProvisionedCondition,
+		deprecatedv1beta1conditions.SetSummary(vmContext.VSphereVM,
+			deprecatedv1beta1conditions.WithConditions(
+				infrav1.VCenterAvailableV1Beta1Condition,
+				infrav1.IPAddressClaimedV1Beta1Condition,
+				infrav1.VMProvisionedV1Beta1Condition,
 			),
 		)
 
-		if err := v1beta2conditions.SetSummaryCondition(vmContext.VSphereVM, vmContext.VSphereVM, infrav1.VSphereVMReadyV1Beta2Condition,
-			v1beta2conditions.ForConditionTypes{
-				infrav1.VSphereVMVCenterAvailableV1Beta2Condition,
-				infrav1.VSphereVMVirtualMachineProvisionedV1Beta2Condition,
-				infrav1.VSphereVMIPAddressClaimsFulfilledV1Beta2Condition,
+		if err := conditions.SetSummaryCondition(vmContext.VSphereVM, vmContext.VSphereVM, infrav1.VSphereVMReadyCondition,
+			conditions.ForConditionTypes{
+				infrav1.VSphereVMVCenterAvailableCondition,
+				infrav1.VSphereVMVirtualMachineProvisionedCondition,
+				infrav1.VSphereVMIPAddressClaimsFulfilledCondition,
 			},
-			v1beta2conditions.IgnoreTypesIfMissing{
-				infrav1.VSphereVMVCenterAvailableV1Beta2Condition,
-				infrav1.VSphereVMIPAddressClaimsFulfilledV1Beta2Condition,
+			conditions.IgnoreTypesIfMissing{
+				infrav1.VSphereVMVCenterAvailableCondition,
+				infrav1.VSphereVMIPAddressClaimsFulfilledCondition,
 			},
 			// Using a custom merge strategy to override reasons applied during merge.
-			v1beta2conditions.CustomMergeStrategy{
-				MergeStrategy: v1beta2conditions.DefaultMergeStrategy(
+			conditions.CustomMergeStrategy{
+				MergeStrategy: conditions.DefaultMergeStrategy(
 					// Use custom reasons.
-					v1beta2conditions.ComputeReasonFunc(v1beta2conditions.GetDefaultComputeMergeReasonFunc(
-						infrav1.VSphereVMNotReadyV1Beta2Reason,
-						infrav1.VSphereVMReadyUnknownV1Beta2Reason,
-						infrav1.VSphereVMReadyV1Beta2Reason,
+					conditions.ComputeReasonFunc(conditions.GetDefaultComputeMergeReasonFunc(
+						infrav1.VSphereVMNotReadyReason,
+						infrav1.VSphereVMReadyUnknownReason,
+						infrav1.VSphereVMReadyReason,
 					)),
 				),
 			},
 		); err != nil {
-			reterr = kerrors.NewAggregate([]error{reterr, errors.Wrapf(err, "failed to set %s condition", infrav1.VSphereVMReadyV1Beta2Condition)})
+			reterr = kerrors.NewAggregate([]error{reterr, errors.Wrapf(err, "failed to set %s condition", infrav1.VSphereVMReadyCondition)})
 			return
 		}
 
@@ -359,7 +354,7 @@ func (r vmReconciler) Reconcile(ctx context.Context, req ctrl.Request) (_ ctrl.R
 // This logic was moved to a smaller function outside the main Reconcile() loop
 // for the ease of testing.
 func (r vmReconciler) reconcile(ctx context.Context, vmCtx *capvcontext.VMContext, input fetchClusterModuleInput) (reconcile.Result, error) {
-	if feature.Gates.Enabled(feature.NodeAntiAffinity) && !input.VSphereCluster.Spec.DisableClusterModule {
+	if feature.Gates.Enabled(feature.NodeAntiAffinity) && !ptr.Deref(input.VSphereCluster.Spec.DisableClusterModule, false) {
 		clusterModuleInfo, err := r.fetchClusterModuleInfo(ctx, input)
 		// If cluster module information cannot be fetched for a VM being deleted,
 		// we should not block VM deletion since the cluster module is updated
@@ -382,19 +377,19 @@ func (r vmReconciler) reconcile(ctx context.Context, vmCtx *capvcontext.VMContex
 func (r vmReconciler) reconcileDelete(ctx context.Context, vmCtx *capvcontext.VMContext) (reconcile.Result, error) {
 	log := ctrl.LoggerFrom(ctx)
 
-	v1beta1conditions.MarkFalse(vmCtx.VSphereVM, infrav1.VMProvisionedCondition, clusterv1beta1.DeletingReason, clusterv1beta1.ConditionSeverityInfo, "")
-	v1beta2conditions.Set(vmCtx.VSphereVM, metav1.Condition{
-		Type:   infrav1.VSphereVMVirtualMachineProvisionedV1Beta2Condition,
+	deprecatedv1beta1conditions.MarkFalse(vmCtx.VSphereVM, infrav1.VMProvisionedV1Beta1Condition, clusterv1.DeletingV1Beta1Reason, clusterv1.ConditionSeverityInfo, "")
+	conditions.Set(vmCtx.VSphereVM, metav1.Condition{
+		Type:   infrav1.VSphereVMVirtualMachineProvisionedCondition,
 		Status: metav1.ConditionFalse,
-		Reason: infrav1.VSphereVMVirtualMachineDeletingV1Beta2Reason,
+		Reason: infrav1.VSphereVMVirtualMachineDeletingReason,
 	})
 	result, vm, err := r.VMService.DestroyVM(ctx, vmCtx)
 	if err != nil {
-		v1beta1conditions.MarkFalse(vmCtx.VSphereVM, infrav1.VMProvisionedCondition, "DeletionFailed", clusterv1beta1.ConditionSeverityWarning, "%v", err)
-		v1beta2conditions.Set(vmCtx.VSphereVM, metav1.Condition{
-			Type:    infrav1.VSphereVMVirtualMachineProvisionedV1Beta2Condition,
+		deprecatedv1beta1conditions.MarkFalse(vmCtx.VSphereVM, infrav1.VMProvisionedV1Beta1Condition, "DeletionFailed", clusterv1.ConditionSeverityWarning, "%v", err)
+		conditions.Set(vmCtx.VSphereVM, metav1.Condition{
+			Type:    infrav1.VSphereVMVirtualMachineProvisionedCondition,
 			Status:  metav1.ConditionFalse,
-			Reason:  infrav1.VSphereVMVirtualMachineDeletingV1Beta2Reason,
+			Reason:  infrav1.VSphereVMVirtualMachineDeletingReason,
 			Message: err.Error(),
 		})
 		return reconcile.Result{}, errors.Wrapf(err, "failed to destroy VM")
@@ -406,8 +401,8 @@ func (r vmReconciler) reconcileDelete(ctx context.Context, vmCtx *capvcontext.VM
 	}
 
 	// Requeue the operation until the VM is "notfound".
-	if vm.State != infrav1.VirtualMachineStateNotFound {
-		log.Info(fmt.Sprintf("VM state is %q, waiting for %q", vm.State, infrav1.VirtualMachineStateNotFound))
+	if vm.State != services.VirtualMachineStateNotFound {
+		log.Info(fmt.Sprintf("VM state is %q, waiting for %q", vm.State, services.VirtualMachineStateNotFound))
 		return reconcile.Result{}, nil
 	}
 
@@ -468,17 +463,12 @@ func (r vmReconciler) deleteNode(ctx context.Context, vmCtx *capvcontext.VMConte
 func (r vmReconciler) reconcileNormal(ctx context.Context, vmCtx *capvcontext.VMContext) (reconcile.Result, error) {
 	log := ctrl.LoggerFrom(ctx)
 
-	if vmCtx.VSphereVM.Status.FailureReason != nil || vmCtx.VSphereVM.Status.FailureMessage != nil {
-		log.Info("VM is failed, won't reconcile")
-		return reconcile.Result{}, nil
-	}
-
 	if r.isWaitingForStaticIPAllocation(vmCtx) {
-		v1beta1conditions.MarkFalse(vmCtx.VSphereVM, infrav1.VMProvisionedCondition, infrav1.WaitingForStaticIPAllocationReason, clusterv1beta1.ConditionSeverityInfo, "")
-		v1beta2conditions.Set(vmCtx.VSphereVM, metav1.Condition{
-			Type:   infrav1.VSphereVMVirtualMachineProvisionedV1Beta2Condition,
+		deprecatedv1beta1conditions.MarkFalse(vmCtx.VSphereVM, infrav1.VMProvisionedV1Beta1Condition, infrav1.WaitingForStaticIPAllocationV1Beta1Reason, clusterv1.ConditionSeverityInfo, "")
+		conditions.Set(vmCtx.VSphereVM, metav1.Condition{
+			Type:   infrav1.VSphereVMVirtualMachineProvisionedCondition,
 			Status: metav1.ConditionFalse,
-			Reason: infrav1.VSphereVMVirtualMachineWaitingForStaticIPAllocationV1Beta2Reason,
+			Reason: infrav1.VSphereVMVirtualMachineWaitingForStaticIPAllocationReason,
 		})
 		log.Info("VM is waiting for static ip to be available")
 		return reconcile.Result{}, nil
@@ -495,8 +485,8 @@ func (r vmReconciler) reconcileNormal(ctx context.Context, vmCtx *capvcontext.VM
 	}
 
 	// Do not proceed until the backend VM is marked ready.
-	if vm.State != infrav1.VirtualMachineStateReady {
-		log.Info(fmt.Sprintf("VM state is %q, waiting for %q", vm.State, infrav1.VirtualMachineStateReady))
+	if vm.State != services.VirtualMachineStateReady {
+		log.Info(fmt.Sprintf("VM state is %q, waiting for %q", vm.State, services.VirtualMachineStateReady))
 		if !vmCtx.VSphereVM.Status.RetryAfter.IsZero() {
 			return reconcile.Result{RequeueAfter: time.Until(vmCtx.VSphereVM.Status.RetryAfter.Time)}, nil
 		}
@@ -525,22 +515,22 @@ func (r vmReconciler) reconcileNormal(ctx context.Context, vmCtx *capvcontext.VM
 
 	// we didn't get any addresses, requeue
 	if len(vmCtx.VSphereVM.Status.Addresses) == 0 {
-		v1beta1conditions.MarkFalse(vmCtx.VSphereVM, infrav1.VMProvisionedCondition, infrav1.WaitingForIPAllocationReason, clusterv1beta1.ConditionSeverityInfo, "")
-		v1beta2conditions.Set(vmCtx.VSphereVM, metav1.Condition{
-			Type:   infrav1.VSphereVMVirtualMachineProvisionedV1Beta2Condition,
+		deprecatedv1beta1conditions.MarkFalse(vmCtx.VSphereVM, infrav1.VMProvisionedV1Beta1Condition, infrav1.WaitingForIPAllocationV1Beta1Reason, clusterv1.ConditionSeverityInfo, "")
+		conditions.Set(vmCtx.VSphereVM, metav1.Condition{
+			Type:   infrav1.VSphereVMVirtualMachineProvisionedCondition,
 			Status: metav1.ConditionFalse,
-			Reason: infrav1.VSphereVMVirtualMachineWaitingForIPAllocationV1Beta2Reason,
+			Reason: infrav1.VSphereVMVirtualMachineWaitingForIPAllocationReason,
 		})
 		return reconcile.Result{RequeueAfter: 10 * time.Second}, nil
 	}
 
 	// Once the network is online the VM is considered ready.
-	vmCtx.VSphereVM.Status.Ready = true
-	v1beta1conditions.MarkTrue(vmCtx.VSphereVM, infrav1.VMProvisionedCondition)
-	v1beta2conditions.Set(vmCtx.VSphereVM, metav1.Condition{
-		Type:   infrav1.VSphereVMVirtualMachineProvisionedV1Beta2Condition,
+	vmCtx.VSphereVM.Status.Ready = ptr.To(true)
+	deprecatedv1beta1conditions.MarkTrue(vmCtx.VSphereVM, infrav1.VMProvisionedV1Beta1Condition)
+	conditions.Set(vmCtx.VSphereVM, metav1.Condition{
+		Type:   infrav1.VSphereVMVirtualMachineProvisionedCondition,
 		Status: metav1.ConditionTrue,
-		Reason: infrav1.VSphereVMVirtualMachineProvisionedV1Beta2Reason,
+		Reason: infrav1.VSphereVMVirtualMachineProvisionedReason,
 	})
 	log.Info("VSphereVM is ready")
 	return reconcile.Result{}, nil
@@ -554,12 +544,12 @@ func (r vmReconciler) isWaitingForStaticIPAllocation(vmCtx *capvcontext.VMContex
 	devices := vmCtx.VSphereVM.Spec.Network.Devices
 	for _, dev := range devices {
 		// Ignore device if SkipIPAllocation is set.
-		if dev.SkipIPAllocation {
+		if ptr.Deref(dev.SkipIPAllocation, false) {
 			continue
 		}
 
 		// Ignore device if it is configured to use DHCP.
-		if dev.DHCP4 || dev.DHCP6 {
+		if ptr.Deref(dev.DHCP4, false) || ptr.Deref(dev.DHCP6, false) {
 			continue
 		}
 
@@ -572,7 +562,7 @@ func (r vmReconciler) isWaitingForStaticIPAllocation(vmCtx *capvcontext.VMContex
 	return false
 }
 
-func (r vmReconciler) reconcileNetwork(vmCtx *capvcontext.VMContext, vm infrav1.VirtualMachine) {
+func (r vmReconciler) reconcileNetwork(vmCtx *capvcontext.VMContext, vm services.VirtualMachine) {
 	vmCtx.VSphereVM.Status.Network = vm.Network
 	ipAddrs := make([]string, 0, len(vm.Network))
 	for _, netStatus := range vmCtx.VSphereVM.Status.Network {
@@ -637,7 +627,7 @@ func (r vmReconciler) vsphereClusterToVSphereVMs(ctx context.Context, a ctrlclie
 }
 
 func (r vmReconciler) ipAddressClaimToVSphereVM(_ context.Context, a ctrlclient.Object) []reconcile.Request {
-	ipAddressClaim, ok := a.(*ipamv1beta1.IPAddressClaim)
+	ipAddressClaim, ok := a.(*ipamv1.IPAddressClaim)
 	if !ok {
 		return nil
 	}
@@ -689,7 +679,7 @@ func (r vmReconciler) retrieveVcenterSession(ctx context.Context, vsphereVM *inf
 		return session.GetOrCreate(ctx, params)
 	}
 
-	if vsphereCluster.Spec.IdentityRef != nil {
+	if vsphereCluster.Spec.IdentityRef.IsDefined() {
 		creds, err := identity.GetCredentials(ctx, r.Client, vsphereCluster, r.ControllerManagerContext.Namespace)
 		if err != nil {
 			return nil, errors.Wrap(err, "failed to get credentials from IdentityRef")

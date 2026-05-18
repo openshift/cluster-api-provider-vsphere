@@ -31,14 +31,14 @@ import (
 	kerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/klog/v2"
-	clusterv1beta1 "sigs.k8s.io/cluster-api/api/core/v1beta1"
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/cluster-api/controllers/clustercache"
 	clusterutilv1 "sigs.k8s.io/cluster-api/util"
 	"sigs.k8s.io/cluster-api/util/annotations"
-	v1beta1conditions "sigs.k8s.io/cluster-api/util/deprecated/v1beta1/conditions"
-	v1beta2conditions "sigs.k8s.io/cluster-api/util/deprecated/v1beta1/conditions/v1beta2"
-	"sigs.k8s.io/cluster-api/util/deprecated/v1beta1/patch"
+	"sigs.k8s.io/cluster-api/util/conditions"
+	deprecatedv1beta1conditions "sigs.k8s.io/cluster-api/util/conditions/deprecated/v1beta1"
+	capicontrollerutil "sigs.k8s.io/cluster-api/util/controller"
+	"sigs.k8s.io/cluster-api/util/patch"
 	"sigs.k8s.io/cluster-api/util/predicates"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -48,7 +48,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	vmwarev1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/vmware/v1beta1"
+	vmwarev1 "sigs.k8s.io/cluster-api-provider-vsphere/api/supervisor/v1beta2"
 	capvcontext "sigs.k8s.io/cluster-api-provider-vsphere/pkg/context"
 	vmwarecontext "sigs.k8s.io/cluster-api-provider-vsphere/pkg/context/vmware"
 	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/util"
@@ -65,11 +65,12 @@ const (
 )
 
 // AddServiceAccountProviderControllerToManager adds this controller to the provided manager.
-func AddServiceAccountProviderControllerToManager(ctx context.Context, controllerManagerCtx *capvcontext.ControllerManagerContext, mgr manager.Manager, clusterCache clustercache.ClusterCache, options controller.Options) error {
+func AddServiceAccountProviderControllerToManager(ctx context.Context, controllerManagerCtx *capvcontext.ControllerManagerContext, mgr manager.Manager, clusterCache clustercache.ClusterCache, secretCachingClient client.Client, options controller.Options) error {
 	r := &ServiceAccountReconciler{
-		Client:       controllerManagerCtx.Client,
-		Recorder:     mgr.GetEventRecorderFor("providerserviceaccount-controller"),
-		clusterCache: clusterCache,
+		Client:              controllerManagerCtx.Client,
+		SecretCachingClient: secretCachingClient,
+		Recorder:            mgr.GetEventRecorderFor("providerserviceaccount-controller"),
+		clusterCache:        clusterCache,
 	}
 	predicateLog := ctrl.LoggerFrom(ctx).WithValues("controller", "providerserviceaccount")
 
@@ -78,7 +79,8 @@ func AddServiceAccountProviderControllerToManager(ctx context.Context, controlle
 	// sequentially in a single Reconcile.
 	// If we get events of multiple ProviderServiceAccounts of a VSphereCluster at the same time,
 	// controller-runtime will deduplicate the reconcile request for us.
-	return ctrl.NewControllerManagedBy(mgr).For(&vmwarev1.VSphereCluster{}).
+	return capicontrollerutil.NewControllerManagedBy(mgr, predicateLog).
+		For(&vmwarev1.VSphereCluster{}).
 		// We have to set the Name specifically here. Otherwise the name of the controller
 		// would be "vspherecluster" (the controller name will show up in logs and workqueue metrics).
 		Named("providerserviceaccount").
@@ -105,9 +107,10 @@ func AddServiceAccountProviderControllerToManager(ctx context.Context, controlle
 
 // ServiceAccountReconciler reconciles changes to ProviderServiceAccounts.
 type ServiceAccountReconciler struct {
-	Client       client.Client
-	Recorder     record.EventRecorder
-	clusterCache clustercache.ClusterCache
+	Client              client.Client
+	SecretCachingClient client.Reader
+	Recorder            record.EventRecorder
+	clusterCache        clustercache.ClusterCache
 }
 
 func (r *ServiceAccountReconciler) Reconcile(ctx context.Context, req reconcile.Request) (_ reconcile.Result, reterr error) {
@@ -194,11 +197,11 @@ func (r *ServiceAccountReconciler) Reconcile(ctx context.Context, req reconcile.
 func (r *ServiceAccountReconciler) patch(ctx context.Context, clusterCtx *vmwarecontext.ClusterContext) error {
 	// NOTE: this controller only owns the ProviderServiceAccountsReady condition on the VSphereCluster object.
 	return clusterCtx.PatchHelper.Patch(ctx, clusterCtx.VSphereCluster,
-		patch.WithOwnedConditions{Conditions: []clusterv1beta1.ConditionType{
-			vmwarev1.ProviderServiceAccountsReadyCondition,
+		patch.WithOwnedV1Beta1Conditions{Conditions: []clusterv1.ConditionType{
+			vmwarev1.ProviderServiceAccountsReadyV1Beta1Condition,
 		}},
-		patch.WithOwnedV1Beta2Conditions{Conditions: []string{
-			vmwarev1.VSphereClusterProviderServiceAccountsReadyV1Beta2Condition,
+		patch.WithOwnedConditions{Conditions: []string{
+			vmwarev1.VSphereClusterProviderServiceAccountsReadyCondition,
 		}},
 	)
 }
@@ -207,20 +210,20 @@ func (r *ServiceAccountReconciler) patch(ctx context.Context, clusterCtx *vmware
 func (r *ServiceAccountReconciler) reconcileNormal(ctx context.Context, guestClusterCtx *vmwarecontext.GuestClusterContext) (_ reconcile.Result, reterr error) {
 	defer func() {
 		if reterr != nil {
-			v1beta1conditions.MarkFalse(guestClusterCtx.VSphereCluster, vmwarev1.ProviderServiceAccountsReadyCondition, vmwarev1.ProviderServiceAccountsReconciliationFailedReason,
-				clusterv1beta1.ConditionSeverityWarning, "%v", reterr)
-			v1beta2conditions.Set(guestClusterCtx.VSphereCluster, metav1.Condition{
-				Type:    vmwarev1.VSphereClusterProviderServiceAccountsReadyV1Beta2Condition,
+			deprecatedv1beta1conditions.MarkFalse(guestClusterCtx.VSphereCluster, vmwarev1.ProviderServiceAccountsReadyV1Beta1Condition, vmwarev1.ProviderServiceAccountsReconciliationFailedV1Beta1Reason,
+				clusterv1.ConditionSeverityWarning, "%v", reterr)
+			conditions.Set(guestClusterCtx.VSphereCluster, metav1.Condition{
+				Type:    vmwarev1.VSphereClusterProviderServiceAccountsReadyCondition,
 				Status:  metav1.ConditionFalse,
-				Reason:  vmwarev1.VSphereClusterProviderServiceAccountsNotReadyV1Beta2Reason,
+				Reason:  vmwarev1.VSphereClusterProviderServiceAccountsNotReadyReason,
 				Message: reterr.Error(),
 			})
 		} else {
-			v1beta1conditions.MarkTrue(guestClusterCtx.VSphereCluster, vmwarev1.ProviderServiceAccountsReadyCondition)
-			v1beta2conditions.Set(guestClusterCtx.VSphereCluster, metav1.Condition{
-				Type:   vmwarev1.VSphereClusterProviderServiceAccountsReadyV1Beta2Condition,
+			deprecatedv1beta1conditions.MarkTrue(guestClusterCtx.VSphereCluster, vmwarev1.ProviderServiceAccountsReadyV1Beta1Condition)
+			conditions.Set(guestClusterCtx.VSphereCluster, metav1.Condition{
+				Type:   vmwarev1.VSphereClusterProviderServiceAccountsReadyCondition,
 				Status: metav1.ConditionTrue,
-				Reason: vmwarev1.VSphereClusterProviderServiceAccountsReadyV1Beta2Reason,
+				Reason: vmwarev1.VSphereClusterProviderServiceAccountsReadyReason,
 			})
 		}
 	}()
@@ -264,7 +267,7 @@ func (r *ServiceAccountReconciler) ensureProviderServiceAccounts(ctx context.Con
 		}
 
 		// 2. Ensure secret of ServiceAccountToken type for the ServiceAccount
-		if err := r.ensureServiceAccountSecret(ctx, pSvcAccount); err != nil {
+		if err := r.ensureServiceAccountSecret(ctx, pSvcAccount, guestClusterCtx.Cluster); err != nil {
 			return errors.Wrapf(err, "failed to ensure ServiceAcountToken secret %s", getServiceAccountSecretName(pSvcAccount))
 		}
 
@@ -321,7 +324,7 @@ func (r *ServiceAccountReconciler) ensureServiceAccount(ctx context.Context, pSv
 	return nil
 }
 
-func (r *ServiceAccountReconciler) ensureServiceAccountSecret(ctx context.Context, pSvcAccount vmwarev1.ProviderServiceAccount) error {
+func (r *ServiceAccountReconciler) ensureServiceAccountSecret(ctx context.Context, pSvcAccount vmwarev1.ProviderServiceAccount, cluster *clusterv1.Cluster) error {
 	log := ctrl.LoggerFrom(ctx)
 
 	secret := &corev1.Secret{
@@ -329,6 +332,9 @@ func (r *ServiceAccountReconciler) ensureServiceAccountSecret(ctx context.Contex
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      getServiceAccountSecretName(pSvcAccount),
 			Namespace: pSvcAccount.Namespace,
+			Labels: map[string]string{
+				clusterv1.ClusterNameLabel: cluster.Name,
+			},
 			Annotations: map[string]string{
 				// denotes that this secret holds the token for the service account
 				corev1.ServiceAccountNameKey: getServiceAccountName(pSvcAccount),
@@ -344,7 +350,7 @@ func (r *ServiceAccountReconciler) ensureServiceAccountSecret(ctx context.Contex
 	}
 
 	testObj := secret.DeepCopyObject().(client.Object)
-	if err := r.Client.Get(ctx, client.ObjectKeyFromObject(secret), testObj); err != nil && !apierrors.IsNotFound(err) {
+	if err := r.SecretCachingClient.Get(ctx, client.ObjectKeyFromObject(secret), testObj); err != nil && !apierrors.IsNotFound(err) {
 		return errors.Wrapf(err, "failed to check if Secret %s already exists", klog.KObj(secret))
 	} else if err == nil {
 		// If Secret already exists, nothing left to do
@@ -353,7 +359,26 @@ func (r *ServiceAccountReconciler) ensureServiceAccountSecret(ctx context.Contex
 
 	log.Info("Creating ServiceAccount Secret")
 	err = r.Client.Create(ctx, secret)
-	if err != nil && !apierrors.IsAlreadyExists(err) {
+	if err != nil {
+		if apierrors.IsAlreadyExists(err) {
+			// Add the ClusterNameLabel to the Secret if necessary to make it visible in the cache, so on next reconcile
+			// the Client.Get above will see it.
+			// This is done so that we can configure our cache to only watch secrets with the ClusterNameLabel.
+			if err := r.Client.Get(ctx, client.ObjectKeyFromObject(secret), secret); err != nil {
+				return err
+			}
+			if _, ok := secret.Labels[clusterv1.ClusterNameLabel]; !ok {
+				original := secret.DeepCopy()
+				if secret.Labels == nil {
+					secret.Labels = map[string]string{}
+				}
+				secret.Labels[clusterv1.ClusterNameLabel] = cluster.Name
+				if err := r.Client.Patch(ctx, secret, client.MergeFrom(original)); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
 		// Note: We skip updating the ServiceAccount Secret because the token controller updates the service account with a
 		// secret and we don't want to overwrite it with an empty secret.
 		return errors.Wrapf(err, "failed to create ServiceAccount Secret %s", klog.KObj(secret))

@@ -20,6 +20,7 @@ package vmware
 import (
 	"context"
 	"fmt"
+	"slices"
 
 	"github.com/pkg/errors"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -28,20 +29,21 @@ import (
 	kerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/klog/v2"
-	clusterv1beta1 "sigs.k8s.io/cluster-api/api/core/v1beta1"
+	"k8s.io/utils/ptr"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	clusterutilv1 "sigs.k8s.io/cluster-api/util"
 	"sigs.k8s.io/cluster-api/util/collections"
-	v1beta1conditions "sigs.k8s.io/cluster-api/util/deprecated/v1beta1/conditions"
-	v1beta2conditions "sigs.k8s.io/cluster-api/util/deprecated/v1beta1/conditions/v1beta2"
-	"sigs.k8s.io/cluster-api/util/deprecated/v1beta1/patch"
-	"sigs.k8s.io/cluster-api/util/deprecated/v1beta1/paused"
+	"sigs.k8s.io/cluster-api/util/conditions"
+	deprecatedv1beta1conditions "sigs.k8s.io/cluster-api/util/conditions/deprecated/v1beta1"
 	"sigs.k8s.io/cluster-api/util/finalizers"
+	"sigs.k8s.io/cluster-api/util/patch"
+	"sigs.k8s.io/cluster-api/util/paused"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	vmwarev1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/vmware/v1beta1"
+	vmwarev1 "sigs.k8s.io/cluster-api-provider-vsphere/api/supervisor/v1beta2"
 	"sigs.k8s.io/cluster-api-provider-vsphere/feature"
 	topologyv1 "sigs.k8s.io/cluster-api-provider-vsphere/internal/apis/topology/v1alpha1"
 	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/context/vmware"
@@ -141,89 +143,90 @@ func (r *ClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request) (_ 
 
 func (r *ClusterReconciler) patch(ctx context.Context, clusterCtx *vmware.ClusterContext) error {
 	// always update the readyCondition.
-	v1beta1conditions.SetSummary(clusterCtx.VSphereCluster,
-		v1beta1conditions.WithConditions(
-			vmwarev1.ResourcePolicyReadyCondition,
-			vmwarev1.ClusterNetworkReadyCondition,
-			vmwarev1.LoadBalancerReadyCondition,
+	deprecatedv1beta1conditions.SetSummary(clusterCtx.VSphereCluster,
+		deprecatedv1beta1conditions.WithConditions(
+			vmwarev1.ResourcePolicyReadyV1Beta1Condition,
+			vmwarev1.ClusterNetworkReadyV1Beta1Condition,
+			vmwarev1.LoadBalancerReadyV1Beta1Condition,
 		),
 	)
 
-	if err := v1beta2conditions.SetSummaryCondition(clusterCtx.VSphereCluster, clusterCtx.VSphereCluster, vmwarev1.VSphereClusterReadyV1Beta2Condition,
-		v1beta2conditions.ForConditionTypes{
-			vmwarev1.VSphereClusterResourcePolicyReadyV1Beta2Condition,
-			vmwarev1.VSphereClusterNetworkReadyV1Beta2Condition,
-			vmwarev1.VSphereClusterLoadBalancerReadyV1Beta2Condition,
+	if err := conditions.SetSummaryCondition(clusterCtx.VSphereCluster, clusterCtx.VSphereCluster, vmwarev1.VSphereClusterReadyCondition,
+		conditions.ForConditionTypes{
+			vmwarev1.VSphereClusterResourcePolicyReadyCondition,
+			vmwarev1.VSphereClusterNetworkReadyCondition,
+			vmwarev1.VSphereClusterLoadBalancerReadyCondition,
 			// ProviderServiceAccountsReady and ServiceDiscoveryReady will be set by other controllers after
 			// the API server in the workload cluster is up and running.
-			vmwarev1.VSphereClusterProviderServiceAccountsReadyV1Beta2Condition,
-			vmwarev1.VSphereClusterServiceDiscoveryReadyV1Beta2Condition,
+			vmwarev1.VSphereClusterProviderServiceAccountsReadyCondition,
+			vmwarev1.VSphereClusterServiceDiscoveryReadyCondition,
 		},
-		v1beta2conditions.IgnoreTypesIfMissing{
-			vmwarev1.VSphereClusterProviderServiceAccountsReadyV1Beta2Condition,
-			vmwarev1.VSphereClusterServiceDiscoveryReadyV1Beta2Condition,
+		conditions.IgnoreTypesIfMissing{
+			vmwarev1.VSphereClusterProviderServiceAccountsReadyCondition,
+			vmwarev1.VSphereClusterServiceDiscoveryReadyCondition,
 		},
 		// Using a custom merge strategy to override reasons applied during merge.
-		v1beta2conditions.CustomMergeStrategy{
-			MergeStrategy: v1beta2conditions.DefaultMergeStrategy(
+		conditions.CustomMergeStrategy{
+			MergeStrategy: conditions.DefaultMergeStrategy(
 				// Use custom reasons.
-				v1beta2conditions.ComputeReasonFunc(v1beta2conditions.GetDefaultComputeMergeReasonFunc(
-					vmwarev1.VSphereClusterNotReadyV1Beta2Reason,
-					vmwarev1.VSphereClusterReadyUnknownV1Beta2Reason,
-					vmwarev1.VSphereClusterReadyV1Beta2Reason,
+				conditions.ComputeReasonFunc(conditions.GetDefaultComputeMergeReasonFunc(
+					vmwarev1.VSphereClusterNotReadyReason,
+					vmwarev1.VSphereClusterReadyUnknownReason,
+					vmwarev1.VSphereClusterReadyReason,
 				)),
 			),
 		},
 	); err != nil {
-		return errors.Wrapf(err, "failed to set %s condition", vmwarev1.VSphereClusterReadyV1Beta2Condition)
+		return errors.Wrapf(err, "failed to set %s condition", vmwarev1.VSphereClusterReadyCondition)
 	}
 
 	return clusterCtx.PatchHelper.Patch(ctx, clusterCtx.VSphereCluster,
-		patch.WithOwnedConditions{Conditions: []clusterv1beta1.ConditionType{
-			vmwarev1.ResourcePolicyReadyCondition,
-			vmwarev1.ClusterNetworkReadyCondition,
-			vmwarev1.LoadBalancerReadyCondition,
+		patch.WithOwnedV1Beta1Conditions{Conditions: []clusterv1.ConditionType{
+			clusterv1.ReadyV1Beta1Condition,
+			vmwarev1.ResourcePolicyReadyV1Beta1Condition,
+			vmwarev1.ClusterNetworkReadyV1Beta1Condition,
+			vmwarev1.LoadBalancerReadyV1Beta1Condition,
 		}},
-		patch.WithOwnedV1Beta2Conditions{Conditions: []string{
-			clusterv1beta1.PausedV1Beta2Condition,
-			vmwarev1.VSphereClusterReadyV1Beta2Condition,
-			vmwarev1.VSphereClusterResourcePolicyReadyV1Beta2Condition,
-			vmwarev1.VSphereClusterNetworkReadyV1Beta2Condition,
-			vmwarev1.VSphereClusterLoadBalancerReadyV1Beta2Condition,
+		patch.WithOwnedConditions{Conditions: []string{
+			clusterv1.PausedCondition,
+			vmwarev1.VSphereClusterReadyCondition,
+			vmwarev1.VSphereClusterResourcePolicyReadyCondition,
+			vmwarev1.VSphereClusterNetworkReadyCondition,
+			vmwarev1.VSphereClusterLoadBalancerReadyCondition,
 			// NOTE: ProviderServiceAccountsReady and ServiceDiscoveryReady are not owned by this controller
 		}},
 	)
 }
 
 func (r *ClusterReconciler) reconcileDelete(clusterCtx *vmware.ClusterContext) {
-	deletingConditionTypes := []clusterv1beta1.ConditionType{
-		vmwarev1.ResourcePolicyReadyCondition,
-		vmwarev1.ClusterNetworkReadyCondition,
-		vmwarev1.LoadBalancerReadyCondition,
+	deletingConditionTypes := []clusterv1.ConditionType{
+		vmwarev1.ResourcePolicyReadyV1Beta1Condition,
+		vmwarev1.ClusterNetworkReadyV1Beta1Condition,
+		vmwarev1.LoadBalancerReadyV1Beta1Condition,
 	}
 
 	for _, t := range deletingConditionTypes {
-		if c := v1beta1conditions.Get(clusterCtx.VSphereCluster, t); c != nil {
-			v1beta1conditions.MarkFalse(clusterCtx.VSphereCluster, t, clusterv1beta1.DeletingReason, clusterv1beta1.ConditionSeverityInfo, "")
+		if c := deprecatedv1beta1conditions.Get(clusterCtx.VSphereCluster, t); c != nil {
+			deprecatedv1beta1conditions.MarkFalse(clusterCtx.VSphereCluster, t, clusterv1.DeletingV1Beta1Reason, clusterv1.ConditionSeverityInfo, "")
 		}
 	}
 
-	v1beta2conditions.Set(clusterCtx.VSphereCluster, metav1.Condition{
-		Type:   vmwarev1.VSphereClusterResourcePolicyReadyV1Beta2Condition,
+	conditions.Set(clusterCtx.VSphereCluster, metav1.Condition{
+		Type:   vmwarev1.VSphereClusterResourcePolicyReadyCondition,
 		Status: metav1.ConditionFalse,
-		Reason: vmwarev1.VSphereClusterResourcePolicyReadyDeletingV1Beta2Reason,
+		Reason: vmwarev1.VSphereClusterResourcePolicyReadyDeletingReason,
 	})
 
-	v1beta2conditions.Set(clusterCtx.VSphereCluster, metav1.Condition{
-		Type:   vmwarev1.VSphereClusterNetworkReadyV1Beta2Condition,
+	conditions.Set(clusterCtx.VSphereCluster, metav1.Condition{
+		Type:   vmwarev1.VSphereClusterNetworkReadyCondition,
 		Status: metav1.ConditionFalse,
-		Reason: vmwarev1.VSphereClusterNetworkReadyDeletingV1Beta2Reason,
+		Reason: vmwarev1.VSphereClusterNetworkReadyDeletingReason,
 	})
 
-	v1beta2conditions.Set(clusterCtx.VSphereCluster, metav1.Condition{
-		Type:   vmwarev1.VSphereClusterLoadBalancerReadyV1Beta2Condition,
+	conditions.Set(clusterCtx.VSphereCluster, metav1.Condition{
+		Type:   vmwarev1.VSphereClusterLoadBalancerReadyCondition,
 		Status: metav1.ConditionFalse,
-		Reason: vmwarev1.VSphereClusterLoadBalancerDeletingV1Beta2Reason,
+		Reason: vmwarev1.VSphereClusterLoadBalancerDeletingReason,
 	})
 
 	// Cluster is deleted so remove the finalizer.
@@ -231,6 +234,8 @@ func (r *ClusterReconciler) reconcileDelete(clusterCtx *vmware.ClusterContext) {
 }
 
 func (r *ClusterReconciler) reconcileNormal(ctx context.Context, clusterCtx *vmware.ClusterContext) error {
+	log := ctrl.LoggerFrom(ctx)
+
 	// Get any failure domains to report back to the CAPI core controller.
 	failureDomains, err := r.getFailureDomains(ctx, clusterCtx.VSphereCluster.Namespace)
 	if err != nil {
@@ -243,27 +248,24 @@ func (r *ClusterReconciler) reconcileNormal(ctx context.Context, clusterCtx *vmw
 	// Reconcile ResourcePolicy before we create the machines. If the ResourcePolicy is not reconciled before we create the Node VMs,
 	// it will be handled by vm operator by relocating the VMs to the ResourcePool and Folder specified by the ResourcePolicy.
 	// Reconciling the ResourcePolicy early potentially saves us the extra relocate operation.
-	resourcePolicyName, err := r.ResourcePolicyService.ReconcileResourcePolicy(ctx, clusterCtx)
-	if err != nil {
-		v1beta1conditions.MarkFalse(clusterCtx.VSphereCluster, vmwarev1.ResourcePolicyReadyCondition, vmwarev1.ResourcePolicyCreationFailedReason, clusterv1beta1.ConditionSeverityWarning, "%v", err)
-		v1beta2conditions.Set(clusterCtx.VSphereCluster, metav1.Condition{
-			Type:    vmwarev1.VSphereClusterResourcePolicyReadyV1Beta2Condition,
+	if err := r.ResourcePolicyService.ReconcileResourcePolicy(ctx, clusterCtx); err != nil {
+		deprecatedv1beta1conditions.MarkFalse(clusterCtx.VSphereCluster, vmwarev1.ResourcePolicyReadyV1Beta1Condition, vmwarev1.ResourcePolicyCreationFailedV1Beta1Reason, clusterv1.ConditionSeverityWarning, "%v", err)
+		conditions.Set(clusterCtx.VSphereCluster, metav1.Condition{
+			Type:    vmwarev1.VSphereClusterResourcePolicyReadyCondition,
 			Status:  metav1.ConditionFalse,
-			Reason:  vmwarev1.VSphereClusterResourcePolicyNotReadyV1Beta2Reason,
+			Reason:  vmwarev1.VSphereClusterResourcePolicyNotReadyReason,
 			Message: err.Error(),
 		})
 		return errors.Wrapf(err,
 			"failed to configure resource policy for vsphereCluster %s/%s",
 			clusterCtx.VSphereCluster.Namespace, clusterCtx.VSphereCluster.Name)
 	}
-	v1beta1conditions.MarkTrue(clusterCtx.VSphereCluster, vmwarev1.ResourcePolicyReadyCondition)
-	v1beta2conditions.Set(clusterCtx.VSphereCluster, metav1.Condition{
-		Type:   vmwarev1.VSphereClusterResourcePolicyReadyV1Beta2Condition,
+	deprecatedv1beta1conditions.MarkTrue(clusterCtx.VSphereCluster, vmwarev1.ResourcePolicyReadyV1Beta1Condition)
+	conditions.Set(clusterCtx.VSphereCluster, metav1.Condition{
+		Type:   vmwarev1.VSphereClusterResourcePolicyReadyCondition,
 		Status: metav1.ConditionTrue,
-		Reason: vmwarev1.VSphereClusterResourcePolicyReadyV1Beta2Reason,
+		Reason: vmwarev1.VSphereClusterResourcePolicyReadyReason,
 	})
-
-	clusterCtx.VSphereCluster.Status.ResourcePolicyName = resourcePolicyName
 
 	// Configure the cluster for the cluster network
 	err = r.NetworkProvider.ProvisionClusterNetwork(ctx, clusterCtx)
@@ -277,7 +279,10 @@ func (r *ClusterReconciler) reconcileNormal(ctx context.Context, clusterCtx *vmw
 		return errors.Wrapf(err, "unexpected error while reconciling control plane endpoint for %s", clusterCtx.VSphereCluster.Name)
 	}
 
-	clusterCtx.VSphereCluster.Status.Ready = true
+	if !ptr.Deref(clusterCtx.VSphereCluster.Status.Initialization.Provisioned, false) {
+		log.Info("VSphereCluster provisioning complete")
+	}
+	clusterCtx.VSphereCluster.Status.Initialization.Provisioned = ptr.To(true)
 	return nil
 }
 
@@ -287,32 +292,38 @@ func (r *ClusterReconciler) reconcileControlPlaneEndpoint(ctx context.Context, c
 	if !clusterCtx.Cluster.Spec.ControlPlaneEndpoint.IsZero() {
 		clusterCtx.VSphereCluster.Spec.ControlPlaneEndpoint.Host = clusterCtx.Cluster.Spec.ControlPlaneEndpoint.Host
 		clusterCtx.VSphereCluster.Spec.ControlPlaneEndpoint.Port = clusterCtx.Cluster.Spec.ControlPlaneEndpoint.Port
-		v1beta2conditions.Set(clusterCtx.VSphereCluster, metav1.Condition{
-			Type:   vmwarev1.VSphereClusterLoadBalancerReadyV1Beta2Condition,
+		if !conditions.IsTrue(clusterCtx.VSphereCluster, vmwarev1.VSphereClusterLoadBalancerReadyCondition) {
+			log.Info("Skipping control plane endpoint reconciliation",
+				"reason", "ControlPlaneEndpoint already set on Cluster",
+				"controlPlaneEndpoint", clusterCtx.Cluster.Spec.ControlPlaneEndpoint.String())
+		}
+
+		conditions.Set(clusterCtx.VSphereCluster, metav1.Condition{
+			Type:   vmwarev1.VSphereClusterLoadBalancerReadyCondition,
 			Status: metav1.ConditionTrue,
-			Reason: vmwarev1.VSphereClusterLoadBalancerReadyV1Beta2Reason,
+			Reason: vmwarev1.VSphereClusterLoadBalancerReadyReason,
 		})
 		if r.NetworkProvider.HasLoadBalancer() {
-			v1beta1conditions.MarkTrue(clusterCtx.VSphereCluster, vmwarev1.LoadBalancerReadyCondition)
+			deprecatedv1beta1conditions.MarkTrue(clusterCtx.VSphereCluster, vmwarev1.LoadBalancerReadyV1Beta1Condition)
 		}
-		log.Info("Skipping control plane endpoint reconciliation",
-			"reason", "ControlPlaneEndpoint already set on Cluster",
-			"controlPlaneEndpoint", clusterCtx.Cluster.Spec.ControlPlaneEndpoint.String())
 		return nil
 	}
 
 	if !clusterCtx.VSphereCluster.Spec.ControlPlaneEndpoint.IsZero() {
-		v1beta2conditions.Set(clusterCtx.VSphereCluster, metav1.Condition{
-			Type:   vmwarev1.VSphereClusterLoadBalancerReadyV1Beta2Condition,
+		if !conditions.IsTrue(clusterCtx.VSphereCluster, vmwarev1.VSphereClusterLoadBalancerReadyCondition) {
+			log.Info("Skipping control plane endpoint reconciliation",
+				"reason", "ControlPlaneEndpoint already set on VSphereCluster",
+				"controlPlaneEndpoint", clusterCtx.VSphereCluster.Spec.ControlPlaneEndpoint.String())
+		}
+
+		conditions.Set(clusterCtx.VSphereCluster, metav1.Condition{
+			Type:   vmwarev1.VSphereClusterLoadBalancerReadyCondition,
 			Status: metav1.ConditionTrue,
-			Reason: vmwarev1.VSphereClusterLoadBalancerReadyV1Beta2Reason,
+			Reason: vmwarev1.VSphereClusterLoadBalancerReadyReason,
 		})
 		if r.NetworkProvider.HasLoadBalancer() {
-			v1beta1conditions.MarkTrue(clusterCtx.VSphereCluster, vmwarev1.LoadBalancerReadyCondition)
+			deprecatedv1beta1conditions.MarkTrue(clusterCtx.VSphereCluster, vmwarev1.LoadBalancerReadyV1Beta1Condition)
 		}
-		log.Info("Skipping control plane endpoint reconciliation",
-			"reason", "ControlPlaneEndpoint already set on VSphereCluster",
-			"controlPlaneEndpoint", clusterCtx.VSphereCluster.Spec.ControlPlaneEndpoint.String())
 		return nil
 	}
 
@@ -370,7 +381,7 @@ func (r *ClusterReconciler) reconcileAPIEndpoints(ctx context.Context, clusterCt
 
 	// Define a variable to assign the API endpoints of control plane
 	// machines as they are discovered.
-	apiEndpointList := []clusterv1beta1.APIEndpoint{}
+	apiEndpointList := []vmwarev1.APIEndpoint{}
 
 	// Iterate over the cluster's control plane CAPI machines.
 	for _, machine := range machines {
@@ -393,7 +404,7 @@ func (r *ClusterReconciler) reconcileAPIEndpoints(ctx context.Context, clusterCt
 		ctx = ctrl.LoggerInto(ctx, log) //nolint:ineffassign,staticcheck // ensure the logger is up-to-date in ctx, even if we currently don't use ctx below.
 
 		// If the machine has no IP address then skip it.
-		if vsphereMachine.Status.IPAddr == "" {
+		if len(vsphereMachine.Status.Addresses) == 0 {
 			log.V(4).Info("Skipping Machine without IP address")
 			continue
 		}
@@ -401,8 +412,8 @@ func (r *ClusterReconciler) reconcileAPIEndpoints(ctx context.Context, clusterCt
 		// Append the control plane machine's IP address to the list of API
 		// endpoints for this cluster so that they can be read into the
 		// analogous CAPI cluster via an unstructured reader.
-		apiEndpoint := clusterv1beta1.APIEndpoint{
-			Host: vsphereMachine.Status.IPAddr,
+		apiEndpoint := vmwarev1.APIEndpoint{
+			Host: vsphereMachine.Status.Addresses[0].Address,
 			Port: apiEndpointPort,
 		}
 		apiEndpointList = append(apiEndpointList, apiEndpoint)
@@ -442,7 +453,7 @@ func (r *ClusterReconciler) VSphereMachineToCluster(ctx context.Context, o clien
 	}
 
 	// Only currently interested in updating Cluster from VSphereMachines with IP addresses
-	if vsphereMachine.Status.IPAddr == "" {
+	if len(vsphereMachine.Status.Addresses) == 0 {
 		log.V(6).Info("Skipping VSphereCluster reconcile as Machine does not have an IP address")
 		return nil
 	}
@@ -499,8 +510,8 @@ func (r *ClusterReconciler) ZoneToVSphereClusters(ctx context.Context, o client.
 
 // Returns the failure domain information discovered on the cluster
 // hosting this controller.
-func (r *ClusterReconciler) getFailureDomains(ctx context.Context, namespace string) (clusterv1beta1.FailureDomains, error) {
-	failureDomains := clusterv1beta1.FailureDomains{}
+func (r *ClusterReconciler) getFailureDomains(ctx context.Context, namespace string) ([]clusterv1.FailureDomain, error) {
+	failureDomains := []clusterv1.FailureDomain{}
 	// Determine the source of failure domain based on feature gates NamespaceScopedZones.
 	// If NamespaceScopedZones is enabled, use Zone which is Namespace scoped,otherwise use
 	// Availability Zone which is Cluster scoped.
@@ -516,13 +527,23 @@ func (r *ClusterReconciler) getFailureDomains(ctx context.Context, namespace str
 			if !zone.DeletionTimestamp.IsZero() {
 				continue
 			}
-			failureDomains[zone.Name] = clusterv1beta1.FailureDomainSpec{ControlPlane: true}
+			failureDomains = append(failureDomains, clusterv1.FailureDomain{
+				Name:         zone.Name,
+				ControlPlane: ptr.To(true),
+			})
 		}
 
 		if len(failureDomains) == 0 {
 			return nil, nil
 		}
 
+		// Sort the failureDomains to ensure deterministic order to avoid infinite reconciles.
+		slices.SortFunc(failureDomains, func(a, b clusterv1.FailureDomain) int {
+			if a.Name < b.Name {
+				return -1
+			}
+			return 1
+		})
 		return failureDomains, nil
 	}
 	availabilityZoneList := &topologyv1.AvailabilityZoneList{}
@@ -534,10 +555,18 @@ func (r *ClusterReconciler) getFailureDomains(ctx context.Context, namespace str
 		return nil, nil
 	}
 	for _, az := range availabilityZoneList.Items {
-		failureDomains[az.Name] = clusterv1beta1.FailureDomainSpec{
-			ControlPlane: true,
-		}
+		failureDomains = append(failureDomains, clusterv1.FailureDomain{
+			Name:         az.Name,
+			ControlPlane: ptr.To(true),
+		})
 	}
 
+	// Sort the failureDomains to ensure deterministic order to avoid infinite reconciles.
+	slices.SortFunc(failureDomains, func(a, b clusterv1.FailureDomain) int {
+		if a.Name < b.Name {
+			return -1
+		}
+		return 1
+	})
 	return failureDomains, nil
 }

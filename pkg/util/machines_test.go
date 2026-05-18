@@ -23,14 +23,15 @@ import (
 	"github.com/onsi/gomega"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
-	clusterv1beta1 "sigs.k8s.io/cluster-api/api/core/v1beta1"
+	"k8s.io/utils/ptr"
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	infrav1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/v1beta1"
-	vmwarev1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/vmware/v1beta1"
+	infrav1 "sigs.k8s.io/cluster-api-provider-vsphere/api/govmomi/v1beta2"
+	vmwarev1 "sigs.k8s.io/cluster-api-provider-vsphere/api/supervisor/v1beta2"
 	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/util"
 )
 
@@ -42,12 +43,12 @@ func Test_GetMachinePreferredIPAddress(t *testing.T) {
 		expectedErr error
 	}{
 		{
-			name: "single IPv4 address, no preferred CIDR",
+			name: "single IPv4 address",
 			machine: &infrav1.VSphereMachine{
 				Status: infrav1.VSphereMachineStatus{
-					Addresses: []clusterv1beta1.MachineAddress{
+					Addresses: []clusterv1.MachineAddress{
 						{
-							Type:    clusterv1beta1.MachineExternalIP,
+							Type:    clusterv1.MachineExternalIP,
 							Address: "192.168.0.1",
 						},
 					},
@@ -57,12 +58,12 @@ func Test_GetMachinePreferredIPAddress(t *testing.T) {
 			expectedErr: nil,
 		},
 		{
-			name: "single IPv6 address, no preferred CIDR",
+			name: "single IPv6 address",
 			machine: &infrav1.VSphereMachine{
 				Status: infrav1.VSphereMachineStatus{
-					Addresses: []clusterv1beta1.MachineAddress{
+					Addresses: []clusterv1.MachineAddress{
 						{
-							Type:    clusterv1beta1.MachineExternalIP,
+							Type:    clusterv1.MachineExternalIP,
 							Address: "fdf3:35b5:9dad:6e09::0001",
 						},
 					},
@@ -72,20 +73,20 @@ func Test_GetMachinePreferredIPAddress(t *testing.T) {
 			expectedErr: nil,
 		},
 		{
-			name: "multiple IPv4 addresses, only 1 internal, no preferred CIDR",
+			name: "multiple IPv4 addresses, only 1 internal",
 			machine: &infrav1.VSphereMachine{
 				Status: infrav1.VSphereMachineStatus{
-					Addresses: []clusterv1beta1.MachineAddress{
+					Addresses: []clusterv1.MachineAddress{
 						{
-							Type:    clusterv1beta1.MachineExternalIP,
+							Type:    clusterv1.MachineExternalIP,
 							Address: "192.168.0.1",
 						},
 						{
-							Type:    clusterv1beta1.MachineExternalIP,
+							Type:    clusterv1.MachineExternalIP,
 							Address: "1.1.1.1",
 						},
 						{
-							Type:    clusterv1beta1.MachineExternalIP,
+							Type:    clusterv1.MachineExternalIP,
 							Address: "2.2.2.2",
 						},
 					},
@@ -95,119 +96,10 @@ func Test_GetMachinePreferredIPAddress(t *testing.T) {
 			expectedErr: nil,
 		},
 		{
-			name: "multiple IPv4 addresses, preferred CIDR set to v4",
-			machine: &infrav1.VSphereMachine{
-				Spec: infrav1.VSphereMachineSpec{
-					VirtualMachineCloneSpec: infrav1.VirtualMachineCloneSpec{
-						Network: infrav1.NetworkSpec{
-							PreferredAPIServerCIDR: "192.168.0.0/16",
-						},
-					},
-				},
-				Status: infrav1.VSphereMachineStatus{
-					Addresses: []clusterv1beta1.MachineAddress{
-						{
-							Type:    clusterv1beta1.MachineExternalIP,
-							Address: "192.168.0.1",
-						},
-						{
-							Type:    clusterv1beta1.MachineExternalIP,
-							Address: "172.17.0.1",
-						},
-					},
-				},
-			},
-			ipAddr:      "192.168.0.1",
-			expectedErr: nil,
-		},
-		{
-			name: "multiple IPv4 and IPv6 addresses, preferred CIDR set to v4",
-			machine: &infrav1.VSphereMachine{
-				Spec: infrav1.VSphereMachineSpec{
-					VirtualMachineCloneSpec: infrav1.VirtualMachineCloneSpec{
-						Network: infrav1.NetworkSpec{
-							PreferredAPIServerCIDR: "192.168.0.0/16",
-						},
-					},
-				},
-				Status: infrav1.VSphereMachineStatus{
-					Addresses: []clusterv1beta1.MachineAddress{
-						{
-							Type:    clusterv1beta1.MachineExternalIP,
-							Address: "192.168.0.1",
-						},
-						{
-							Type:    clusterv1beta1.MachineExternalIP,
-							Address: "fdf3:35b5:9dad:6e09::0001",
-						},
-					},
-				},
-			},
-			ipAddr:      "192.168.0.1",
-			expectedErr: nil,
-		},
-		{
-			name: "multiple IPv4 and IPv6 addresses, preferred CIDR set to v6",
-			machine: &infrav1.VSphereMachine{
-				Spec: infrav1.VSphereMachineSpec{
-					VirtualMachineCloneSpec: infrav1.VirtualMachineCloneSpec{
-						Network: infrav1.NetworkSpec{
-							PreferredAPIServerCIDR: "fdf3:35b5:9dad:6e09::/64",
-						},
-					},
-				},
-				Status: infrav1.VSphereMachineStatus{
-
-					Addresses: []clusterv1beta1.MachineAddress{
-						{
-							Type:    clusterv1beta1.MachineExternalIP,
-							Address: "192.168.0.1",
-						},
-						{
-							Type:    clusterv1beta1.MachineExternalIP,
-							Address: "fdf3:35b5:9dad:6e09::0001",
-						},
-					},
-				},
-			},
-			ipAddr:      "fdf3:35b5:9dad:6e09::0001",
-			expectedErr: nil,
-		},
-		{
 			name: "no addresses found",
 			machine: &infrav1.VSphereMachine{
-				Spec: infrav1.VSphereMachineSpec{
-					VirtualMachineCloneSpec: infrav1.VirtualMachineCloneSpec{
-						Network: infrav1.NetworkSpec{
-							PreferredAPIServerCIDR: "fdf3:35b5:9dad:6e09::/64",
-						},
-					},
-				},
 				Status: infrav1.VSphereMachineStatus{
-					Addresses: []clusterv1beta1.MachineAddress{},
-				},
-			},
-			ipAddr:      "",
-			expectedErr: util.ErrNoMachineIPAddr,
-		},
-		{
-			name: "no addresses found with preferred CIDR",
-			machine: &infrav1.VSphereMachine{
-				Spec: infrav1.VSphereMachineSpec{
-					VirtualMachineCloneSpec: infrav1.VirtualMachineCloneSpec{
-						Network: infrav1.NetworkSpec{
-							PreferredAPIServerCIDR: "192.168.0.0/16",
-						},
-					},
-				},
-				Status: infrav1.VSphereMachineStatus{
-
-					Addresses: []clusterv1beta1.MachineAddress{
-						{
-							Type:    clusterv1beta1.MachineExternalIP,
-							Address: "10.0.0.1",
-						},
-					},
+					Addresses: []clusterv1.MachineAddress{},
 				},
 			},
 			ipAddr:      "",
@@ -252,7 +144,7 @@ func Test_GetMachineMetadata(t *testing.T) {
 								{
 									NetworkName: "network1",
 									MACAddr:     "00:00:00:00:00",
-									DHCP4:       true,
+									DHCP4:       ptr.To(true),
 								},
 							},
 						},
@@ -288,7 +180,7 @@ network:
 								{
 									NetworkName: "network1",
 									MACAddr:     "00:00:00:00:00",
-									DHCP4:       true,
+									DHCP4:       ptr.To(true),
 									DeviceName:  "ens192",
 								},
 							},
@@ -325,7 +217,7 @@ network:
 								{
 									NetworkName: "network1",
 									MACAddr:     "00:00:00:00:00",
-									DHCP6:       true,
+									DHCP6:       ptr.To(true),
 								},
 							},
 						},
@@ -361,8 +253,8 @@ network:
 								{
 									NetworkName: "network1",
 									MACAddr:     "00:00:00:00:00",
-									DHCP4:       true,
-									DHCP6:       true,
+									DHCP4:       ptr.To(true),
+									DHCP6:       ptr.To(true),
 								},
 							},
 						},
@@ -398,10 +290,10 @@ network:
 								{
 									NetworkName: "network1",
 									MACAddr:     "00:00:00:00:00",
-									DHCP4:       true,
+									DHCP4:       ptr.To(true),
 									DHCP4Overrides: &infrav1.DHCPOverrides{
 										Hostname:     toStringPtr("hal"),
-										RouteMetric:  toIntPtr(12345),
+										RouteMetric:  ptr.To[int32](12345),
 										SendHostname: toBoolPtr(true),
 										UseDNS:       toBoolPtr(true),
 										UseDomains:   toStringPtr("true"),
@@ -410,10 +302,10 @@ network:
 										UseNTP:       toBoolPtr(true),
 										UseRoutes:    toStringPtr("route"),
 									},
-									DHCP6: true,
+									DHCP6: ptr.To(true),
 									DHCP6Overrides: &infrav1.DHCPOverrides{
 										Hostname:     toStringPtr("hal"),
-										RouteMetric:  toIntPtr(12345),
+										RouteMetric:  ptr.To[int32](12345),
 										SendHostname: toBoolPtr(true),
 										UseDNS:       toBoolPtr(true),
 										UseDomains:   toStringPtr("true"),
@@ -477,9 +369,9 @@ network:
 								{
 									NetworkName:    "network1",
 									MACAddr:        "00:00:00:00:00",
-									DHCP4:          true,
+									DHCP4:          ptr.To(true),
 									DHCP4Overrides: nil,
-									DHCP6:          true,
+									DHCP6:          ptr.To(true),
 									DHCP6Overrides: nil,
 								},
 							},
@@ -516,7 +408,7 @@ network:
 								{
 									NetworkName: "network1",
 									MACAddr:     "00:00:00:00:00",
-									DHCP6:       true,
+									DHCP6:       ptr.To(true),
 									IPAddrs:     []string{"192.168.4.21"},
 									Gateway4:    "192.168.4.1",
 								},
@@ -557,7 +449,7 @@ network:
 								{
 									NetworkName: "network1",
 									MACAddr:     "00:00:00:00:00",
-									DHCP6:       true,
+									DHCP6:       ptr.To(true),
 									IPAddrs:     []string{"192.168.4.21"},
 									Gateway4:    "192.168.4.1",
 								},
@@ -566,7 +458,7 @@ network:
 								{
 									To:     "192.168.5.1/24",
 									Via:    "192.168.4.254",
-									Metric: 3,
+									Metric: ptr.To[int32](3),
 								},
 							},
 						},
@@ -609,19 +501,19 @@ network:
 								{
 									NetworkName: "network1",
 									MACAddr:     "00:00:00:00:00",
-									DHCP4:       true,
+									DHCP4:       ptr.To(true),
 									Routes: []infrav1.NetworkRouteSpec{
 										{
 											To:     "192.168.5.1/24",
 											Via:    "192.168.4.254",
-											Metric: 3,
+											Metric: ptr.To[int32](3),
 										},
 									},
 								},
 								{
 									NetworkName: "network12",
 									MACAddr:     "00:00:00:00:01",
-									DHCP6:       true,
+									DHCP6:       ptr.To(true),
 									MTU:         mtu(100),
 								},
 							},
@@ -680,7 +572,7 @@ network:
 								{
 									NetworkName:   "network12",
 									MACAddr:       "00:00:00:00:01",
-									DHCP6:         true,
+									DHCP6:         ptr.To(true),
 									SearchDomains: []string{"vmware6.ci"},
 								},
 							},
@@ -736,12 +628,12 @@ network:
 								{
 									NetworkName: "network1",
 									MACAddr:     "00:00:00:00:00",
-									DHCP4:       true,
+									DHCP4:       ptr.To(true),
 								},
 								{
 									NetworkName: "network12",
 									MACAddr:     "00:00:00:00:01",
-									DHCP6:       true,
+									DHCP6:       ptr.To(true),
 								},
 							},
 						},
@@ -793,7 +685,7 @@ network:
 								{
 									NetworkName: "network2",
 									MACAddr:     "00:00:00:00:01",
-									DHCP4:       true,
+									DHCP4:       ptr.To(true),
 								},
 								{
 									NetworkName: "network3",
@@ -869,12 +761,12 @@ network:
 								{
 									NetworkName: "network1",
 									MACAddr:     "00:00:00:00:00",
-									DHCP4:       true,
+									DHCP4:       ptr.To(true),
 								},
 								{
 									NetworkName: "network12",
 									MACAddr:     "00:00:00:00:01",
-									DHCP6:       true,
+									DHCP6:       ptr.To(true),
 								},
 							},
 						},
@@ -1073,9 +965,9 @@ func Test_MachinesAsString(t *testing.T) {
 
 func Test_GetVSphereClusterFromVSphereMachine(t *testing.T) {
 	scheme := runtime.NewScheme()
-	_ = clientgoscheme.AddToScheme(scheme)
-	_ = clusterv1.AddToScheme(scheme)
-	_ = vmwarev1.AddToScheme(scheme)
+	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
+	utilruntime.Must(clusterv1.AddToScheme(scheme))
+	utilruntime.Must(vmwarev1.AddToScheme(scheme))
 
 	ns := "util-test"
 
@@ -1164,8 +1056,4 @@ func toStringPtr(s string) *string {
 
 func toBoolPtr(b bool) *bool {
 	return &b
-}
-
-func toIntPtr(i int) *int {
-	return &i
 }
