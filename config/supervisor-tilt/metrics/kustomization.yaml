@@ -1,0 +1,14 @@
+resources:
+  - ./namespace.yaml
+  - ./crd-clusterrole.yaml
+
+namespace: observability
+
+configMapGenerator:
+- name: kube-state-metrics-crd-config-capv
+  files:
+  - capv.yaml=crd-metrics-config.yaml
+  options:
+    disableNameSuffixHash: true
+    labels:
+      kube-state-metrics/custom-resource: "true"

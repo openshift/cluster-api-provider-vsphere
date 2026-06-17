@@ -22,7 +22,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 
-	infrav1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/v1beta1"
+	infrav1 "sigs.k8s.io/cluster-api-provider-vsphere/api/govmomi/v1beta2"
 	capvcontext "sigs.k8s.io/cluster-api-provider-vsphere/pkg/context"
 )
 
@@ -34,21 +34,21 @@ func NewClusterContext(ctx context.Context, controllerManagerCtx *capvcontext.Co
 	vsphereCluster := newVSphereCluster(cluster)
 
 	// Add the cluster resources to the fake cluster client.
-	if err := controllerManagerCtx.Client.Create(ctx, &cluster); err != nil {
+	if err := controllerManagerCtx.Client.Create(ctx, cluster); err != nil {
 		panic(err)
 	}
-	if err := controllerManagerCtx.Client.Create(ctx, &vsphereCluster); err != nil {
+	if err := controllerManagerCtx.Client.Create(ctx, vsphereCluster); err != nil {
 		panic(err)
 	}
 
 	return &capvcontext.ClusterContext{
-		Cluster:        &cluster,
-		VSphereCluster: &vsphereCluster,
+		Cluster:        cluster,
+		VSphereCluster: vsphereCluster,
 	}
 }
 
-func newClusterV1() clusterv1.Cluster {
-	return clusterv1.Cluster{
+func newClusterV1() *clusterv1.Cluster {
+	return &clusterv1.Cluster{
 		ObjectMeta: metav1.ObjectMeta{
 			Namespace: Namespace,
 			Name:      Clusterv1a2Name,
@@ -70,8 +70,8 @@ func newClusterV1() clusterv1.Cluster {
 	}
 }
 
-func newVSphereCluster(owner clusterv1.Cluster) infrav1.VSphereCluster {
-	return infrav1.VSphereCluster{
+func newVSphereCluster(owner *clusterv1.Cluster) *infrav1.VSphereCluster {
+	return &infrav1.VSphereCluster{
 		ObjectMeta: metav1.ObjectMeta{
 			Namespace: owner.Namespace,
 			Name:      owner.Name,

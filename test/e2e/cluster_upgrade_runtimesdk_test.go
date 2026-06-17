@@ -59,8 +59,6 @@ var _ = Describe("When upgrading a workload cluster using ClusterClass with Runt
 						ClusterProxy:             proxy,
 						Namespace:                namespace,
 						OwnerGraphFilterFunction: TMPDropVSphereMachineAndFilterObjectsWithKindAndName(clusterName),
-						WaitToBecomeStable:       e2eConfig.GetIntervals(specName, "wait-resource-versions-become-stable"),
-						WaitToRemainStable:       e2eConfig.GetIntervals(specName, "wait-resource-versions-remain-stable"),
 					})
 				},
 				// "topology-runtimesdk" is the same as the "topology" flavor but with an additional RuntimeExtension.

@@ -25,8 +25,8 @@ import (
 	controlplanev1 "sigs.k8s.io/cluster-api/api/controlplane/kubeadm/v1beta2"
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 
-	infrav1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/v1beta1"
-	vmwarev1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/vmware/v1beta1"
+	infrav1 "sigs.k8s.io/cluster-api-provider-vsphere/api/govmomi/v1beta2"
+	vmwarev1 "sigs.k8s.io/cluster-api-provider-vsphere/api/supervisor/v1beta2"
 	"sigs.k8s.io/cluster-api-provider-vsphere/packaging/flavorgen/flavors/env"
 	"sigs.k8s.io/cluster-api-provider-vsphere/packaging/flavorgen/flavors/util"
 )
@@ -140,6 +140,13 @@ func infraClusterPatch() clusterv1.ClusterClassPatch {
 				JSONPatches: []clusterv1.JSONPatch{
 					{
 						Op:   "add",
+						Path: "/spec",
+						Value: &apiextensionsv1.JSON{
+							Raw: []byte(`{"template":{"spec":{}}}`),
+						},
+					},
+					{
+						Op:   "add",
 						Path: "/spec/template/spec/controlPlaneEndpoint",
 						ValueFrom: &clusterv1.JSONPatchValue{
 							Template: getControlPlaneEndpointTemplate(),
@@ -185,6 +192,13 @@ func vmWareInfraClusterPatch() clusterv1.ClusterClassPatch {
 					},
 				},
 				JSONPatches: []clusterv1.JSONPatch{
+					{
+						Op:   "add",
+						Path: "/spec",
+						Value: &apiextensionsv1.JSON{
+							Raw: []byte(`{"template":{"spec":{}}}`),
+						},
+					},
 					{
 						Op:   "add",
 						Path: "/spec/template/spec/controlPlaneEndpoint",

@@ -25,6 +25,7 @@ import (
 	"k8s.io/klog/v2"
 	inmemoryruntime "sigs.k8s.io/cluster-api/test/infrastructure/inmemory/pkg/runtime"
 	inmemoryserver "sigs.k8s.io/cluster-api/test/infrastructure/inmemory/pkg/server"
+	capicontrollerutil "sigs.k8s.io/cluster-api/util/controller"
 	"sigs.k8s.io/cluster-api/util/deprecated/v1beta1/patch"
 	"sigs.k8s.io/cluster-api/util/finalizers"
 	"sigs.k8s.io/cluster-api/util/predicates"
@@ -87,15 +88,12 @@ func (r *ControlPlaneEndpointReconciler) Reconcile(ctx context.Context, req ctrl
 	return ctrl.Result{}, r.reconcileNormal(ctx, controlPlaneEndpoint)
 }
 
-func (r *ControlPlaneEndpointReconciler) reconcileNormal(ctx context.Context, controlPlaneEndpoint *vcsimv1.ControlPlaneEndpoint) error {
-	log := ctrl.LoggerFrom(ctx)
-	log.Info("Reconciling VCSim ControlPlaneEndpoint")
-
+func (r *ControlPlaneEndpointReconciler) reconcileNormal(_ context.Context, controlPlaneEndpoint *vcsimv1.ControlPlaneEndpoint) error {
 	// Initialize a listener for the workload cluster.
 	// IMPORTANT: The fact that both the listener and the resourceGroup for a workload cluster have
 	// the same name is used as assumptions in other part of the implementation.
 	listenerName := klog.KObj(controlPlaneEndpoint).String()
-	listener, err := r.APIServerMux.InitWorkloadClusterListener(listenerName)
+	listener, err := r.APIServerMux.InitWorkloadClusterListenerWithPort(listenerName, controlPlaneEndpoint.Status.Port)
 	if err != nil {
 		return errors.Wrapf(err, "failed to init the listener for the control plane endpoint")
 	}
@@ -106,9 +104,7 @@ func (r *ControlPlaneEndpointReconciler) reconcileNormal(ctx context.Context, co
 	return nil
 }
 
-func (r *ControlPlaneEndpointReconciler) reconcileDelete(ctx context.Context, controlPlaneEndpoint *vcsimv1.ControlPlaneEndpoint) error {
-	log := ctrl.LoggerFrom(ctx)
-	log.Info("Reconciling delete VCSim ControlPlaneEndpoint")
+func (r *ControlPlaneEndpointReconciler) reconcileDelete(_ context.Context, controlPlaneEndpoint *vcsimv1.ControlPlaneEndpoint) error {
 	listenerName := klog.KObj(controlPlaneEndpoint).String()
 
 	// Delete the resource group hosting all the cloud resources belonging the workload cluster;
@@ -130,7 +126,7 @@ func (r *ControlPlaneEndpointReconciler) reconcileDelete(ctx context.Context, co
 func (r *ControlPlaneEndpointReconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manager, options controller.Options) error {
 	predicateLog := ctrl.LoggerFrom(ctx).WithValues("controller", "controlplaneendpoint")
 
-	err := ctrl.NewControllerManagedBy(mgr).
+	err := capicontrollerutil.NewControllerManagedBy(mgr, predicateLog).
 		For(&vcsimv1.ControlPlaneEndpoint{}).
 		WithOptions(options).
 		WithEventFilter(predicates.ResourceNotPausedAndHasFilterLabel(mgr.GetScheme(), predicateLog, r.WatchFilterValue)).

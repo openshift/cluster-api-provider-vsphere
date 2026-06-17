@@ -401,11 +401,6 @@ func RegisterConversions(s *runtime.Scheme) error {
 	}); err != nil {
 		return err
 	}
-	if err := s.AddGeneratedConversionFunc((*v1alpha5.VirtualMachineCryptoSpec)(nil), (*VirtualMachineCryptoSpec)(nil), func(a, b interface{}, scope conversion.Scope) error {
-		return Convert_v1alpha5_VirtualMachineCryptoSpec_To_v1alpha2_VirtualMachineCryptoSpec(a.(*v1alpha5.VirtualMachineCryptoSpec), b.(*VirtualMachineCryptoSpec), scope)
-	}); err != nil {
-		return err
-	}
 	if err := s.AddGeneratedConversionFunc((*VirtualMachineGroup)(nil), (*v1alpha5.VirtualMachineGroup)(nil), func(a, b interface{}, scope conversion.Scope) error {
 		return Convert_v1alpha2_VirtualMachineGroup_To_v1alpha5_VirtualMachineGroup(a.(*VirtualMachineGroup), b.(*v1alpha5.VirtualMachineGroup), scope)
 	}); err != nil {
@@ -956,11 +951,6 @@ func RegisterConversions(s *runtime.Scheme) error {
 	}); err != nil {
 		return err
 	}
-	if err := s.AddGeneratedConversionFunc((*v1alpha5.VirtualMachineVolume)(nil), (*VirtualMachineVolume)(nil), func(a, b interface{}, scope conversion.Scope) error {
-		return Convert_v1alpha5_VirtualMachineVolume_To_v1alpha2_VirtualMachineVolume(a.(*v1alpha5.VirtualMachineVolume), b.(*VirtualMachineVolume), scope)
-	}); err != nil {
-		return err
-	}
 	if err := s.AddGeneratedConversionFunc((*VirtualMachineVolumeSource)(nil), (*v1alpha5.VirtualMachineVolumeSource)(nil), func(a, b interface{}, scope conversion.Scope) error {
 		return Convert_v1alpha2_VirtualMachineVolumeSource_To_v1alpha5_VirtualMachineVolumeSource(a.(*VirtualMachineVolumeSource), b.(*v1alpha5.VirtualMachineVolumeSource), scope)
 	}); err != nil {
@@ -1046,6 +1036,11 @@ func RegisterConversions(s *runtime.Scheme) error {
 	}); err != nil {
 		return err
 	}
+	if err := s.AddConversionFunc((*v1alpha5.VirtualMachineCryptoSpec)(nil), (*VirtualMachineCryptoSpec)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_v1alpha5_VirtualMachineCryptoSpec_To_v1alpha2_VirtualMachineCryptoSpec(a.(*v1alpha5.VirtualMachineCryptoSpec), b.(*VirtualMachineCryptoSpec), scope)
+	}); err != nil {
+		return err
+	}
 	if err := s.AddConversionFunc((*v1alpha5.VirtualMachineImageStatus)(nil), (*VirtualMachineImageStatus)(nil), func(a, b interface{}, scope conversion.Scope) error {
 		return Convert_v1alpha5_VirtualMachineImageStatus_To_v1alpha2_VirtualMachineImageStatus(a.(*v1alpha5.VirtualMachineImageStatus), b.(*VirtualMachineImageStatus), scope)
 	}); err != nil {
@@ -1078,6 +1073,11 @@ func RegisterConversions(s *runtime.Scheme) error {
 	}
 	if err := s.AddConversionFunc((*v1alpha5.VirtualMachineVolumeStatus)(nil), (*VirtualMachineVolumeStatus)(nil), func(a, b interface{}, scope conversion.Scope) error {
 		return Convert_v1alpha5_VirtualMachineVolumeStatus_To_v1alpha2_VirtualMachineVolumeStatus(a.(*v1alpha5.VirtualMachineVolumeStatus), b.(*VirtualMachineVolumeStatus), scope)
+	}); err != nil {
+		return err
+	}
+	if err := s.AddConversionFunc((*v1alpha5.VirtualMachineVolume)(nil), (*VirtualMachineVolume)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_v1alpha5_VirtualMachineVolume_To_v1alpha2_VirtualMachineVolume(a.(*v1alpha5.VirtualMachineVolume), b.(*VirtualMachineVolume), scope)
 	}); err != nil {
 		return err
 	}
@@ -1462,14 +1462,7 @@ func Convert_v1alpha2_PersistentVolumeClaimVolumeSource_To_v1alpha5_PersistentVo
 
 func autoConvert_v1alpha5_PersistentVolumeClaimVolumeSource_To_v1alpha2_PersistentVolumeClaimVolumeSource(in *v1alpha5.PersistentVolumeClaimVolumeSource, out *PersistentVolumeClaimVolumeSource, s conversion.Scope) error {
 	out.PersistentVolumeClaimVolumeSource = in.PersistentVolumeClaimVolumeSource
-	// WARNING: in.UnmanagedVolumeClaim requires manual conversion: does not exist in peer-type
 	out.InstanceVolumeClaim = (*InstanceVolumeClaimVolumeSource)(unsafe.Pointer(in.InstanceVolumeClaim))
-	// WARNING: in.ApplicationType requires manual conversion: does not exist in peer-type
-	// WARNING: in.ControllerBusNumber requires manual conversion: does not exist in peer-type
-	// WARNING: in.ControllerType requires manual conversion: does not exist in peer-type
-	// WARNING: in.DiskMode requires manual conversion: does not exist in peer-type
-	// WARNING: in.SharingMode requires manual conversion: does not exist in peer-type
-	// WARNING: in.UnitNumber requires manual conversion: does not exist in peer-type
 	return nil
 }
 
@@ -2118,12 +2111,8 @@ func Convert_v1alpha2_VirtualMachineCryptoSpec_To_v1alpha5_VirtualMachineCryptoS
 func autoConvert_v1alpha5_VirtualMachineCryptoSpec_To_v1alpha2_VirtualMachineCryptoSpec(in *v1alpha5.VirtualMachineCryptoSpec, out *VirtualMachineCryptoSpec, s conversion.Scope) error {
 	out.EncryptionClassName = in.EncryptionClassName
 	out.UseDefaultKeyProvider = (*bool)(unsafe.Pointer(in.UseDefaultKeyProvider))
+	// WARNING: in.VTPMMode requires manual conversion: does not exist in peer-type
 	return nil
-}
-
-// Convert_v1alpha5_VirtualMachineCryptoSpec_To_v1alpha2_VirtualMachineCryptoSpec is an autogenerated conversion function.
-func Convert_v1alpha5_VirtualMachineCryptoSpec_To_v1alpha2_VirtualMachineCryptoSpec(in *v1alpha5.VirtualMachineCryptoSpec, out *VirtualMachineCryptoSpec, s conversion.Scope) error {
-	return autoConvert_v1alpha5_VirtualMachineCryptoSpec_To_v1alpha2_VirtualMachineCryptoSpec(in, out, s)
 }
 
 func autoConvert_v1alpha2_VirtualMachineGroup_To_v1alpha5_VirtualMachineGroup(in *VirtualMachineGroup, out *v1alpha5.VirtualMachineGroup, s conversion.Scope) error {
@@ -2238,6 +2227,7 @@ func autoConvert_v1alpha2_VirtualMachineGroupPlacementDatastoreStatus_To_v1alpha
 	out.URL = in.URL
 	out.SupportedDiskFormats = *(*[]string)(unsafe.Pointer(&in.SupportedDiskFormats))
 	out.DiskKey = (*int32)(unsafe.Pointer(in.DiskKey))
+	out.TopLevelDirectoryCreateSupported = in.TopLevelDirectoryCreateSupported
 	return nil
 }
 
@@ -2252,6 +2242,7 @@ func autoConvert_v1alpha5_VirtualMachineGroupPlacementDatastoreStatus_To_v1alpha
 	out.URL = in.URL
 	out.SupportedDiskFormats = *(*[]string)(unsafe.Pointer(&in.SupportedDiskFormats))
 	out.DiskKey = (*int32)(unsafe.Pointer(in.DiskKey))
+	out.TopLevelDirectoryCreateSupported = in.TopLevelDirectoryCreateSupported
 	return nil
 }
 
@@ -3699,7 +3690,15 @@ func autoConvert_v1alpha2_VirtualMachineSpec_To_v1alpha5_VirtualMachineSpec(in *
 	out.ImageName = in.ImageName
 	out.ClassName = in.ClassName
 	out.Affinity = (*v1alpha5.AffinitySpec)(unsafe.Pointer(in.Affinity))
-	out.Crypto = (*v1alpha5.VirtualMachineCryptoSpec)(unsafe.Pointer(in.Crypto))
+	if in.Crypto != nil {
+		in, out := &in.Crypto, &out.Crypto
+		*out = new(v1alpha5.VirtualMachineCryptoSpec)
+		if err := Convert_v1alpha2_VirtualMachineCryptoSpec_To_v1alpha5_VirtualMachineCryptoSpec(*in, *out, s); err != nil {
+			return err
+		}
+	} else {
+		out.Crypto = nil
+	}
 	out.StorageClass = in.StorageClass
 	if in.Bootstrap != nil {
 		in, out := &in.Bootstrap, &out.Bootstrap
@@ -3754,7 +3753,15 @@ func autoConvert_v1alpha5_VirtualMachineSpec_To_v1alpha2_VirtualMachineSpec(in *
 	out.ClassName = in.ClassName
 	// WARNING: in.Class requires manual conversion: does not exist in peer-type
 	out.Affinity = (*AffinitySpec)(unsafe.Pointer(in.Affinity))
-	out.Crypto = (*VirtualMachineCryptoSpec)(unsafe.Pointer(in.Crypto))
+	if in.Crypto != nil {
+		in, out := &in.Crypto, &out.Crypto
+		*out = new(VirtualMachineCryptoSpec)
+		if err := Convert_v1alpha5_VirtualMachineCryptoSpec_To_v1alpha2_VirtualMachineCryptoSpec(*in, *out, s); err != nil {
+			return err
+		}
+	} else {
+		out.Crypto = nil
+	}
 	out.StorageClass = in.StorageClass
 	if in.Bootstrap != nil {
 		in, out := &in.Bootstrap, &out.Bootstrap
@@ -3944,12 +3951,14 @@ func autoConvert_v1alpha5_VirtualMachineVolume_To_v1alpha2_VirtualMachineVolume(
 	if err := Convert_v1alpha5_VirtualMachineVolumeSource_To_v1alpha2_VirtualMachineVolumeSource(&in.VirtualMachineVolumeSource, &out.VirtualMachineVolumeSource, s); err != nil {
 		return err
 	}
+	// WARNING: in.Removable requires manual conversion: does not exist in peer-type
+	// WARNING: in.ApplicationType requires manual conversion: does not exist in peer-type
+	// WARNING: in.ControllerBusNumber requires manual conversion: does not exist in peer-type
+	// WARNING: in.ControllerType requires manual conversion: does not exist in peer-type
+	// WARNING: in.DiskMode requires manual conversion: does not exist in peer-type
+	// WARNING: in.SharingMode requires manual conversion: does not exist in peer-type
+	// WARNING: in.UnitNumber requires manual conversion: does not exist in peer-type
 	return nil
-}
-
-// Convert_v1alpha5_VirtualMachineVolume_To_v1alpha2_VirtualMachineVolume is an autogenerated conversion function.
-func Convert_v1alpha5_VirtualMachineVolume_To_v1alpha2_VirtualMachineVolume(in *v1alpha5.VirtualMachineVolume, out *VirtualMachineVolume, s conversion.Scope) error {
-	return autoConvert_v1alpha5_VirtualMachineVolume_To_v1alpha2_VirtualMachineVolume(in, out, s)
 }
 
 func autoConvert_v1alpha2_VirtualMachineVolumeSource_To_v1alpha5_VirtualMachineVolumeSource(in *VirtualMachineVolumeSource, out *v1alpha5.VirtualMachineVolumeSource, s conversion.Scope) error {
@@ -4000,6 +4009,7 @@ func autoConvert_v1alpha5_VirtualMachineVolumeStatus_To_v1alpha2_VirtualMachineV
 	out.Name = in.Name
 	// WARNING: in.ControllerBusNumber requires manual conversion: does not exist in peer-type
 	// WARNING: in.ControllerType requires manual conversion: does not exist in peer-type
+	// WARNING: in.UnitNumber requires manual conversion: does not exist in peer-type
 	// WARNING: in.Type requires manual conversion: does not exist in peer-type
 	// WARNING: in.DiskMode requires manual conversion: does not exist in peer-type
 	// WARNING: in.SharingMode requires manual conversion: does not exist in peer-type

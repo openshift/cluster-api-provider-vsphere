@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/pkg/errors"
+	"github.com/vmware/govmomi/crypto"
 	"github.com/vmware/govmomi/object"
 	"github.com/vmware/govmomi/pbm"
 	pbmTypes "github.com/vmware/govmomi/pbm/types"
@@ -36,7 +37,7 @@ import (
 	bootstrapv1 "sigs.k8s.io/cluster-api/api/bootstrap/kubeadm/v1beta2"
 	ctrl "sigs.k8s.io/controller-runtime"
 
-	infrav1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/v1beta1"
+	infrav1 "sigs.k8s.io/cluster-api-provider-vsphere/api/govmomi/v1beta2"
 	capvcontext "sigs.k8s.io/cluster-api-provider-vsphere/pkg/context"
 	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/services/govmomi/extra"
 	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/services/govmomi/template"
@@ -175,9 +176,7 @@ func Clone(ctx context.Context, vmCtx *capvcontext.VMContext, bootstrapData []by
 		numCPUs = 2
 	}
 	numCoresPerSocket := vmCtx.VSphereVM.Spec.NumCoresPerSocket
-	if numCoresPerSocket == 0 {
-		numCoresPerSocket = numCPUs
-	}
+
 	memMiB := vmCtx.VSphereVM.Spec.MemoryMiB
 	if memMiB == 0 {
 		memMiB = 2048
@@ -364,6 +363,45 @@ func Clone(ctx context.Context, vmCtx *capvcontext.VMContext, bootstrapData []by
 	isLinkedClone := snapshotRef != nil
 	spec.Location.Disk = getDiskLocators(disks, *datastoreRef, isLinkedClone)
 	spec.Location.Datastore = datastoreRef
+
+	spec.Config.NestedHVEnabled = vmCtx.VSphereVM.Spec.NestedHV
+	if vmCtx.VSphereVM.Spec.FtEncryptionMode == infrav1.FtEncryptionDisabled || vmCtx.VSphereVM.Spec.FtEncryptionMode == infrav1.FtEncryptionOpportunistic || vmCtx.VSphereVM.Spec.FtEncryptionMode == infrav1.FtEncryptionRequired {
+		spec.Config.FtEncryptionMode = string(vmCtx.VSphereVM.Spec.FtEncryptionMode)
+	}
+	if vmCtx.VSphereVM.Spec.MigrateEncryption == infrav1.DisabledMigrateEncryption || vmCtx.VSphereVM.Spec.MigrateEncryption == infrav1.OpportunisticMigrateEncryption || vmCtx.VSphereVM.Spec.MigrateEncryption == infrav1.RequiredMigrateEncryption {
+		spec.Config.MigrateEncryption = string(vmCtx.VSphereVM.Spec.MigrateEncryption)
+	}
+	if vmCtx.VSphereVM.Spec.CryptoProfile != "" {
+		pbmClient, err := pbm.NewClient(ctx, vmCtx.Session.Client.Client)
+		if err != nil {
+			return errors.Wrapf(err, "unable to create pbm client for %q", vmCtx)
+		}
+
+		spbmStoragePolicyID, err := pbmClient.ProfileIDByName(ctx, vmCtx.VSphereVM.Spec.CryptoProfile)
+		if err != nil {
+			return errors.Wrapf(err, "unable to get storageProfileID from name %s for %q", vmCtx.VSphereVM.Spec.CryptoProfile, vmCtx)
+		}
+		profileSpec := types.VirtualMachineDefinedProfileSpec{
+			ProfileId: spbmStoragePolicyID,
+		}
+		spec.Config.VmProfile = append(spec.Config.VmProfile, &profileSpec)
+	}
+	if vmCtx.VSphereVM.Spec.CryptoKeyID != "" {
+		kmip, err := crypto.GetManagerKmip(vmCtx.Session.Client.Client)
+		if err != nil {
+			return errors.Wrapf(err, "unable to create kmip client for %q", vmCtx)
+		}
+		keyID, err := kmip.GenerateKey(ctx, vmCtx.VSphereVM.Spec.CryptoKeyID)
+		if err != nil {
+			return errors.Wrapf(err, "unable to generate a key for %q", vmCtx)
+		}
+		cryptoSpec := types.CryptoSpecEncrypt{
+			CryptoKeyId: types.CryptoKeyId{
+				KeyId: keyID,
+			},
+		}
+		spec.Config.Crypto = &cryptoSpec
+	}
 
 	log.Info(fmt.Sprintf("Cloning Machine with clone mode %s", vmCtx.VSphereVM.Status.CloneMode))
 	task, err := tpl.Clone(ctx, folder, vmCtx.VSphereVM.Name, spec)

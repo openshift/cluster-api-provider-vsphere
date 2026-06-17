@@ -21,17 +21,15 @@ import (
 	"testing"
 
 	"github.com/onsi/gomega"
-	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/utils/ptr"
-	clusterv1beta1 "sigs.k8s.io/cluster-api/api/core/v1beta1"
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
-	ipamv1beta1 "sigs.k8s.io/cluster-api/api/ipam/v1beta1"
-	v1beta1conditions "sigs.k8s.io/cluster-api/util/deprecated/v1beta1/conditions"
+	ipamv1 "sigs.k8s.io/cluster-api/api/ipam/v1beta2"
+	"sigs.k8s.io/cluster-api/util/conditions"
+	deprecatedv1beta1conditions "sigs.k8s.io/cluster-api/util/conditions/deprecated/v1beta1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	ctrlutil "sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
-	infrav1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/v1beta1"
+	infrav1 "sigs.k8s.io/cluster-api-provider-vsphere/api/govmomi/v1beta2"
 	capvcontext "sigs.k8s.io/cluster-api-provider-vsphere/pkg/context"
 	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/context/fake"
 	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/util"
@@ -60,11 +58,11 @@ func Test_vmReconciler_reconcileIPAddressClaims(t *testing.T) {
 				VirtualMachineCloneSpec: infrav1.VirtualMachineCloneSpec{
 					Network: infrav1.NetworkSpec{
 						Devices: []infrav1.NetworkDeviceSpec{{
-							AddressesFromPools: []corev1.TypedLocalObjectReference{
+							AddressesFromPools: []infrav1.IPPoolReference{
 								poolRef("my-pool-1"),
 							}},
 							{
-								AddressesFromPools: []corev1.TypedLocalObjectReference{
+								AddressesFromPools: []infrav1.IPPoolReference{
 									poolRef("my-pool-2"),
 									poolRef("my-pool-3"),
 								},
@@ -82,7 +80,7 @@ func Test_vmReconciler_reconcileIPAddressClaims(t *testing.T) {
 			err := vmReconciler{}.reconcileIPAddressClaims(ctx, testCtx)
 			g.Expect(err).ToNot(gomega.HaveOccurred())
 
-			ipAddrClaimList := &ipamv1beta1.IPAddressClaimList{}
+			ipAddrClaimList := &ipamv1.IPAddressClaimList{}
 			g.Expect(testCtx.Client.List(ctx, ipAddrClaimList)).To(gomega.Succeed())
 			g.Expect(ipAddrClaimList.Items).To(gomega.HaveLen(3))
 
@@ -96,21 +94,25 @@ func Test_vmReconciler_reconcileIPAddressClaims(t *testing.T) {
 				g.Expect(claim.Labels).To(gomega.HaveKeyWithValue(clusterv1.ClusterNameLabel, "my-cluster"))
 			}
 
-			claimedCondition := v1beta1conditions.Get(testCtx.VSphereVM, infrav1.IPAddressClaimedCondition)
+			claimedCondition := conditions.Get(testCtx.VSphereVM, infrav1.VSphereVMIPAddressClaimsFulfilledCondition)
 			g.Expect(claimedCondition).NotTo(gomega.BeNil())
-			g.Expect(claimedCondition.Status).To(gomega.Equal(corev1.ConditionFalse))
-			g.Expect(claimedCondition.Reason).To(gomega.Equal(infrav1.IPAddressClaimsBeingCreatedReason))
+			g.Expect(claimedCondition.Status).To(gomega.Equal(metav1.ConditionFalse))
+			g.Expect(claimedCondition.Reason).To(gomega.Equal(infrav1.VSphereVMIPAddressClaimsBeingCreatedReason))
 			g.Expect(claimedCondition.Message).To(gomega.Equal("3/3 claims being created"))
 		})
 
-		ipAddrClaim := func(name, poolName string) *ipamv1beta1.IPAddressClaim {
-			return &ipamv1beta1.IPAddressClaim{
+		ipAddrClaim := func(name, poolName string) *ipamv1.IPAddressClaim {
+			return &ipamv1.IPAddressClaim{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      name,
 					Namespace: namespace,
 				},
-				Spec:   ipamv1beta1.IPAddressClaimSpec{PoolRef: poolRef(poolName)},
-				Status: ipamv1beta1.IPAddressClaimStatus{},
+				Spec: ipamv1.IPAddressClaimSpec{PoolRef: ipamPoolRef(poolName)},
+				Status: ipamv1.IPAddressClaimStatus{
+					Deprecated: &ipamv1.IPAddressClaimDeprecatedStatus{
+						V1Beta1: &ipamv1.IPAddressClaimV1Beta1DeprecatedStatus{},
+					},
+				},
 			}
 		}
 
@@ -125,13 +127,13 @@ func Test_vmReconciler_reconcileIPAddressClaims(t *testing.T) {
 			err := vmReconciler{}.reconcileIPAddressClaims(ctx, testCtx)
 			g.Expect(err).ToNot(gomega.HaveOccurred())
 
-			claimedCondition := v1beta1conditions.Get(testCtx.VSphereVM, infrav1.IPAddressClaimedCondition)
+			claimedCondition := conditions.Get(testCtx.VSphereVM, infrav1.VSphereVMIPAddressClaimsFulfilledCondition)
 			g.Expect(claimedCondition).NotTo(gomega.BeNil())
-			g.Expect(claimedCondition.Status).To(gomega.Equal(corev1.ConditionFalse))
-			g.Expect(claimedCondition.Reason).To(gomega.Equal(infrav1.WaitingForIPAddressReason))
+			g.Expect(claimedCondition.Status).To(gomega.Equal(metav1.ConditionFalse))
+			g.Expect(claimedCondition.Reason).To(gomega.Equal(infrav1.VSphereVMIPAddressClaimsWaitingForIPAddressReason))
 			g.Expect(claimedCondition.Message).To(gomega.Equal("3/3 claims being processed"))
 
-			ipAddrClaimList := &ipamv1beta1.IPAddressClaimList{}
+			ipAddrClaimList := &ipamv1.IPAddressClaimList{}
 			g.Expect(testCtx.Client.List(ctx, ipAddrClaimList)).To(gomega.Succeed())
 
 			for idx := range ipAddrClaimList.Items {
@@ -161,11 +163,11 @@ func Test_vmReconciler_reconcileIPAddressClaims(t *testing.T) {
 			err := vmReconciler{}.reconcileIPAddressClaims(ctx, testCtx)
 			g.Expect(err).ToNot(gomega.HaveOccurred())
 
-			claimedCondition := v1beta1conditions.Get(testCtx.VSphereVM, infrav1.IPAddressClaimedCondition)
+			claimedCondition := conditions.Get(testCtx.VSphereVM, infrav1.VSphereVMIPAddressClaimsFulfilledCondition)
 			g.Expect(claimedCondition).NotTo(gomega.BeNil())
-			g.Expect(claimedCondition.Status).To(gomega.Equal(corev1.ConditionTrue))
+			g.Expect(claimedCondition.Status).To(gomega.Equal(metav1.ConditionTrue))
 
-			ipAddrClaimList := &ipamv1beta1.IPAddressClaimList{}
+			ipAddrClaimList := &ipamv1.IPAddressClaimList{}
 			g.Expect(testCtx.Client.List(ctx, ipAddrClaimList)).To(gomega.Succeed())
 
 			for idx := range ipAddrClaimList.Items {
@@ -183,18 +185,18 @@ func Test_vmReconciler_reconcileIPAddressClaims(t *testing.T) {
 			g := gomega.NewWithT(t)
 
 			ipAddrClaimWithReadyConditionTrue := ipAddrClaim(util.IPAddressClaimName(name, 0, 0), "my-pool-1")
-			ipAddrClaimWithReadyConditionTrue.Status.Conditions = clusterv1beta1.Conditions{
-				*v1beta1conditions.TrueCondition(clusterv1beta1.ReadyCondition),
+			ipAddrClaimWithReadyConditionTrue.Status.Deprecated.V1Beta1.Conditions = clusterv1.Conditions{
+				*deprecatedv1beta1conditions.TrueCondition(clusterv1.ReadyCondition),
 			}
 
 			ipAddrClaimWithReadyConditionFalse := ipAddrClaim(util.IPAddressClaimName(name, 1, 0), "my-pool-2")
-			ipAddrClaimWithReadyConditionFalse.Status.Conditions = clusterv1beta1.Conditions{
-				*v1beta1conditions.FalseCondition(clusterv1beta1.ReadyCondition, "IPAddressFetchProgress", clusterv1beta1.ConditionSeverityInfo, ""),
+			ipAddrClaimWithReadyConditionFalse.Status.Deprecated.V1Beta1.Conditions = clusterv1.Conditions{
+				*deprecatedv1beta1conditions.FalseCondition(clusterv1.ReadyCondition, "IPAddressFetchProgress", clusterv1.ConditionSeverityInfo, ""),
 			}
 
 			secondIPAddrClaimWithReadyConditionTrue := ipAddrClaim(util.IPAddressClaimName(name, 1, 1), "my-pool-3")
-			secondIPAddrClaimWithReadyConditionTrue.Status.Conditions = clusterv1beta1.Conditions{
-				*v1beta1conditions.TrueCondition(clusterv1beta1.ReadyCondition),
+			secondIPAddrClaimWithReadyConditionTrue.Status.Deprecated.V1Beta1.Conditions = clusterv1.Conditions{
+				*deprecatedv1beta1conditions.TrueCondition(clusterv1.ReadyCondition),
 			}
 
 			testCtx := setup(vsphereVM,
@@ -205,23 +207,23 @@ func Test_vmReconciler_reconcileIPAddressClaims(t *testing.T) {
 			err := vmReconciler{}.reconcileIPAddressClaims(ctx, testCtx)
 			g.Expect(err).ToNot(gomega.HaveOccurred())
 
-			claimedCondition := v1beta1conditions.Get(testCtx.VSphereVM, infrav1.IPAddressClaimedCondition)
+			claimedCondition := conditions.Get(testCtx.VSphereVM, infrav1.VSphereVMIPAddressClaimsFulfilledCondition)
 			g.Expect(claimedCondition).NotTo(gomega.BeNil())
-			g.Expect(claimedCondition.Status).To(gomega.Equal(corev1.ConditionFalse))
+			g.Expect(claimedCondition.Status).To(gomega.Equal(metav1.ConditionFalse))
 		})
 
 		t.Run("when some existing claims have Ready Condition set", func(t *testing.T) {
 			g := gomega.NewWithT(t)
 
 			ipAddrClaimWithReadyConditionTrue := ipAddrClaim(util.IPAddressClaimName(name, 0, 0), "my-pool-1")
-			ipAddrClaimWithReadyConditionTrue.Status.Conditions = clusterv1beta1.Conditions{
-				*v1beta1conditions.TrueCondition(clusterv1beta1.ReadyCondition),
+			ipAddrClaimWithReadyConditionTrue.Status.Deprecated.V1Beta1.Conditions = clusterv1.Conditions{
+				*deprecatedv1beta1conditions.TrueCondition(clusterv1.ReadyCondition),
 			}
 			ipAddrClaimWithReadyConditionTrue.Status.AddressRef.Name = "blah-one"
 
 			ipAddrClaimWithReadyConditionFalse := ipAddrClaim(util.IPAddressClaimName(name, 1, 0), "my-pool-2")
-			ipAddrClaimWithReadyConditionFalse.Status.Conditions = clusterv1beta1.Conditions{
-				*v1beta1conditions.FalseCondition(clusterv1beta1.ReadyCondition, "IPAddressFetchProgress", clusterv1beta1.ConditionSeverityInfo, ""),
+			ipAddrClaimWithReadyConditionFalse.Status.Deprecated.V1Beta1.Conditions = clusterv1.Conditions{
+				*deprecatedv1beta1conditions.FalseCondition(clusterv1.ReadyCondition, "IPAddressFetchProgress", clusterv1.ConditionSeverityInfo, ""),
 			}
 
 			iPAddrClaimWithNoReadyCondition := ipAddrClaim(util.IPAddressClaimName(name, 1, 1), "my-pool-3")
@@ -234,18 +236,26 @@ func Test_vmReconciler_reconcileIPAddressClaims(t *testing.T) {
 			err := vmReconciler{}.reconcileIPAddressClaims(ctx, testCtx)
 			g.Expect(err).ToNot(gomega.HaveOccurred())
 
-			claimedCondition := v1beta1conditions.Get(testCtx.VSphereVM, infrav1.IPAddressClaimedCondition)
+			claimedCondition := conditions.Get(testCtx.VSphereVM, infrav1.VSphereVMIPAddressClaimsFulfilledCondition)
 			g.Expect(claimedCondition).NotTo(gomega.BeNil())
-			g.Expect(claimedCondition.Status).To(gomega.Equal(corev1.ConditionFalse))
-			g.Expect(claimedCondition.Reason).To(gomega.Equal(infrav1.WaitingForIPAddressReason))
+			g.Expect(claimedCondition.Status).To(gomega.Equal(metav1.ConditionFalse))
+			g.Expect(claimedCondition.Reason).To(gomega.Equal(infrav1.VSphereVMIPAddressClaimsWaitingForIPAddressReason))
 			g.Expect(claimedCondition.Message).To(gomega.Equal("2/3 claims being processed"))
 		})
 	})
 }
 
-func poolRef(name string) corev1.TypedLocalObjectReference {
-	return corev1.TypedLocalObjectReference{
-		APIGroup: ptr.To("test.ipam.provider.io/v1"),
+func ipamPoolRef(name string) ipamv1.IPPoolReference {
+	return ipamv1.IPPoolReference{
+		APIGroup: "test.ipam.provider.io/v1",
+		Name:     name,
+		Kind:     "my-pool-kind",
+	}
+}
+
+func poolRef(name string) infrav1.IPPoolReference {
+	return infrav1.IPPoolReference{
+		APIGroup: "test.ipam.provider.io/v1",
 		Name:     name,
 		Kind:     "my-pool-kind",
 	}

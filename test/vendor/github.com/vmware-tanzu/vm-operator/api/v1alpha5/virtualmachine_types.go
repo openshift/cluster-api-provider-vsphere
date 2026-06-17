@@ -39,12 +39,19 @@ const (
 	// VirtualMachineConditionNetworkReady indicates that the network prerequisites for the VM are ready.
 	VirtualMachineConditionNetworkReady = "VirtualMachineNetworkReady"
 
+	// VirtualMachineConditionImageCacheReady indicates that the VirtualMachineImageCache for the VM is ready.
+	VirtualMachineConditionImageCacheReady = "VirtualMachineConditionImageCacheReady"
+
 	// VirtualMachineConditionPlacementReady indicates that the placement decision for the VM is ready.
 	VirtualMachineConditionPlacementReady = "VirtualMachineConditionPlacementReady"
 
 	// VirtualMachineEncryptionSynced indicates that the VirtualMachine's
 	// encryption state is synced to the desired encryption state.
 	VirtualMachineEncryptionSynced = "VirtualMachineEncryptionSynced"
+
+	// VirtualMachineDiskPromotionStarted indicates that the VirtualMachine's
+	// disk promotion process has started.
+	VirtualMachineDiskPromotionStarted = "VirtualMachineDiskPromotionStarted"
 
 	// VirtualMachineDiskPromotionSynced indicates that the VirtualMachine's
 	// disk promotion state is synced to the desired promotion state.
@@ -56,6 +63,32 @@ const (
 	// VirtualMachineClassConfigurationSynced indicates that the VM's current configuration is synced to the
 	// current version of its VirtualMachineClass.
 	VirtualMachineClassConfigurationSynced = "VirtualMachineClassConfigurationSynced"
+
+	// VirtualMachineHardwareDeviceConfigVerified indicates that the VM's hardware
+	// device configuration (controllers, volumes, CD-ROM devices) matches the
+	// desired state specified in the spec.
+	VirtualMachineHardwareDeviceConfigVerified = "VirtualMachineHardwareDeviceConfigVerified"
+
+	// VirtualMachineHardwareControllersVerified indicates that the VM's hardware
+	// controllers match the desired state specified in the spec.
+	VirtualMachineHardwareControllersVerified = "VirtualMachineHardwareControllersVerified"
+
+	// VirtualMachineHardwareVolumesVerified indicates that the VM's hardware
+	// volumes match the desired state specified in the spec.
+	VirtualMachineHardwareVolumesVerified = "VirtualMachineHardwareVolumesVerified"
+
+	// VirtualMachineHardwareCDROMVerified indicates that the VM's hardware
+	// CD-ROM devices match the desired state specified in the spec.
+	VirtualMachineHardwareCDROMVerified = "VirtualMachineHardwareCDROMVerified"
+
+	// VirtualMachinePowerStateSynced indicates the VM's power state is synced
+	// to the desired state.
+	VirtualMachinePowerStateSynced = "VirtualMachinePowerStateSynced"
+
+	// VirtualMachineGuestNetworkConfigSynced indicates the VM's guest network
+	// configuration is synced to the desired state, determined by whether or
+	// not the guest is reporting the expected IP address(es).
+	VirtualMachineGuestNetworkConfigSynced = "VirtualMachineGuestNetworkConfigSynced"
 )
 
 const (
@@ -82,6 +115,23 @@ const (
 	// VirtualMachineSnapshotRevertFailedReason indicates that the
 	// revert operation failed for some reason.
 	VirtualMachineSnapshotRevertFailedReason = "VirtualMachineSnapshotRevertFailed"
+
+	// VirtualMachineHardwareControllersMismatchReason indicates that the VM's
+	// controller configuration does not match the desired state specified in the spec.
+	VirtualMachineHardwareControllersMismatchReason = "HardwareControllersMismatch"
+
+	// VirtualMachineHardwareVolumesMismatchReason indicates that the VM's
+	// volume configuration does not match the desired state specified in the spec.
+	VirtualMachineHardwareVolumesMismatchReason = "HardwareVolumesMismatch"
+
+	// VirtualMachineHardwareCDROMMismatchReason indicates that the VM's
+	// CD-ROM device configuration does not match the desired state specified in the spec.
+	VirtualMachineHardwareCDROMMismatchReason = "HardwareCDROMMismatch"
+
+	// VirtualMachineHardwareDeviceConfigMismatchReason indicates that the VM's
+	// hardware device configuration does not match the desired state specified
+	// in the spec. This is used for the aggregated condition.
+	VirtualMachineHardwareDeviceConfigMismatchReason = "HardwareDeviceConfigMismatch"
 )
 
 const (
@@ -432,18 +482,64 @@ type VirtualMachineCryptoSpec struct {
 	//
 	// Defaults to true if omitted.
 	UseDefaultKeyProvider *bool `json:"useDefaultKeyProvider,omitempty"`
+
+	// +kubebuilder:default=New
+
+	// VTPMMode describes the desired behavior when deploying a VirtualMachine
+	// using a VirtualMachine-backed image which created from an encrypted
+	// VirtualMachine with a vTPM.
+	//
+	// The possible values for this field are:
+	//
+	// - Clone - The vTPM will be preserved from the VirtualMachineImage.
+	// - New - The vTPM will not be preserved.
+	//
+	// The default value of this field is New.
+	VTPMMode VirtualMachineCryptoVTPMMode `json:"vTPMMode,omitempty"`
+}
+
+// +kubebuilder:validation:Enum=Clone;New
+
+// VirtualMachineCryptoVTPMMode represents whether to preserve the vTPM
+// from an encrypted VirtualMachine-backed image when deploying a VirtualMachine.
+type VirtualMachineCryptoVTPMMode string
+
+const (
+	VirtualMachineCryptoVTPMModeClone VirtualMachineCryptoVTPMMode = "Clone"
+	VirtualMachineCryptoVTPMModeNew   VirtualMachineCryptoVTPMMode = "New"
+)
+
+// VirtualMachineBootOptionsBootableDevice represents a bootable device
+// that a VM may be booted from.
+type VirtualMachineBootOptionsBootableDevice struct {
+	// +required
+
+	// Type represents the type of bootable device.
+	//
+	// The available device types are:
+	//
+	// - Disk
+	// - Network
+	// - CDRom
+	Type VirtualMachineBootOptionsBootableDeviceType `json:"type"`
+
+	// +optional
+
+	// Name represents the name of the bootable device. It is
+	// required for Disk and Network device types, while ignored
+	// for CDRom device types.
+	Name string `json:"name,omitempty"`
 }
 
 // +kubebuilder:validation:Enum=Disk;Network;CDRom
 
-// VirtualMachineBootOptionsBootableDevice represents the type of bootable device
-// that a VM may be booted from.
-type VirtualMachineBootOptionsBootableDevice string
+// VirtualMachineBootOptionsBootableDeviceType represents the type of bootable device.
+type VirtualMachineBootOptionsBootableDeviceType string
 
 const (
-	VirtualMachineBootOptionsBootableDiskDevice    VirtualMachineBootOptionsBootableDevice = "Disk"
-	VirtualMachineBootOptionsBootableNetworkDevice VirtualMachineBootOptionsBootableDevice = "Network"
-	VirtualMachineBootOptionsBootableCDRomDevice   VirtualMachineBootOptionsBootableDevice = "CDRom"
+	VirtualMachineBootOptionsBootableDiskDevice    VirtualMachineBootOptionsBootableDeviceType = "Disk"
+	VirtualMachineBootOptionsBootableNetworkDevice VirtualMachineBootOptionsBootableDeviceType = "Network"
+	VirtualMachineBootOptionsBootableCDRomDevice   VirtualMachineBootOptionsBootableDeviceType = "CDRom"
 )
 
 // +kubebuilder:validation:Enum=IP4;IP6
@@ -457,20 +553,20 @@ const (
 	VirtualMachineBootOptionsNetworkBootProtocolIP6 VirtualMachineBootOptionsNetworkBootProtocol = "IP6"
 )
 
-// +kubebuilder:validation:Enum=BIOS;EFI
+// +kubebuilder:validation:Enum=bios;efi
 
 // VirtualMachineBootOptionsFirmwareType represents the firmware to use.
 type VirtualMachineBootOptionsFirmwareType string
 
 const (
-	VirtualMachineBootOptionsFirmwareTypeBIOS VirtualMachineBootOptionsFirmwareType = "BIOS"
-	VirtualMachineBootOptionsFirmwareTypeEFI  VirtualMachineBootOptionsFirmwareType = "EFI"
+	VirtualMachineBootOptionsFirmwareTypeBIOS VirtualMachineBootOptionsFirmwareType = "bios"
+	VirtualMachineBootOptionsFirmwareTypeEFI  VirtualMachineBootOptionsFirmwareType = "efi"
 )
 
 // +kubebuilder:validation:Enum=Enabled;Disabled
 
 // VirtualMachineBootOptionsForceBootEntry represents whether to force the virtual machine
-// to enter BIOS/EFI setup the next time the virtual machine boots.
+// to enter bios/efi setup the next time the virtual machine boots.
 type VirtualMachineBootOptionsForceBootEntry string
 
 const (
@@ -516,8 +612,8 @@ type VirtualMachineBootOptions struct {
 	//
 	// The available values of this field are:
 	//
-	// - BIOS
-	// - EFI
+	// - bios
+	// - efi
 	Firmware VirtualMachineBootOptionsFirmwareType `json:"firmware,omitempty"`
 
 	// +optional
@@ -536,13 +632,6 @@ type VirtualMachineBootOptions struct {
 	// number of devices it supports. If bootable device is not reached before platform's limit
 	// is hit, boot will fail. At least single entry is supported by all products supporting
 	// boot order settings.
-	//
-	// The available devices are:
-	//
-	// - Disk    -- If there are classic and managed disks, the first classic disk is selected.
-	//              If there are only managed disks, the first disk is selected.
-	// - Network -- The first interface listed in spec.network.interfaces.
-	// - CDRom   -- The first bootable CD-ROM device.
 	BootOrder []VirtualMachineBootOptionsBootableDevice `json:"bootOrder,omitempty"`
 
 	// +optional
@@ -574,7 +663,8 @@ type VirtualMachineBootOptions struct {
 	// - Enabled -- The virtual machine will automatically enter BIOS/EFI setup the next
 	//              time the virtual machine boots.
 	// - Disabled -- The virtual machine will boot normaally.
-	EnterBootSetup VirtualMachineBootOptionsForceBootEntry `json:"enterBootSetup,omitempty"`
+	// TODO: (abaruni) Revisit the need for this option
+	// EnterBootSetup VirtualMachineBootOptionsForceBootEntry `json:"enterBootSetup,omitempty"`
 
 	// +optional
 	// +kubebuilder:default=Disabled
@@ -702,7 +792,7 @@ type VirtualMachineSpec struct {
 
 	// +optional
 
-	// Class describes the VirtualMachineClassInsance resource that is
+	// Class describes the VirtualMachineClassInstance resource that is
 	// referenced by this virtual machine. This can be the
 	// VirtualMachineClassInstance that the virtual machine was
 	// created, or later resized with.

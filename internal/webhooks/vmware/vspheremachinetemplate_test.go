@@ -28,7 +28,7 @@ import (
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
-	vmwarev1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/vmware/v1beta1"
+	vmwarev1 "sigs.k8s.io/cluster-api-provider-vsphere/api/supervisor/v1beta2"
 	"sigs.k8s.io/cluster-api-provider-vsphere/feature"
 	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/manager"
 	pkgnetwork "sigs.k8s.io/cluster-api-provider-vsphere/pkg/services/network"
@@ -37,46 +37,46 @@ import (
 func TestVSphereMachineTemplate_Validate(t *testing.T) {
 	tests := []struct {
 		name           string
-		namingStrategy *vmwarev1.VirtualMachineNamingStrategy
+		namingStrategy vmwarev1.VirtualMachineNamingSpec
 		wantErr        bool
 	}{
 		{
 			name:           "Should succeed if namingStrategy not set",
-			namingStrategy: nil,
+			namingStrategy: vmwarev1.VirtualMachineNamingSpec{},
 			wantErr:        false,
 		},
 		{
 			name: "Should succeed if namingStrategy.template not set",
-			namingStrategy: &vmwarev1.VirtualMachineNamingStrategy{
-				Template: nil,
+			namingStrategy: vmwarev1.VirtualMachineNamingSpec{
+				Template: "",
 			},
 			wantErr: false,
 		},
 		{
 			name: "Should succeed if namingStrategy.template is set to the fallback value",
-			namingStrategy: &vmwarev1.VirtualMachineNamingStrategy{
-				Template: ptr.To[string]("{{ .machine.name }}"),
+			namingStrategy: vmwarev1.VirtualMachineNamingSpec{
+				Template: "{{ .machine.name }}",
 			},
 			wantErr: false,
 		},
 		{
 			name: "Should succeed if namingStrategy.template is set to the Windows example",
-			namingStrategy: &vmwarev1.VirtualMachineNamingStrategy{
-				Template: ptr.To[string]("{{ if le (len .machine.name) 20 }}{{ .machine.name }}{{else}}{{ trimSuffix \"-\" (trunc 14 .machine.name) }}-{{ trunc -5 .machine.name }}{{end}}"),
+			namingStrategy: vmwarev1.VirtualMachineNamingSpec{
+				Template: "{{ if le (len .machine.name) 20 }}{{ .machine.name }}{{else}}{{ trimSuffix \"-\" (trunc 14 .machine.name) }}-{{ trunc -5 .machine.name }}{{end}}",
 			},
 			wantErr: false,
 		},
 		{
 			name: "Should fail if namingStrategy.template is set to an invalid template",
-			namingStrategy: &vmwarev1.VirtualMachineNamingStrategy{
-				Template: ptr.To[string]("{{ invalid"),
+			namingStrategy: vmwarev1.VirtualMachineNamingSpec{
+				Template: "{{ invalid",
 			},
 			wantErr: true,
 		},
 		{
 			name: "Should fail if namingStrategy.template is set to a valid template that renders an invalid name",
-			namingStrategy: &vmwarev1.VirtualMachineNamingStrategy{
-				Template: ptr.To[string]("-{{ .machine.name }}"), // Leading - is not valid for names.
+			namingStrategy: vmwarev1.VirtualMachineNamingSpec{
+				Template: "-{{ .machine.name }}", // Leading - is not valid for names.
 			},
 			wantErr: true,
 		},
@@ -89,7 +89,7 @@ func TestVSphereMachineTemplate_Validate(t *testing.T) {
 				Spec: vmwarev1.VSphereMachineTemplateSpec{
 					Template: vmwarev1.VSphereMachineTemplateResource{
 						Spec: vmwarev1.VSphereMachineSpec{
-							NamingStrategy: tc.namingStrategy,
+							Naming: tc.namingStrategy,
 						},
 					},
 				},
@@ -122,7 +122,7 @@ func TestVSphereMachineTemplate_ValidateInterfaces(t *testing.T) {
 			network: vmwarev1.VSphereMachineNetworkSpec{
 				Interfaces: vmwarev1.InterfacesSpec{
 					Primary: vmwarev1.InterfaceSpec{
-						Network: vmwarev1.InterfaceNetworkReference{
+						NetworkRef: vmwarev1.InterfaceNetworkReference{
 							Kind:       pkgnetwork.NetworkGVKNSXTVPCSubnetSet.Kind,
 							APIVersion: pkgnetwork.NetworkGVKNSXTVPCSubnetSet.GroupVersion().String(),
 							Name:       "primary-subnetset",
@@ -140,7 +140,7 @@ func TestVSphereMachineTemplate_ValidateInterfaces(t *testing.T) {
 			network: vmwarev1.VSphereMachineNetworkSpec{
 				Interfaces: vmwarev1.InterfacesSpec{
 					Primary: vmwarev1.InterfaceSpec{
-						Network: vmwarev1.InterfaceNetworkReference{
+						NetworkRef: vmwarev1.InterfaceNetworkReference{
 							Kind:       pkgnetwork.NetworkGVKNetOperator.Kind,
 							APIVersion: pkgnetwork.NetworkGVKNetOperator.GroupVersion().String(),
 							Name:       "primary-wrong",
@@ -160,7 +160,7 @@ func TestVSphereMachineTemplate_ValidateInterfaces(t *testing.T) {
 					Secondary: []vmwarev1.SecondaryInterfaceSpec{{
 						Name: "eth1",
 						InterfaceSpec: vmwarev1.InterfaceSpec{
-							Network: vmwarev1.InterfaceNetworkReference{
+							NetworkRef: vmwarev1.InterfaceNetworkReference{
 								Kind:       pkgnetwork.NetworkGVKNetOperator.Kind,
 								APIVersion: pkgnetwork.NetworkGVKNetOperator.GroupVersion().String(),
 								Name:       "secondary-wrong",
@@ -179,7 +179,7 @@ func TestVSphereMachineTemplate_ValidateInterfaces(t *testing.T) {
 			network: vmwarev1.VSphereMachineNetworkSpec{
 				Interfaces: vmwarev1.InterfacesSpec{
 					Primary: vmwarev1.InterfaceSpec{
-						Network: vmwarev1.InterfaceNetworkReference{
+						NetworkRef: vmwarev1.InterfaceNetworkReference{
 							Kind:       pkgnetwork.NetworkGVKNetOperator.Kind,
 							APIVersion: pkgnetwork.NetworkGVKNetOperator.GroupVersion().String(),
 							Name:       "primary-netop",
@@ -199,7 +199,7 @@ func TestVSphereMachineTemplate_ValidateInterfaces(t *testing.T) {
 					Secondary: []vmwarev1.SecondaryInterfaceSpec{{
 						Name: "eth1",
 						InterfaceSpec: vmwarev1.InterfaceSpec{
-							Network: vmwarev1.InterfaceNetworkReference{
+							NetworkRef: vmwarev1.InterfaceNetworkReference{
 								Kind:       pkgnetwork.NetworkGVKNSXTVPCSubnetSet.Kind,
 								APIVersion: pkgnetwork.NetworkGVKNSXTVPCSubnetSet.GroupVersion().String(),
 								Name:       "secondary-wrong",
@@ -220,7 +220,7 @@ func TestVSphereMachineTemplate_ValidateInterfaces(t *testing.T) {
 					Secondary: []vmwarev1.SecondaryInterfaceSpec{{
 						Name: pkgnetwork.PrimaryInterfaceName,
 						InterfaceSpec: vmwarev1.InterfaceSpec{
-							Network: vmwarev1.InterfaceNetworkReference{
+							NetworkRef: vmwarev1.InterfaceNetworkReference{
 								Kind:       pkgnetwork.NetworkGVKNSXTVPCSubnet.Kind,
 								APIVersion: pkgnetwork.NetworkGVKNSXTVPCSubnet.GroupVersion().String(),
 								Name:       "secondary-dup",
@@ -239,7 +239,7 @@ func TestVSphereMachineTemplate_ValidateInterfaces(t *testing.T) {
 			network: vmwarev1.VSphereMachineNetworkSpec{
 				Interfaces: vmwarev1.InterfacesSpec{
 					Primary: vmwarev1.InterfaceSpec{
-						Network: vmwarev1.InterfaceNetworkReference{
+						NetworkRef: vmwarev1.InterfaceNetworkReference{
 							Kind:       pkgnetwork.NetworkGVKNSXTVPCSubnetSet.Kind,
 							APIVersion: pkgnetwork.NetworkGVKNSXTVPCSubnetSet.GroupVersion().String(),
 							Name:       "primary-subnetset",
@@ -248,7 +248,7 @@ func TestVSphereMachineTemplate_ValidateInterfaces(t *testing.T) {
 					Secondary: []vmwarev1.SecondaryInterfaceSpec{{
 						Name: "eth1",
 						InterfaceSpec: vmwarev1.InterfaceSpec{
-							Network: vmwarev1.InterfaceNetworkReference{
+							NetworkRef: vmwarev1.InterfaceNetworkReference{
 								Kind:       pkgnetwork.NetworkGVKNSXTVPCSubnetSet.Kind,
 								APIVersion: pkgnetwork.NetworkGVKNSXTVPCSubnetSet.GroupVersion().String(),
 								Name:       "secondary-subnetset",
@@ -268,7 +268,7 @@ func TestVSphereMachineTemplate_ValidateInterfaces(t *testing.T) {
 					Secondary: []vmwarev1.SecondaryInterfaceSpec{{
 						Name: "eth1",
 						InterfaceSpec: vmwarev1.InterfaceSpec{
-							Network: vmwarev1.InterfaceNetworkReference{
+							NetworkRef: vmwarev1.InterfaceNetworkReference{
 								Kind:       pkgnetwork.NetworkGVKNetOperator.Kind,
 								APIVersion: pkgnetwork.NetworkGVKNetOperator.GroupVersion().String(),
 								Name:       "secondary-netop",

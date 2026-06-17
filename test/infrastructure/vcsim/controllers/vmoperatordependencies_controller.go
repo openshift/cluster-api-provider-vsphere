@@ -22,6 +22,7 @@ import (
 	"github.com/pkg/errors"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	kerrors "k8s.io/apimachinery/pkg/util/errors"
+	capicontrollerutil "sigs.k8s.io/cluster-api/util/controller"
 	"sigs.k8s.io/cluster-api/util/deprecated/v1beta1/patch"
 	"sigs.k8s.io/cluster-api/util/predicates"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -33,7 +34,8 @@ import (
 )
 
 type VMOperatorDependenciesReconciler struct {
-	Client client.Client
+	Client            client.Client
+	VMOperatorSimMode bool
 
 	// WatchFilterValue is the label value used to filter events prior to reconciliation.
 	WatchFilterValue string
@@ -76,8 +78,18 @@ func (r *VMOperatorDependenciesReconciler) Reconcile(ctx context.Context, req ct
 }
 
 func (r *VMOperatorDependenciesReconciler) reconcileNormal(ctx context.Context, vmOperatorDependencies *vcsimv1.VMOperatorDependencies) error {
-	log := ctrl.LoggerFrom(ctx)
-	log.Info("Reconciling VCSim VMOperatorDependencies")
+	// When simulating vm-operator, only a minimal part of the
+	// VMOperatorDependencies is required because used by CAPV.
+	if r.VMOperatorSimMode {
+		err := vmoperator.ReconcileDependenciesVMOperatorSimMode(ctx, r.Client, vmOperatorDependencies)
+		if err != nil {
+			vmOperatorDependencies.Status.Ready = false
+			return err
+		}
+
+		vmOperatorDependencies.Status.Ready = true
+		return nil
+	}
 
 	err := vmoperator.ReconcileDependencies(ctx, r.Client, vmOperatorDependencies)
 	if err != nil {
@@ -98,7 +110,7 @@ func (r *VMOperatorDependenciesReconciler) reconcileDelete(_ context.Context, _ 
 func (r *VMOperatorDependenciesReconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manager, options controller.Options) error {
 	predicateLog := ctrl.LoggerFrom(ctx).WithValues("controller", "vmoperatordependencies")
 
-	err := ctrl.NewControllerManagedBy(mgr).
+	err := capicontrollerutil.NewControllerManagedBy(mgr, predicateLog).
 		For(&vcsimv1.VMOperatorDependencies{}).
 		WithOptions(options).
 		WithEventFilter(predicates.ResourceNotPausedAndHasFilterLabel(mgr.GetScheme(), predicateLog, r.WatchFilterValue)).
