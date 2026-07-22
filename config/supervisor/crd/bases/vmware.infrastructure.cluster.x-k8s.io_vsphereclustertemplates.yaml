@@ -3,7 +3,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.19.0
+    controller-gen.kubebuilder.io/version: v0.20.0
   name: vsphereclustertemplates.vmware.infrastructure.cluster.x-k8s.io
 spec:
   group: vmware.infrastructure.cluster.x-k8s.io
@@ -16,7 +16,8 @@ spec:
     singular: vsphereclustertemplate
   scope: Namespaced
   versions:
-  - name: v1beta1
+  - deprecated: true
+    name: v1beta1
     schema:
       openAPIV3Schema:
         description: VSphereClusterTemplate is the Schema for the vsphereclustertemplates
@@ -40,17 +41,17 @@ spec:
           metadata:
             type: object
           spec:
-            description: VSphereClusterTemplateSpec defines the desired state of VSphereClusterTemplate.
+            description: spec is the desired state of VSphereClusterTemplate.
             properties:
               template:
-                description: VSphereClusterTemplateResource defines the template structure.
+                description: template defines the desired state of VSphereClusterTemplate.
                 properties:
                   spec:
-                    description: VSphereClusterSpec defines the desired state of VSphereCluster.
+                    description: spec is the desired state of VSphereClusterTemplateResource.
                     properties:
                       controlPlaneEndpoint:
-                        description: APIEndpoint represents a reachable Kubernetes
-                          API endpoint.
+                        description: controlPlaneEndpoint represents the endpoint
+                          used to communicate with the control plane.
                         properties:
                           host:
                             description: host is the hostname on which the API server
@@ -101,4 +102,129 @@ spec:
             type: object
         type: object
     served: true
+    storage: false
+  - additionalPrinterColumns:
+    - description: Name of the ClusterClass owning this template
+      jsonPath: .metadata.ownerReferences[?(@.kind=="ClusterClass")].name
+      name: ClusterClass
+      type: string
+    - description: Time duration since creation of VSphereClusterTemplate
+      jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1beta2
+    schema:
+      openAPIV3Schema:
+        description: VSphereClusterTemplate is the Schema for the vsphereclustertemplates
+          API.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: spec is the desired state of VSphereClusterTemplate.
+            properties:
+              template:
+                description: template defines the desired state of VSphereClusterTemplate.
+                minProperties: 1
+                properties:
+                  metadata:
+                    description: |-
+                      metadata is the standard object's metadata.
+                      More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#metadata
+                    minProperties: 1
+                    properties:
+                      annotations:
+                        additionalProperties:
+                          type: string
+                        description: |-
+                          annotations is an unstructured key value map stored with a resource that may be
+                          set by external tools to store and retrieve arbitrary metadata. They are not
+                          queryable and should be preserved when modifying objects.
+                          More info: http://kubernetes.io/docs/user-guide/annotations
+                        type: object
+                      labels:
+                        additionalProperties:
+                          type: string
+                        description: |-
+                          labels is a map of string keys and values that can be used to organize and categorize
+                          (scope and select) objects. May match selectors of replication controllers
+                          and services.
+                          More info: http://kubernetes.io/docs/user-guide/labels
+                        type: object
+                    type: object
+                  spec:
+                    description: spec is the desired state of VSphereClusterTemplateResource.
+                    minProperties: 1
+                    properties:
+                      controlPlaneEndpoint:
+                        description: controlPlaneEndpoint represents the endpoint
+                          used to communicate with the control plane.
+                        minProperties: 1
+                        properties:
+                          host:
+                            description: host is the hostname on which the API server
+                              is serving.
+                            maxLength: 512
+                            minLength: 1
+                            type: string
+                          port:
+                            description: port is the port on which the API server
+                              is serving.
+                            format: int32
+                            maximum: 65535
+                            minimum: 1
+                            type: integer
+                        type: object
+                      network:
+                        description: network defines the network configuration for
+                          the cluster with different network providers.
+                        minProperties: 1
+                        properties:
+                          nsxVPC:
+                            description: nsxVPC defines the configuration when the
+                              network provider is NSX-VPC.
+                            minProperties: 1
+                            properties:
+                              createSubnetSet:
+                                description: createSubnetSet is a flag to indicate
+                                  whether to create a SubnetSet or not as the primary
+                                  network. If not set, the default is true.
+                                type: boolean
+                            type: object
+                            x-kubernetes-validations:
+                            - message: createSubnetSet value cannot be changed after
+                                creation
+                              rule: has(self.createSubnetSet) == has(oldSelf.createSubnetSet)
+                                && self.createSubnetSet == oldSelf.createSubnetSet
+                        type: object
+                        x-kubernetes-validations:
+                        - message: field 'nsxVPC' cannot be added or removed after
+                            creation
+                          rule: has(self.nsxVPC) == has(oldSelf.nsxVPC)
+                    type: object
+                    x-kubernetes-validations:
+                    - message: field 'network' cannot be added or removed after creation
+                      rule: has(self.network) == has(oldSelf.network)
+                type: object
+            required:
+            - template
+            type: object
+        type: object
+    served: true
     storage: true
+    subresources: {}

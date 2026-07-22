@@ -24,15 +24,19 @@ import (
 	"os"
 	"reflect"
 	goruntime "runtime"
+	"strings"
 	"time"
 
 	perrors "github.com/pkg/errors"
 	"github.com/spf13/pflag"
-	vmoprv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha2"
+	vmoprv1alpha2 "github.com/vmware-tanzu/vm-operator/api/v1alpha2"
+	vmoprv1alpha5 "github.com/vmware-tanzu/vm-operator/api/v1alpha5"
 	"gopkg.in/fsnotify.v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/selection"
 	kerrors "k8s.io/apimachinery/pkg/util/errors"
@@ -59,15 +63,19 @@ import (
 	ctrlmgr "sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
-	infrav1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/v1beta1"
-	vmwarev1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/vmware/v1beta1"
+	infrav1 "sigs.k8s.io/cluster-api-provider-vsphere/api/govmomi/v1beta2"
+	vmwarev1 "sigs.k8s.io/cluster-api-provider-vsphere/api/supervisor/v1beta2"
 	"sigs.k8s.io/cluster-api-provider-vsphere/controllers"
 	"sigs.k8s.io/cluster-api-provider-vsphere/controllers/vmware"
 	"sigs.k8s.io/cluster-api-provider-vsphere/feature"
 	capvcontext "sigs.k8s.io/cluster-api-provider-vsphere/pkg/context"
+	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/conversion"
+	conversionapi "sigs.k8s.io/cluster-api-provider-vsphere/pkg/conversion/api"
+	vmoprvhub "sigs.k8s.io/cluster-api-provider-vsphere/pkg/conversion/api/vmoperator/hub"
 	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/manager"
 	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/services/vmoperator"
 	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/session"
+	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/util"
 	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/version"
 	"sigs.k8s.io/cluster-api-provider-vsphere/webhooks"
 	vmwarewebhooks "sigs.k8s.io/cluster-api-provider-vsphere/webhooks/vmware"
@@ -90,6 +98,7 @@ var (
 	syncPeriod                  time.Duration
 	webhookOpts                 webhook.Options
 	watchNamespace              string
+	apiVersionVMOperator        string
 
 	clusterCacheConcurrency           int
 	vSphereClusterConcurrency         int
@@ -171,6 +180,13 @@ func InitFlags(fs *pflag.FlagSet) {
 		"network provider to be used by Supervisor based clusters.",
 	)
 
+	fs.StringVar(
+		&apiVersionVMOperator,
+		"vm-operator-api-version",
+		vmoprv1alpha5.GroupVersion.Version,
+		fmt.Sprintf("the API version to use when reading and writing VM Operator resources in supervisor mode. Valid values are: %s, %s", vmoprv1alpha2.GroupVersion.Version, vmoprv1alpha5.GroupVersion.Version),
+	)
+
 	// Flags common between CAPI and CAPV
 
 	logsv1.AddFlags(logOptions, fs)
@@ -205,10 +221,10 @@ func InitFlags(fs *pflag.FlagSet) {
 	fs.DurationVar(&syncPeriod, "sync-period", defaultSyncPeriod,
 		"The minimum interval at which watched resources are reconciled (e.g. 15m)")
 
-	fs.Float32Var(&restConfigQPS, "kube-api-qps", 20,
+	fs.Float32Var(&restConfigQPS, "kube-api-qps", 100,
 		"Maximum queries per second from the controller client to the Kubernetes API server.")
 
-	fs.IntVar(&restConfigBurst, "kube-api-burst", 30,
+	fs.IntVar(&restConfigBurst, "kube-api-burst", 200,
 		"Maximum number of queries that should be allowed in one burst from the controller client to the Kubernetes API server.")
 
 	fs.Float32Var(&clusterCacheClientQPS, "clustercache-client-qps", 20,
@@ -265,6 +281,10 @@ func main() {
 		os.Exit(1)
 	}
 
+	pflag.CommandLine.VisitAll(func(flag *pflag.Flag) {
+		klog.V(1).Infof("FLAG: --%s=%q", flag.Name, flag.Value)
+	})
+
 	// klog.Background will automatically use the right logger.
 	ctrl.SetLogger(klog.Background())
 
@@ -319,6 +339,11 @@ func main() {
 		setupLog.Error(err, "Unable to start manager")
 		os.Exit(1)
 	}
+	if isGovmomiCRDLoaded && isSupervisorCRDLoaded {
+		err := fmt.Errorf("both supervisor and govmomi CRDs detected (unsupported configuration)")
+		setupLog.Error(err, "Unable to start manager")
+		os.Exit(1)
+	}
 
 	var watchNamespaces map[string]cache.Config
 	if watchNamespace != "" {
@@ -327,23 +352,112 @@ func main() {
 		}
 	}
 
-	req, _ := labels.NewRequirement(vmoperator.ClusterSelectorKey, selection.Exists, nil)
+	var vm runtime.Object
+	var converter *conversion.Converter
+	if isSupervisorCRDLoaded {
+		if apiVersionVMOperator != vmoprv1alpha2.GroupVersion.Version && apiVersionVMOperator != vmoprv1alpha5.GroupVersion.Version {
+			fmt.Printf("Invalid argument: --vm-operator-api-version must be one of : %s, %s\n", vmoprv1alpha2.GroupVersion.Version, vmoprv1alpha5.GroupVersion.Version)
+			os.Exit(1)
+		}
+		setupLog.Info(fmt.Sprintf("Target API Version for group %s: %s", vmoprvhub.GroupVersion.Group, apiVersionVMOperator))
+
+		converter = conversionapi.DefaultConverterFor(
+			schema.GroupVersion{Group: vmoprvhub.GroupVersion.Group, Version: apiVersionVMOperator},
+		)
+
+		// Get vm-operator native types in the preferred version for cache filters.
+		vmGVK, err := converter.SpokeGroupVersionKindFor(&vmoprvhub.VirtualMachine{})
+		if err != nil {
+			setupLog.Error(err, "Unable to start manager; failed to get object for VirtualMachine cache filter")
+			os.Exit(1)
+		}
+
+		scheme := runtime.NewScheme()
+		if err := vmoprv1alpha2.AddToScheme(scheme); err != nil {
+			setupLog.Error(err, "Unable to start manager; failed register v1alpha2 version for vm-operator API types")
+			os.Exit(1)
+		}
+		if err := vmoprv1alpha5.AddToScheme(scheme); err != nil {
+			setupLog.Error(err, "Unable to start manager; failed register v1alpha5 version for vm-operator API types")
+			os.Exit(1)
+		}
+
+		vm, err = scheme.New(vmGVK)
+		if err != nil {
+			setupLog.Error(err, "Unable to start manager; failed to create object for VirtualMachine cache filter")
+			os.Exit(1)
+		}
+	}
+
+	req, _ := labels.NewRequirement(clusterv1.ClusterNameLabel, selection.Exists, nil)
+	clusterSecretCacheSelector := labels.NewSelector().Add(*req)
+
+	req, _ = labels.NewRequirement(vmoperator.ClusterSelectorKey, selection.Exists, nil)
 	virtualMachineCacheSelector := labels.NewSelector().Add(*req)
 
 	managerOpts.Cache = cache.Options{
 		DefaultNamespaces: watchNamespaces,
 		SyncPeriod:        &syncPeriod,
+		DefaultTransform:  cache.TransformStripManagedFields(),
 		ByObject: func() map[client.Object]cache.ByObject {
 			byObject := map[client.Object]cache.ByObject{}
+			// Optimize the cache for supervisor mode. govmomi mode might have different caching requirements
 			if isSupervisorCRDLoaded {
 				// Note: Only VirtualMachines with the cluster name label are cached (vmopmachine.go sets this label).
-				byObject[&vmoprv1.VirtualMachine{}] = cache.ByObject{
+				// NOTE: use vm-operator native types for cache filters (the reconciler uses the internal hub version).
+				byObject[vm.(client.Object)] = cache.ByObject{
 					Label: virtualMachineCacheSelector,
+				}
+				byObject[&corev1.Secret{}] = cache.ByObject{
+					Label: clusterSecretCacheSelector,
+					// Drop data of secrets that we don't use.
+					Transform: func(in any) (any, error) {
+						if s, ok := in.(*corev1.Secret); ok {
+							s.SetManagedFields(nil)
+							if !strings.HasSuffix(s.Name, "-kubeconfig") && s.Type != corev1.SecretTypeServiceAccountToken {
+								s.Data = nil
+							}
+						}
+						return in, nil
+					},
+				}
+				byObject[&corev1.ConfigMap{}] = cache.ByObject{
+					Namespaces: map[string]cache.Config{
+						metav1.NamespacePublic: {},
+						util.NCPNamespace:      {},
+					},
+				}
+				byObject[&clusterv1.MachineSet{}] = cache.ByObject{
+					// Drop data of MachineSets as we only use ownerRefs of MachineSets in clog.AddOwners.
+					Transform: func(in any) (any, error) {
+						if m, ok := in.(*clusterv1.MachineSet); ok {
+							m.SetManagedFields(nil)
+							m.Spec = clusterv1.MachineSetSpec{}
+							m.Status = clusterv1.MachineSetStatus{}
+						}
+						return in, nil
+					},
 				}
 			}
 			return byObject
 		}(),
 	}
+	managerOpts.Client = func() client.Options {
+		// Optimize the cache for supervisor mode. govmomi mode might have different caching requirements
+		if isSupervisorCRDLoaded {
+			return client.Options{
+				Cache: &client.CacheOptions{
+					DisableFor: []client.Object{
+						// We are configuring the mgr.GetClient() to not use the cache for secrets, so that if we miss some
+						// Secret Get calls they are not hitting a cache with partial data.
+						// If Secrets from the cache should be accessed, we should use the secretCachingClient instead.
+						&corev1.Secret{},
+					},
+				},
+			}
+		}
+		return client.Options{}
+	}()
 
 	if enableContentionProfiling {
 		goruntime.SetBlockProfileRate(1)
@@ -357,7 +471,17 @@ func main() {
 
 	// Create a function that adds all the controllers and webhooks to the manager.
 	addToManager := func(ctx context.Context, controllerCtx *capvcontext.ControllerManagerContext, mgr ctrlmgr.Manager) error {
-		clusterCache, err := setupClusterCache(ctx, mgr)
+		secretCachingClient, err := client.New(mgr.GetConfig(), client.Options{
+			HTTPClient: mgr.GetHTTPClient(),
+			Cache: &client.CacheOptions{
+				Reader: mgr.GetCache(),
+			},
+		})
+		if err != nil {
+			return perrors.Wrapf(err, "unable to create secret caching client")
+		}
+
+		clusterCache, err := setupClusterCache(ctx, mgr, secretCachingClient, isSupervisorCRDLoaded)
 		if err != nil {
 			return perrors.Wrapf(err, "unable to create remote cluster cache tracker")
 		}
@@ -371,7 +495,7 @@ func main() {
 		}
 
 		if isSupervisorCRDLoaded {
-			if err := setupSupervisorControllers(ctx, controllerCtx, mgr, clusterCache); err != nil {
+			if err := setupSupervisorControllers(ctx, controllerCtx, mgr, clusterCache, secretCachingClient); err != nil {
 				return fmt.Errorf("setupSupervisorControllers: %w", err)
 			}
 		} else {
@@ -430,6 +554,7 @@ func main() {
 	managerOpts.Controller = config.Controller{
 		UsePriorityQueue: ptr.To[bool](feature.Gates.Enabled(feature.PriorityQueue)),
 	}
+	managerOpts.Converter = converter
 
 	mgr, err := manager.New(ctx, managerOpts)
 	if err != nil {
@@ -498,7 +623,7 @@ func setupVAPIControllers(ctx context.Context, controllerCtx *capvcontext.Contro
 	return controllers.AddVSphereDeploymentZoneControllerToManager(ctx, controllerCtx, mgr, concurrency(vSphereDeploymentZoneConcurrency))
 }
 
-func setupSupervisorControllers(ctx context.Context, controllerCtx *capvcontext.ControllerManagerContext, mgr ctrlmgr.Manager, clusterCache clustercache.ClusterCache) error {
+func setupSupervisorControllers(ctx context.Context, controllerCtx *capvcontext.ControllerManagerContext, mgr ctrlmgr.Manager, clusterCache clustercache.ClusterCache, secretCachingClient client.Client) error {
 	if err := (&vmwarewebhooks.VSphereMachineTemplate{}).SetupWebhookWithManager(mgr, controllerCtx.NetworkProvider); err != nil {
 		return err
 	}
@@ -520,7 +645,7 @@ func setupSupervisorControllers(ctx context.Context, controllerCtx *capvcontext.
 		return err
 	}
 
-	if err := vmware.AddServiceAccountProviderControllerToManager(ctx, controllerCtx, mgr, clusterCache, concurrency(providerServiceAccountConcurrency)); err != nil {
+	if err := vmware.AddServiceAccountProviderControllerToManager(ctx, controllerCtx, mgr, clusterCache, secretCachingClient, concurrency(providerServiceAccountConcurrency)); err != nil {
 		return err
 	}
 
@@ -560,20 +685,49 @@ func concurrency(c int) controller.Options {
 	return controller.Options{MaxConcurrentReconciles: c}
 }
 
-func setupClusterCache(ctx context.Context, mgr ctrlmgr.Manager) (clustercache.ClusterCache, error) {
-	secretCachingClient, err := client.New(mgr.GetConfig(), client.Options{
-		HTTPClient: mgr.GetHTTPClient(),
-		Cache: &client.CacheOptions{
-			Reader: mgr.GetCache(),
-		},
-	})
-	if err != nil {
-		return nil, perrors.Wrapf(err, "unable to create secret caching client")
-	}
-
+func setupClusterCache(ctx context.Context, mgr ctrlmgr.Manager, secretCachingClient client.Client, isSupervisorCRDLoaded bool) (clustercache.ClusterCache, error) {
 	clusterCache, err := clustercache.SetupWithManager(ctx, mgr, clustercache.Options{
 		SecretClient: secretCachingClient,
-		Cache:        clustercache.CacheOptions{},
+		Cache: func() clustercache.CacheOptions {
+			if isSupervisorCRDLoaded {
+				return clustercache.CacheOptions{
+					ByObject: map[client.Object]cache.ByObject{
+						&corev1.Service{}: {
+							Namespaces: map[string]cache.Config{
+								vmwarev1.SupervisorHeadlessSvcNamespace: {
+									Transform: func(in any) (any, error) {
+										if s, ok := in.(*corev1.Service); ok {
+											s.SetManagedFields(nil)
+											if s.Name != vmwarev1.SupervisorHeadlessSvcName {
+												s.Spec = corev1.ServiceSpec{}
+												s.Status = corev1.ServiceStatus{}
+											}
+										}
+										return in, nil
+									},
+								},
+							},
+						},
+						&corev1.Endpoints{}: {
+							Namespaces: map[string]cache.Config{
+								vmwarev1.SupervisorHeadlessSvcNamespace: {
+									Transform: func(in any) (any, error) {
+										if s, ok := in.(*corev1.Endpoints); ok {
+											s.SetManagedFields(nil)
+											if s.Name != vmwarev1.SupervisorHeadlessSvcName {
+												s.Subsets = nil
+											}
+										}
+										return in, nil
+									},
+								},
+							},
+						},
+					},
+				}
+			}
+			return clustercache.CacheOptions{}
+		}(),
 		Client: clustercache.ClientOptions{
 			QPS:       clusterCacheClientQPS,
 			Burst:     clusterCacheClientBurst,
@@ -583,6 +737,8 @@ func setupClusterCache(ctx context.Context, mgr ctrlmgr.Manager) (clustercache.C
 					// Don't cache ConfigMaps & Secrets.
 					&corev1.ConfigMap{},
 					&corev1.Secret{},
+					// Don't cache Namespaces (used in ProviderServiceAccount controller).
+					&corev1.Namespace{},
 				},
 			},
 		},

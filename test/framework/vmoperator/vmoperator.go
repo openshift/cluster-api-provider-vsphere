@@ -19,6 +19,7 @@ package vmoperator
 import (
 	"bytes"
 	"context"
+	_ "embed"
 	"fmt"
 	"net"
 	"net/url"
@@ -26,25 +27,28 @@ import (
 	"time"
 
 	"github.com/pkg/errors"
-	vmoprv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha2"
-	vmoprv1common "github.com/vmware-tanzu/vm-operator/api/v1alpha2/common"
+	spqv1 "github.com/vmware-tanzu/vm-operator/external/storage-policy-quota/api/v1alpha2"
 	"github.com/vmware/govmomi/pbm"
 	"github.com/vmware/govmomi/vapi/library"
 	"github.com/vmware/govmomi/vapi/rest"
 	"github.com/vmware/govmomi/vim25/soap"
 	corev1 "k8s.io/api/core/v1"
 	storagev1 "k8s.io/api/storage/v1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/klog/v2"
+	utilyaml "sigs.k8s.io/cluster-api/util/yaml"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	vmwarev1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/vmware/v1beta1"
+	vmwarev1 "sigs.k8s.io/cluster-api-provider-vsphere/api/supervisor/v1beta2"
 	topologyv1 "sigs.k8s.io/cluster-api-provider-vsphere/internal/apis/topology/v1alpha1"
+	vmoprvhub "sigs.k8s.io/cluster-api-provider-vsphere/pkg/conversion/api/vmoperator/hub"
+	conversionclient "sigs.k8s.io/cluster-api-provider-vsphere/pkg/conversion/client"
 	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/session"
 	vcsimv1 "sigs.k8s.io/cluster-api-provider-vsphere/test/infrastructure/vcsim/api/v1alpha1"
 )
@@ -72,7 +76,8 @@ const (
 	distributedPortGroupConfigMapKey = "CAPV-TEST-PortGroup"
 
 	// Const for the VcCredsSecret (hard-coded in vm-operator).
-	vmOperatorSecretName = "vsphere.provider.credentials.vmoperator.vmware.com"
+	vmOperatorSecretName    = "vsphere.provider.credentials.vmoperator.vmware.com"
+	vmOperatorSecretName1_9 = "wcp-vmop-sa-vc-auth" //nolint:gosec
 
 	usernameSecretKey = "username"
 	passwordSecretKey = "password"
@@ -82,13 +87,55 @@ const (
 	thumbprintSecretKey = "CAPV-TEST-Thumbprint" //nolint:gosec
 )
 
+var (
+	//go:embed vmoperator-capabilities-9.1.yaml
+	capabilities9_1 []byte
+)
+
+// ReconcileCapabilities reconciles the ConfigMap with the list of capabilities for the vm-operator.
+// NOTE: Because this config map goes in kube-system, it is not possible to add it to vm-operator-9.1.yaml that is
+// used by clusterctl init (init requires all the objects to be in the same namespace).
+func ReconcileCapabilities(ctx context.Context, c client.Client) error {
+	var retryError error
+	log := ctrl.LoggerFrom(ctx)
+
+	objs, err := utilyaml.ToUnstructured(capabilities9_1)
+	if err != nil {
+		return errors.Wrap(err, "failed to parse yaml for vm-operator capabilities ConfigMap")
+	}
+
+	if len(objs) != 1 || objs[0].GetKind() != "ConfigMap" || objs[0].GetName() != "wcp-cluster-capabilities" {
+		return errors.Wrap(err, "invalid yaml for vm-operator capabilities ConfigMap")
+	}
+
+	cm := &objs[0]
+	_ = wait.PollUntilContextTimeout(ctx, 1*time.Second, 60*time.Second, true, func(ctx context.Context) (bool, error) {
+		retryError = nil
+		if err := c.Get(ctx, client.ObjectKeyFromObject(cm), cm); err != nil {
+			if !apierrors.IsNotFound(err) {
+				retryError = errors.Wrapf(err, "failed to get vm-operator ConfigMap %s", cm.GetName())
+				return false, nil
+			}
+			if err := c.Create(ctx, cm); err != nil {
+				retryError = errors.Wrapf(err, "failed to create vm-operator ConfigMap %s", cm.GetName())
+				return false, nil
+			}
+			log.Info("Created vm-operator ConfigMap", "ConfigMap", klog.KObj(cm))
+		}
+		return true, nil
+	})
+	if retryError != nil {
+		return retryError
+	}
+	return nil
+}
+
 // ReconcileDependencies reconciles dependencies for the vm-operator.
 // NOTE: This func is idempotent, it creates objects if missing otherwise it uses existing ones
 // (this will allow e.g. to update images once and re-use for many test run).
 func ReconcileDependencies(ctx context.Context, c client.Client, dependenciesConfig *vcsimv1.VMOperatorDependencies) error {
 	var retryError error
 	log := ctrl.LoggerFrom(ctx)
-	log.Info("Reconciling dependencies for the VMOperator Deployment")
 
 	config := dependenciesConfig.DeepCopy()
 
@@ -223,6 +270,37 @@ func ReconcileDependencies(ctx context.Context, c client.Client, dependenciesCon
 		if retryError != nil {
 			return retryError
 		}
+
+		// Make sure the StoragePolicyUsage document exists.
+		spu := &spqv1.StoragePolicyUsage{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      fmt.Sprintf("%s-vm-usage", sc.Name),
+				Namespace: config.Namespace,
+			},
+		}
+
+		_ = wait.PollUntilContextTimeout(ctx, 250*time.Millisecond, 5*time.Second, true, func(ctx context.Context) (bool, error) {
+			retryError = nil
+			if err := c.Get(ctx, client.ObjectKeyFromObject(spu), spu); err != nil {
+				if meta.IsNoMatchError(err) {
+					log.Info("Skipping creation of vm-operator StoragePolicyUsage, this CR is only required when using vm-operator >= 1.9")
+					return true, nil
+				}
+				if !apierrors.IsNotFound(err) {
+					retryError = errors.Wrapf(err, "failed to get vm-operator StoragePolicyUsage %s", spu.Name)
+					return false, nil
+				}
+				if err := c.Create(ctx, spu); err != nil {
+					retryError = errors.Wrapf(err, "failed to create vm-operator StoragePolicyUsage %s", spu.Name)
+					return false, nil
+				}
+				log.Info("Created vm-operator StoragePolicyUsage", "StoragePolicyUsage", klog.KObj(spu))
+			}
+			return true, nil
+		})
+		if retryError != nil {
+			return retryError
+		}
 	}
 
 	// Create Availability zones CR in K8s and bind them to the user namespace
@@ -259,12 +337,13 @@ func ReconcileDependencies(ctx context.Context, c client.Client, dependenciesCon
 		}
 
 		if _, ok := availabilityZone.Spec.Namespaces[config.Namespace]; !ok {
+			originalAvailabilityZone := availabilityZone.DeepCopy()
 			availabilityZone.Spec.Namespaces[config.Namespace] = topologyv1.NamespaceInfo{
 				PoolMoId:   resourcePool.Reference().Value,
 				FolderMoId: folder.Reference().Value,
 			}
-			if err := c.Update(ctx, availabilityZone); err != nil {
-				retryError = errors.Wrapf(err, "failed to update AvailabilityZone %s", availabilityZone.Name)
+			if err := c.Patch(ctx, availabilityZone, client.MergeFrom(originalAvailabilityZone)); err != nil {
+				retryError = errors.Wrapf(err, "failed to patch AvailabilityZone %s", availabilityZone.Name)
 				return false, nil
 			}
 			log.Info("Update vm-operator AvailabilityZone", "AvailabilityZone", klog.KObj(availabilityZone))
@@ -275,11 +354,94 @@ func ReconcileDependencies(ctx context.Context, c client.Client, dependenciesCon
 		return retryError
 	}
 
+	// Create a Zone if running a VM Operator version that requires this CRD
+	// Note: this is required when FSS_WCP_WORKLOAD_DOMAIN_ISOLATION is set to true.
+	// Note: currently we are simulating only a single zone setup.
+	zoneCRD := &apiextensionsv1.CustomResourceDefinition{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "zones.topology.tanzu.vmware.com",
+		},
+	}
+
+	if err = c.Get(ctx, client.ObjectKeyFromObject(zoneCRD), zoneCRD); err == nil {
+		zone := &topologyv1.Zone{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      strings.ReplaceAll(strings.ReplaceAll(strings.ToLower(strings.TrimPrefix(config.Spec.VCenter.Cluster, "/")), "_", "-"), "/", "-"),
+				Namespace: config.Namespace,
+			},
+			Spec: topologyv1.ZoneSpec{
+				Zone: topologyv1.AvailabilityZoneReference{
+					APIVersion: topologyv1.GroupVersion.WithKind("AvailabilityZone").String(),
+					Name:       availabilityZone.Name,
+				},
+				ManagedVMs: topologyv1.VSphereEntityInfo{
+					// Note: using the same resource pool and folder of the namespace for convenience.
+					PoolMoIDs: []string{
+						resourcePool.Reference().Value,
+					},
+					FolderMoID: folder.Reference().Value,
+				},
+			},
+		}
+
+		_ = wait.PollUntilContextTimeout(ctx, 1*time.Second, 20*time.Second, true, func(ctx context.Context) (bool, error) {
+			retryError = nil
+			if err := c.Get(ctx, client.ObjectKeyFromObject(zone), zone); err != nil {
+				if !apierrors.IsNotFound(err) {
+					retryError = errors.Wrapf(err, "failed to get Zone %s", zone.Name)
+					return false, nil
+				}
+				if err := c.Create(ctx, zone); err != nil {
+					retryError = errors.Wrapf(err, "failed to create Zone %s", zone.Name)
+					return false, nil
+				}
+				log.Info("Created vm-operator Zone", "Zone", klog.KObj(zone))
+			}
+
+			return true, nil
+		})
+		if retryError != nil {
+			return retryError
+		}
+	}
+
 	// Create vm-operator Secret in K8s
 	// This secret contains credentials to access vCenter the vm-operator acts on.
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      vmOperatorSecretName,
+			Namespace: config.Spec.OperatorRef.Namespace,
+		},
+		Data: map[string][]byte{
+			usernameSecretKey: []byte(config.Spec.VCenter.Username),
+			passwordSecretKey: []byte(config.Spec.VCenter.Password),
+
+			// Additional key we are adding to the VcCredsSecret for sake of convenience (not supported in vm-operator)
+			thumbprintSecretKey: []byte(config.Spec.VCenter.Thumbprint),
+		},
+		Type: corev1.SecretTypeOpaque,
+	}
+	_ = wait.PollUntilContextTimeout(ctx, 250*time.Millisecond, 5*time.Second, true, func(ctx context.Context) (bool, error) {
+		retryError = nil
+		if err := c.Get(ctx, client.ObjectKeyFromObject(secret), secret); err != nil {
+			if !apierrors.IsNotFound(err) {
+				retryError = errors.Wrapf(err, "failed to get vm-operator Secret %s", secret.Name)
+				return false, nil
+			}
+			if err := c.Create(ctx, secret); err != nil {
+				retryError = errors.Wrapf(err, "failed to create vm-operator Secret %s", secret.Name)
+				return false, nil
+			}
+			log.Info("Created vm-operator Secret", "Secret", klog.KObj(secret))
+		}
+		return true, nil
+	})
+	if retryError != nil {
+		return retryError
+	}
+	secret = &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      vmOperatorSecretName1_9,
 			Namespace: config.Spec.OperatorRef.Namespace,
 		},
 		Data: map[string][]byte{
@@ -399,6 +561,8 @@ func ReconcileDependencies(ctx context.Context, c client.Client, dependenciesCon
 	if retryError != nil {
 		return retryError
 	}
+
+	originalSupervisorAPIServerVIPService := supervisorAPIServerVIPService.DeepCopy()
 	supervisorAPIServerVIPService.Status = corev1.ServiceStatus{
 		LoadBalancer: corev1.LoadBalancerStatus{Ingress: []corev1.LoadBalancerIngress{
 			// Note: this creates a unusable service. During test no application should try to reach out to this.
@@ -408,7 +572,7 @@ func ReconcileDependencies(ctx context.Context, c client.Client, dependenciesCon
 	}
 	_ = wait.PollUntilContextTimeout(ctx, 250*time.Millisecond, 5*time.Second, true, func(ctx context.Context) (bool, error) {
 		retryError = nil
-		if err := c.Status().Update(ctx, supervisorAPIServerVIPService); err != nil {
+		if err := c.Status().Patch(ctx, supervisorAPIServerVIPService, client.MergeFrom(originalSupervisorAPIServerVIPService)); err != nil {
 			retryError = errors.Wrapf(err, "failed to update vm-operator service status %s", klog.KObj(supervisorAPIServerVIPService))
 			return false, nil
 		}
@@ -420,37 +584,8 @@ func ReconcileDependencies(ctx context.Context, c client.Client, dependenciesCon
 	}
 
 	// Create VirtualMachineClass in K8s
-	for _, vmc := range config.Spec.VirtualMachineClasses {
-		vmClass := &vmoprv1.VirtualMachineClass{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      vmc.Name,
-				Namespace: config.Namespace,
-			},
-			Spec: vmoprv1.VirtualMachineClassSpec{
-				Hardware: vmoprv1.VirtualMachineClassHardware{
-					Cpus:   vmc.Cpus,
-					Memory: vmc.Memory,
-				},
-			},
-		}
-		_ = wait.PollUntilContextTimeout(ctx, 250*time.Millisecond, 5*time.Second, true, func(ctx context.Context) (bool, error) {
-			retryError = nil
-			if err := c.Get(ctx, client.ObjectKeyFromObject(vmClass), vmClass); err != nil {
-				if !apierrors.IsNotFound(err) {
-					retryError = errors.Wrapf(err, "failed to get vm-operator VirtualMachineClass %s", vmClass.Name)
-					return false, nil
-				}
-				if err := c.Create(ctx, vmClass); err != nil {
-					retryError = errors.Wrapf(err, "failed to create vm-operator VirtualMachineClass %s", vmClass.Name)
-					return false, nil
-				}
-				log.Info("Created vm-operator VirtualMachineClass", "VirtualMachineClass", klog.KObj(vmClass))
-			}
-			return true, nil
-		})
-		if retryError != nil {
-			return retryError
-		}
+	if err := createVirtualMachineClass(ctx, c, config); err != nil {
+		return err
 	}
 
 	// Create a ContentLibrary in K8s and in vCenter,
@@ -528,13 +663,13 @@ func ReconcileDependencies(ctx context.Context, c client.Client, dependenciesCon
 			libraryItemID = id
 		}
 
-		virtualMachineImage := &vmoprv1.VirtualMachineImage{
+		virtualMachineImage := &vmoprvhub.VirtualMachineImage{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      libraryItem.Name,
 				Namespace: config.Namespace,
 			},
-			Spec: vmoprv1.VirtualMachineImageSpec{
-				ProviderRef: &vmoprv1common.LocalObjectRef{
+			Spec: vmoprvhub.VirtualMachineImageSpec{
+				ProviderRef: &vmoprvhub.LocalObjectRef{
 					Kind: "ContentLibraryItem",
 				},
 			},
@@ -563,10 +698,10 @@ func ReconcileDependencies(ctx context.Context, c client.Client, dependenciesCon
 		virtualMachineImageReconciled := virtualMachineImage.DeepCopy()
 		virtualMachineImageReconciled.Status.Name = virtualMachineImage.Name
 		virtualMachineImageReconciled.Status.ProviderItemID = libraryItemID
-		virtualMachineImageReconciled.Status.ProductInfo = vmoprv1.VirtualMachineImageProductInfo{
+		virtualMachineImageReconciled.Status.ProductInfo = vmoprvhub.VirtualMachineImageProductInfo{
 			FullVersion: item.ProductInfo,
 		}
-		virtualMachineImageReconciled.Status.OSInfo = vmoprv1.VirtualMachineImageOSInfo{
+		virtualMachineImageReconciled.Status.OSInfo = vmoprvhub.VirtualMachineImageOSInfo{
 			Type: item.OSInfo,
 		}
 		meta.SetStatusCondition(&virtualMachineImageReconciled.Status.Conditions, metav1.Condition{
@@ -576,8 +711,14 @@ func ReconcileDependencies(ctx context.Context, c client.Client, dependenciesCon
 		})
 		_ = wait.PollUntilContextTimeout(ctx, 250*time.Millisecond, 5*time.Second, true, func(ctx context.Context) (bool, error) {
 			retryError = nil
-			if err := c.Status().Patch(ctx, virtualMachineImageReconciled, client.MergeFrom(virtualMachineImage)); err != nil {
-				retryError = errors.Wrapf(err, "failed to patch vm-operator VirtualMachineImage %s", virtualMachineImage.Name)
+			patch, err := conversionclient.MergeFrom(ctx, c, virtualMachineImage)
+			if err != nil {
+				retryError = errors.Wrapf(err, "failed to create patch for VirtualMachineImage object")
+				return false, nil
+			}
+			if err := c.Status().Patch(ctx, virtualMachineImageReconciled, patch); err != nil {
+				retryError = errors.Wrapf(err, "failed to patch VirtualMachineImage object")
+				return false, nil
 			}
 			log.Info("Patched vm-operator VirtualMachineImage", "VirtualMachineImage", klog.KObj(virtualMachineImage))
 			return true, nil
@@ -639,6 +780,72 @@ func ReconcileDependencies(ctx context.Context, c client.Client, dependenciesCon
 		}
 	}
 
+	return nil
+}
+
+// ReconcileDependenciesVMOperatorSimMode reconciles dependencies for the vm-operator.
+// NOTE: This func is idempotent, it creates objects if missing otherwise it uses existing ones
+// (this will allow e.g. to update images once and re-use for many test run).
+func ReconcileDependenciesVMOperatorSimMode(ctx context.Context, c client.Client, dependenciesConfig *vcsimv1.VMOperatorDependencies) error {
+	log := ctrl.LoggerFrom(ctx)
+	log.Info("Reconciling dependencies for the VMOperator Deployment")
+
+	config := dependenciesConfig.DeepCopy()
+
+	// If we are using a VCenterSimulator, read it build a config.Spec.VCenter for it (so the code below can assume Spec.VCenter is always set).
+	// Also, add default storage and vm class for vcsim in not otherwise specified.
+	if config.Spec.VCenterSimulatorRef != nil {
+		vCenterSimulator := &vcsimv1.VCenterSimulator{}
+		if err := c.Get(ctx, client.ObjectKey{
+			Namespace: config.Spec.VCenterSimulatorRef.Namespace,
+			Name:      config.Spec.VCenterSimulatorRef.Name,
+		}, vCenterSimulator); err != nil {
+			return errors.Wrapf(err, "failed to get vCenterSimulator %s", klog.KRef(config.Spec.VCenterSimulatorRef.Namespace, config.Spec.VCenterSimulatorRef.Name))
+		}
+
+		config.SetVCenterFromVCenterSimulator(vCenterSimulator)
+	}
+
+	return createVirtualMachineClass(ctx, c, config)
+}
+
+func createVirtualMachineClass(ctx context.Context, c client.Client, config *vcsimv1.VMOperatorDependencies) error {
+	var retryError error
+	log := ctrl.LoggerFrom(ctx)
+
+	// Create VirtualMachineClass in K8s
+	for _, vmc := range config.Spec.VirtualMachineClasses {
+		vmClass := &vmoprvhub.VirtualMachineClass{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      vmc.Name,
+				Namespace: config.Namespace,
+			},
+			Spec: vmoprvhub.VirtualMachineClassSpec{
+				Hardware: vmoprvhub.VirtualMachineClassHardware{
+					Cpus:   vmc.Cpus,
+					Memory: vmc.Memory,
+				},
+			},
+		}
+		_ = wait.PollUntilContextTimeout(ctx, 250*time.Millisecond, 5*time.Second, true, func(ctx context.Context) (bool, error) {
+			retryError = nil
+			if err := c.Get(ctx, client.ObjectKeyFromObject(vmClass), vmClass); err != nil {
+				if !apierrors.IsNotFound(err) {
+					retryError = errors.Wrapf(err, "failed to get vm-operator VirtualMachineClass %s", vmClass.Name)
+					return false, nil
+				}
+				if err := c.Create(ctx, vmClass); err != nil {
+					retryError = errors.Wrapf(err, "failed to create vm-operator VirtualMachineClass %s", vmClass.Name)
+					return false, nil
+				}
+				log.Info("Created vm-operator VirtualMachineClass", "VirtualMachineClass", klog.KObj(vmClass))
+			}
+			return true, nil
+		})
+		if retryError != nil {
+			return retryError
+		}
+	}
 	return nil
 }
 

@@ -18,7 +18,6 @@ package vmware
 
 import (
 	"context"
-	"reflect"
 	"testing"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -29,13 +28,12 @@ import (
 	apirecord "k8s.io/client-go/tools/record"
 	utilfeature "k8s.io/component-base/featuregate/testing"
 	"k8s.io/utils/ptr"
-	clusterv1beta1 "sigs.k8s.io/cluster-api/api/core/v1beta1"
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
-	v1beta1conditions "sigs.k8s.io/cluster-api/util/deprecated/v1beta1/conditions"
+	"sigs.k8s.io/cluster-api/util/conditions"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	vmwarev1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/vmware/v1beta1"
+	vmwarev1 "sigs.k8s.io/cluster-api-provider-vsphere/api/supervisor/v1beta2"
 	"sigs.k8s.io/cluster-api-provider-vsphere/feature"
 	topologyv1 "sigs.k8s.io/cluster-api-provider-vsphere/internal/apis/topology/v1alpha1"
 	capvcontext "sigs.k8s.io/cluster-api-provider-vsphere/pkg/context"
@@ -92,7 +90,12 @@ var _ = Describe("Cluster Controller Tests", func() {
 		})
 
 		It("Returns valid request with IP address", func() {
-			vsphereMachine.Status.IPAddr = testIP
+			vsphereMachine.Status.Addresses = clusterv1.MachineAddresses{
+				{
+					Type:    clusterv1.MachineInternalIP,
+					Address: testIP,
+				},
+			}
 			request := reconciler.VSphereMachineToCluster(ctx, vsphereMachine)
 			Expect(request).ShouldNot(BeNil())
 			Expect(request[0].Namespace).Should(Equal(cluster.Namespace))
@@ -103,23 +106,23 @@ var _ = Describe("Cluster Controller Tests", func() {
 	Context("Test reconcileDelete", func() {
 		It("should mark specific resources to be in deleting conditions", func() {
 			clusterCtx.VSphereCluster.Status.Conditions = append(clusterCtx.VSphereCluster.Status.Conditions,
-				clusterv1beta1.Condition{Type: vmwarev1.ResourcePolicyReadyCondition, Status: corev1.ConditionTrue})
+				metav1.Condition{Type: vmwarev1.VSphereClusterResourcePolicyReadyCondition, Status: metav1.ConditionTrue})
 			reconciler.reconcileDelete(clusterCtx)
-			c := v1beta1conditions.Get(clusterCtx.VSphereCluster, vmwarev1.ResourcePolicyReadyCondition)
+			c := conditions.Get(clusterCtx.VSphereCluster, vmwarev1.VSphereClusterResourcePolicyReadyCondition)
 			Expect(c).NotTo(BeNil())
-			Expect(c.Status).To(Equal(corev1.ConditionFalse))
-			Expect(c.Reason).To(Equal(clusterv1beta1.DeletingReason))
+			Expect(c.Status).To(Equal(metav1.ConditionFalse))
+			Expect(c.Reason).To(Equal(clusterv1.DeletingReason))
 		})
 
 		It("should not mark other resources to be in deleting conditions", func() {
-			otherReady := clusterv1beta1.ConditionType("OtherReady")
+			otherReady := "OtherReady"
 			clusterCtx.VSphereCluster.Status.Conditions = append(clusterCtx.VSphereCluster.Status.Conditions,
-				clusterv1beta1.Condition{Type: otherReady, Status: corev1.ConditionTrue})
+				metav1.Condition{Type: otherReady, Status: metav1.ConditionTrue})
 			reconciler.reconcileDelete(clusterCtx)
-			c := v1beta1conditions.Get(clusterCtx.VSphereCluster, otherReady)
+			c := conditions.Get(clusterCtx.VSphereCluster, otherReady)
 			Expect(c).NotTo(BeNil())
-			Expect(c.Status).NotTo(Equal(corev1.ConditionFalse))
-			Expect(c.Reason).NotTo(Equal(clusterv1beta1.DeletingReason))
+			Expect(c.Status).NotTo(Equal(metav1.ConditionFalse))
+			Expect(c.Reason).NotTo(Equal(clusterv1.DeletingReason))
 		})
 	})
 })
@@ -141,7 +144,7 @@ func TestClusterReconciler_getFailureDomains(t *testing.T) {
 	tests := []struct {
 		name        string
 		objects     []client.Object
-		want        clusterv1beta1.FailureDomains
+		want        []clusterv1.FailureDomain
 		wantErr     bool
 		featureGate bool
 	}{
@@ -174,9 +177,13 @@ func TestClusterReconciler_getFailureDomains(t *testing.T) {
 			featureGate: true,
 		},
 		{
-			name:        "Cluster-Wide: should find FailureDomains if only cluster-wide exist",
-			objects:     []client.Object{availabilityZone("c-one")},
-			want:        failureDomains("c-one"),
+			name: "Cluster-Wide: should find FailureDomains if only cluster-wide exist",
+			objects: []client.Object{
+				availabilityZone("c-one"),
+				availabilityZone("c-two"),
+				availabilityZone("c-three"),
+			},
+			want:        failureDomains("c-one", "c-three", "c-two"), // failureDomains are expected to be sorted.
 			wantErr:     false,
 			featureGate: false,
 		},
@@ -210,13 +217,15 @@ func TestClusterReconciler_getFailureDomains(t *testing.T) {
 				zone(namespace.Name, "ns-three", false),
 				zone(namespace.Name, "ns-four", true),
 			},
-			want:        failureDomains("ns-one", "ns-two", "ns-three"),
+			want:        failureDomains("ns-one", "ns-three", "ns-two"), // failureDomains are expected to be sorted.
 			wantErr:     false,
 			featureGate: true,
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
+
 			r := &ClusterReconciler{
 				Client: fake.NewClientBuilder().
 					WithScheme(scheme).
@@ -229,9 +238,7 @@ func TestClusterReconciler_getFailureDomains(t *testing.T) {
 				t.Errorf("ClusterReconciler.getFailureDomains() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
-			if !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("ClusterReconciler.getFailureDomains() = %v, want %v", got, tt.want)
-			}
+			g.Expect(got).To(BeComparableTo(tt.want))
 		})
 	}
 }
@@ -259,12 +266,13 @@ func zone(namespace, name string, deleting bool) *topologyv1.Zone {
 	return z
 }
 
-func failureDomains(names ...string) clusterv1beta1.FailureDomains {
-	fds := clusterv1beta1.FailureDomains{}
+func failureDomains(names ...string) []clusterv1.FailureDomain {
+	fds := []clusterv1.FailureDomain{}
 	for _, name := range names {
-		fds[name] = clusterv1beta1.FailureDomainSpec{
-			ControlPlane: true,
-		}
+		fds = append(fds, clusterv1.FailureDomain{
+			Name:         name,
+			ControlPlane: ptr.To(true),
+		})
 	}
 	return fds
 }

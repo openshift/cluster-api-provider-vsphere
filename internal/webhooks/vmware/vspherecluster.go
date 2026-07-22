@@ -19,21 +19,18 @@ package vmware
 
 import (
 	"context"
-	"fmt"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/webhook"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
-	vmwarev1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/vmware/v1beta1"
+	vmwarev1 "sigs.k8s.io/cluster-api-provider-vsphere/api/supervisor/v1beta2"
 	"sigs.k8s.io/cluster-api-provider-vsphere/feature"
 	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/manager"
 )
 
-// +kubebuilder:webhook:verbs=create;update,path=/validate-vmware-infrastructure-cluster-x-k8s-io-v1beta1-vspherecluster,mutating=false,failurePolicy=fail,matchPolicy=Equivalent,groups=vmware.infrastructure.cluster.x-k8s.io,resources=vsphereclusters,versions=v1beta1,name=validation.vspherecluster.vmware.infrastructure.cluster.x-k8s.io,sideEffects=None,admissionReviewVersions=v1beta1
+// +kubebuilder:webhook:verbs=create;update,path=/validate-vmware-infrastructure-cluster-x-k8s-io-v1beta2-vspherecluster,mutating=false,failurePolicy=fail,matchPolicy=Equivalent,groups=vmware.infrastructure.cluster.x-k8s.io,resources=vsphereclusters,versions=v1beta2,name=validation.vspherecluster.vmware.infrastructure.cluster.x-k8s.io,sideEffects=None,admissionReviewVersions=v1
 
 // VSphereCluster implements a validation and defaulting webhook for VSphereCluster.
 type VSphereCluster struct {
@@ -41,36 +38,26 @@ type VSphereCluster struct {
 	NetworkProvider string
 }
 
-var _ webhook.CustomValidator = &VSphereCluster{}
+var _ admission.Validator[*vmwarev1.VSphereCluster] = &VSphereCluster{}
 
 func (webhook *VSphereCluster) SetupWebhookWithManager(mgr ctrl.Manager) error {
-	return ctrl.NewWebhookManagedBy(mgr).
-		For(&vmwarev1.VSphereCluster{}).
+	return ctrl.NewWebhookManagedBy(mgr, &vmwarev1.VSphereCluster{}).
 		WithValidator(webhook).
 		Complete()
 }
 
 // ValidateCreate implements webhook.Validator so a webhook will be registered for the type.
-func (webhook *VSphereCluster) ValidateCreate(_ context.Context, objRaw runtime.Object) (admission.Warnings, error) {
-	obj, ok := objRaw.(*vmwarev1.VSphereCluster)
-	if !ok {
-		return nil, apierrors.NewBadRequest(fmt.Sprintf("expected a VSphereCluster but got a %T", objRaw))
-	}
+func (webhook *VSphereCluster) ValidateCreate(_ context.Context, obj *vmwarev1.VSphereCluster) (admission.Warnings, error) {
 	return webhook.validateClusterNetwork(obj)
 }
 
 // ValidateUpdate implements webhook.Validator so a webhook will be registered for the type.
-func (webhook *VSphereCluster) ValidateUpdate(_ context.Context, _ runtime.Object, newRaw runtime.Object) (admission.Warnings, error) {
-	newTyped, ok := newRaw.(*vmwarev1.VSphereCluster)
-	if !ok {
-		return nil, apierrors.NewBadRequest(fmt.Sprintf("expected a VSphereCluster but got a %T", newRaw))
-	}
-
+func (webhook *VSphereCluster) ValidateUpdate(_ context.Context, _, newTyped *vmwarev1.VSphereCluster) (admission.Warnings, error) {
 	return webhook.validateClusterNetwork(newTyped)
 }
 
 // ValidateDelete implements webhook.Validator so a webhook will be registered for the type.
-func (webhook *VSphereCluster) ValidateDelete(_ context.Context, _ runtime.Object) (admission.Warnings, error) {
+func (webhook *VSphereCluster) ValidateDelete(_ context.Context, _ *vmwarev1.VSphereCluster) (admission.Warnings, error) {
 	return nil, nil
 }
 
