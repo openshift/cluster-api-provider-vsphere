@@ -15,6 +15,12 @@ import (
 	vmopv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha5"
 )
 
+func Convert_v1alpha5_VirtualMachineVolume_To_v1alpha2_VirtualMachineVolume(
+	in *vmopv1.VirtualMachineVolume, out *VirtualMachineVolume, s apiconversion.Scope) error {
+
+	return autoConvert_v1alpha5_VirtualMachineVolume_To_v1alpha2_VirtualMachineVolume(in, out, s)
+}
+
 func Convert_v1alpha5_PersistentVolumeClaimVolumeSource_To_v1alpha2_PersistentVolumeClaimVolumeSource(
 	in *vmopv1.PersistentVolumeClaimVolumeSource, out *PersistentVolumeClaimVolumeSource, s apiconversion.Scope) error {
 
@@ -123,6 +129,12 @@ func Convert_v1alpha5_VirtualMachineVolumeStatus_To_v1alpha2_VirtualMachineVolum
 	in *vmopv1.VirtualMachineVolumeStatus, out *VirtualMachineVolumeStatus, s apiconversion.Scope) error {
 
 	return autoConvert_v1alpha5_VirtualMachineVolumeStatus_To_v1alpha2_VirtualMachineVolumeStatus(in, out, s)
+}
+
+func Convert_v1alpha5_VirtualMachineCryptoSpec_To_v1alpha2_VirtualMachineCryptoSpec(
+	in *vmopv1.VirtualMachineCryptoSpec, out *VirtualMachineCryptoSpec, s apiconversion.Scope) error {
+
+	return autoConvert_v1alpha5_VirtualMachineCryptoSpec_To_v1alpha2_VirtualMachineCryptoSpec(in, out, s)
 }
 
 func Convert_v1alpha5_VirtualMachine_To_v1alpha2_VirtualMachine(
@@ -347,10 +359,6 @@ func restore_v1alpha5_VirtualMachineBootOptions(dst, src *vmopv1.VirtualMachine)
 	dst.Spec.BootOptions = src.Spec.BootOptions
 }
 
-func restore_v1alpha5_AffinitySpec(dst, src *vmopv1.VirtualMachine) {
-	dst.Spec.Affinity = src.Spec.Affinity
-}
-
 func restore_v1alpha5_VirtualMachineVolumes(dst, src *vmopv1.VirtualMachine) {
 	srcVolMap := map[string]*vmopv1.VirtualMachineVolume{}
 	for i := range src.Spec.Volumes {
@@ -360,16 +368,13 @@ func restore_v1alpha5_VirtualMachineVolumes(dst, src *vmopv1.VirtualMachine) {
 	for i := range dst.Spec.Volumes {
 		dstVol := &dst.Spec.Volumes[i]
 		if srcVol, ok := srcVolMap[dstVol.Name]; ok {
-			if dstPvc := dstVol.PersistentVolumeClaim; dstPvc != nil {
-				if srcPvc := srcVol.PersistentVolumeClaim; srcPvc != nil {
-					dstPvc.ApplicationType = srcPvc.ApplicationType
-					dstPvc.ControllerBusNumber = srcPvc.ControllerBusNumber
-					dstPvc.ControllerType = srcPvc.ControllerType
-					dstPvc.DiskMode = srcPvc.DiskMode
-					dstPvc.SharingMode = srcPvc.SharingMode
-					dstPvc.UnitNumber = srcPvc.UnitNumber
-				}
-			}
+			dstVol.ApplicationType = srcVol.ApplicationType
+			dstVol.ControllerBusNumber = srcVol.ControllerBusNumber
+			dstVol.ControllerType = srcVol.ControllerType
+			dstVol.DiskMode = srcVol.DiskMode
+			dstVol.SharingMode = srcVol.SharingMode
+			dstVol.UnitNumber = srcVol.UnitNumber
+			dstVol.Removable = srcVol.Removable
 		}
 	}
 }
@@ -384,6 +389,20 @@ func restore_v1alpha5_VirtualMachineHardware(dst, src *vmopv1.VirtualMachine) {
 
 func restore_v1alpha5_VirtualMachinePolicies(dst, src *vmopv1.VirtualMachine) {
 	dst.Spec.Policies = slices.Clone(src.Spec.Policies)
+}
+
+func restore_v1alpha5_VirtualMachineCryptoVTPM(dst, src *vmopv1.VirtualMachine) {
+	if dst.Spec.Crypto != nil && src.Spec.Crypto != nil {
+		dst.Spec.Crypto.VTPMMode = src.Spec.Crypto.VTPMMode
+	}
+}
+
+func restore_v1alpha5_VirtualMachineAffinity(dst, src *vmopv1.VirtualMachine) {
+	if src.Spec.Affinity == nil {
+		dst.Spec.Affinity = nil
+	} else {
+		dst.Spec.Affinity = src.Spec.Affinity.DeepCopy()
+	}
 }
 
 // ConvertTo converts this VirtualMachine to the Hub version.
@@ -412,10 +431,11 @@ func (src *VirtualMachine) ConvertTo(dstRaw ctrlconversion.Hub) error {
 	restore_v1alpha5_VirtualMachineGuestID(dst, restored)
 	restore_v1alpha5_VirtualMachinePromoteDisksMode(dst, restored)
 	restore_v1alpha5_VirtualMachineBootOptions(dst, restored)
-	restore_v1alpha5_AffinitySpec(dst, restored)
 	restore_v1alpha5_VirtualMachineVolumes(dst, restored)
 	restore_v1alpha5_VirtualMachineHardware(dst, restored)
 	restore_v1alpha5_VirtualMachinePolicies(dst, restored)
+	restore_v1alpha5_VirtualMachineCryptoVTPM(dst, restored)
+	restore_v1alpha5_VirtualMachineAffinity(dst, restored)
 
 	// END RESTORE
 

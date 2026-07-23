@@ -27,12 +27,15 @@ import (
 
 	. "github.com/onsi/gomega"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/rest"
 	capi_e2e "sigs.k8s.io/cluster-api/test/e2e"
 	"sigs.k8s.io/cluster-api/test/framework"
 	"sigs.k8s.io/cluster-api/test/framework/bootstrap"
 	"sigs.k8s.io/cluster-api/test/framework/clusterctl"
 	. "sigs.k8s.io/cluster-api/test/framework/ginkgoextensions"
 	"sigs.k8s.io/yaml"
+
+	"sigs.k8s.io/cluster-api-provider-vsphere/test/framework/vmoperator"
 )
 
 type ProviderConfig clusterctl.ProviderConfig
@@ -142,7 +145,7 @@ func LoadE2EConfig(ctx context.Context, configPath string, configOverridesPath, 
 		Byf("Overriding source folder for vsphere provider to /config/supervisor in the e2e config")
 		for i := range config.Providers {
 			if config.Providers[i].Name == "vsphere" {
-				// Replace relativ path for latest version.
+				// Replace relative path for latest version.
 				config.Providers[i].Versions[0].Value = strings.ReplaceAll(config.Providers[i].Versions[0].Value, "/config/default", "/config/supervisor")
 				// Replace target file in github.
 				for j, version := range config.Providers[i].Versions {
@@ -201,19 +204,36 @@ func SetupBootstrapCluster(ctx context.Context, config *clusterctl.E2EConfig, sc
 		}
 	}
 
-	clusterProxy := framework.NewClusterProxy("bootstrap", kubeconfigPath, scheme)
+	clusterProxy := framework.NewClusterProxy("bootstrap", kubeconfigPath, scheme, framework.WithRESTConfigModifier(func(config *rest.Config) {
+		config.QPS = 100
+		config.Burst = 200
+	}))
 
 	return clusterProvider, clusterProxy, nil
 }
 
 func InitBootstrapCluster(ctx context.Context, bootstrapClusterProxy framework.ClusterProxy, config *clusterctl.E2EConfig, clusterctlConfig, artifactFolder string) {
+	runtimeExtensions := []string{}
+	for _, runtimeExtension := range config.RuntimeExtensionProviders() {
+		if runtimeExtension == "vm-operator" {
+			Expect(vmoperator.ReconcileCapabilities(ctx, bootstrapClusterProxy.GetClient())).Should(Succeed())
+			if config.HasVariable("VM_OPERATOR_VERSION") {
+				// Note: VM_OPERATOR_VERSION use a major.minor version.
+				// In order to make this value similar to CAPI/provider versions, as required by clusterctl, add the v prefix and the .0 patch version.
+				runtimeExtensions = append(runtimeExtensions, fmt.Sprintf("vm-operator:v%s.0", config.MustGetVariable("VM_OPERATOR_VERSION")))
+				continue
+			}
+		}
+		runtimeExtensions = append(runtimeExtensions, runtimeExtension)
+	}
+
 	clusterctl.InitManagementClusterAndWatchControllerLogs(ctx, clusterctl.InitManagementClusterAndWatchControllerLogsInput{
 		ClusterProxy:              bootstrapClusterProxy,
 		ClusterctlConfigPath:      clusterctlConfig,
 		InfrastructureProviders:   config.InfrastructureProviders(),
 		LogFolder:                 filepath.Join(artifactFolder, "clusters", bootstrapClusterProxy.GetName()),
 		IPAMProviders:             config.IPAMProviders(),
-		RuntimeExtensionProviders: config.RuntimeExtensionProviders(),
+		RuntimeExtensionProviders: runtimeExtensions,
 	}, config.GetIntervals(bootstrapClusterProxy.GetName(), "wait-controllers")...)
 }
 

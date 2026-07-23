@@ -19,7 +19,7 @@ spec:
     kind: VSphereCluster
     name: '${CLUSTER_NAME}'
 ---
-apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
+apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
 kind: VSphereCluster
 metadata:
   name: '${CLUSTER_NAME}'
@@ -34,7 +34,7 @@ spec:
   server: '${VSPHERE_SERVER}'
   thumbprint: '${VSPHERE_TLS_THUMBPRINT}'
 ---
-apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
+apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
 kind: VSphereMachineTemplate
 metadata:
   name: '${CLUSTER_NAME}'
@@ -54,6 +54,8 @@ spec:
           - apiGroup: ${NODE_IPAM_POOL_API_GROUP}
             kind: ${NODE_IPAM_POOL_KIND}
             name: ${NODE_IPAM_POOL_NAME}
+          dhcp4: false
+          dhcp6: false
           nameservers:
           - ${NAMESERVER}
           networkName: '${VSPHERE_NETWORK}'
@@ -65,7 +67,7 @@ spec:
       storagePolicyName: '${VSPHERE_STORAGE_POLICY}'
       template: '${VSPHERE_TEMPLATE}'
 ---
-apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
+apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
 kind: VSphereMachineTemplate
 metadata:
   name: ${CLUSTER_NAME}-worker
@@ -85,6 +87,8 @@ spec:
           - apiGroup: ${NODE_IPAM_POOL_API_GROUP}
             kind: ${NODE_IPAM_POOL_KIND}
             name: ${NODE_IPAM_POOL_NAME}
+          dhcp4: false
+          dhcp6: false
           nameservers:
           - ${NAMESERVER}
           networkName: '${VSPHERE_NETWORK}'

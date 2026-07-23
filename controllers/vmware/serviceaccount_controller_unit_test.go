@@ -23,10 +23,11 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	capiutil "sigs.k8s.io/cluster-api/util"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	vmwarev1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/vmware/v1beta1"
+	vmwarev1 "sigs.k8s.io/cluster-api-provider-vsphere/api/supervisor/v1beta2"
 	vmwarehelpers "sigs.k8s.io/cluster-api-provider-vsphere/internal/test/helpers/vmware"
 	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/context/fake"
 )
@@ -47,7 +48,8 @@ func unitTestsReconcileNormal() {
 		// Note: The service account provider requires a reference to the vSphereCluster hence the need to create
 		// a fake vSphereCluster in the test and pass it to during context setup.
 		reconciler = ServiceAccountReconciler{
-			Client: controllerCtx.ControllerManagerContext.Client,
+			Client:              controllerCtx.ControllerManagerContext.Client,
+			SecretCachingClient: controllerCtx.ControllerManagerContext.Client,
 		}
 		_, err := reconciler.reconcileNormal(ctx, controllerCtx.GuestClusterContext)
 		Expect(err).NotTo(HaveOccurred())
@@ -62,7 +64,7 @@ func unitTestsReconcileNormal() {
 		It("Should reconcile", func() {
 			By("Not creating any entities")
 			assertNoEntities(ctx, controllerCtx.ControllerManagerContext.Client, namespace)
-			assertProviderServiceAccountsCondition(controllerCtx.VSphereCluster, corev1.ConditionTrue, "", "", "")
+			assertProviderServiceAccountsCondition(controllerCtx.VSphereCluster, metav1.ConditionTrue, "", vmwarev1.VSphereClusterProviderServiceAccountsReadyReason)
 		})
 	})
 
@@ -92,7 +94,7 @@ func unitTestsReconcileNormal() {
 				assertTargetNamespace(ctx, controllerCtx.GuestClient, testTargetNS, true)
 				By("Creating the target secret in the target namespace")
 				assertTargetSecret(ctx, controllerCtx.GuestClient, testTargetNS, testTargetSecret)
-				assertProviderServiceAccountsCondition(controllerCtx.VSphereCluster, corev1.ConditionTrue, "", "", "")
+				assertProviderServiceAccountsCondition(controllerCtx.VSphereCluster, metav1.ConditionTrue, "", vmwarev1.VSphereClusterProviderServiceAccountsReadyReason)
 			})
 		})
 		Context("When serviceaccount secret is modified", func() {
@@ -102,7 +104,7 @@ func unitTestsReconcileNormal() {
 				updateServiceAccountSecretAndReconcileNormal(ctx, controllerCtx, reconciler, vsphereCluster)
 				By("Updating the target secret in the target namespace")
 				assertTargetSecret(ctx, controllerCtx.GuestClient, testTargetNS, testTargetSecret)
-				assertProviderServiceAccountsCondition(controllerCtx.VSphereCluster, corev1.ConditionTrue, "", "", "")
+				assertProviderServiceAccountsCondition(controllerCtx.VSphereCluster, metav1.ConditionTrue, "", vmwarev1.VSphereClusterProviderServiceAccountsReadyReason)
 			})
 		})
 		Context("When invalid role exists", func() {
@@ -111,7 +113,7 @@ func unitTestsReconcileNormal() {
 			})
 			It("Should update role", func() {
 				assertRoleWithGetPVC(ctx, controllerCtx.ControllerManagerContext.Client, namespace, vsphereCluster.GetName())
-				assertProviderServiceAccountsCondition(controllerCtx.VSphereCluster, corev1.ConditionTrue, "", "", "")
+				assertProviderServiceAccountsCondition(controllerCtx.VSphereCluster, metav1.ConditionTrue, "", vmwarev1.VSphereClusterProviderServiceAccountsReadyReason)
 			})
 		})
 		Context("When invalid rolebinding exists", func() {
@@ -120,7 +122,7 @@ func unitTestsReconcileNormal() {
 			})
 			It("Should update rolebinding", func() {
 				assertRoleBinding(ctx, controllerCtx.ControllerManagerContext.Client, namespace, vsphereCluster.GetName())
-				assertProviderServiceAccountsCondition(controllerCtx.VSphereCluster, corev1.ConditionTrue, "", "", "")
+				assertProviderServiceAccountsCondition(controllerCtx.VSphereCluster, metav1.ConditionTrue, "", vmwarev1.VSphereClusterProviderServiceAccountsReadyReason)
 			})
 		})
 	})

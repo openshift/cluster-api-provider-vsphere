@@ -7,14 +7,13 @@ namePrefix: capv-
 
 commonLabels:
   cluster.x-k8s.io/provider: "infrastructure-vsphere"
+  # cluster.x-k8s.io/v1beta1 does not belong on all objects, but removing it now is not trivial
+  # e.g. because the spec.selector for the Deployment is immutable.
   cluster.x-k8s.io/v1beta1: v1beta1
+
 resources:
   - ../base
-  - crd/bases/vmware.infrastructure.cluster.x-k8s.io_vspheremachines.yaml
-  - crd/bases/vmware.infrastructure.cluster.x-k8s.io_vsphereclusters.yaml
-  - crd/bases/vmware.infrastructure.cluster.x-k8s.io_vspheremachinetemplates.yaml
-  - crd/bases/vmware.infrastructure.cluster.x-k8s.io_vsphereclustertemplates.yaml
-  - crd/bases/vmware.infrastructure.cluster.x-k8s.io_providerserviceaccounts.yaml
+  - ./crd
   - ./webhook
 
 vars:

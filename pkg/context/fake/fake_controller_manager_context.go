@@ -17,19 +17,21 @@ limitations under the License.
 package fake
 
 import (
-	vmoprv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha2"
+	vmoprv1alpha5 "github.com/vmware-tanzu/vm-operator/api/v1alpha5"
 	"k8s.io/apimachinery/pkg/runtime"
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	controlplanev1 "sigs.k8s.io/cluster-api/api/controlplane/kubeadm/v1beta2"
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
-	ipamv1beta1 "sigs.k8s.io/cluster-api/api/ipam/v1beta1"
+	ipamv1 "sigs.k8s.io/cluster-api/api/ipam/v1beta2"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
 
-	infrav1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/v1beta1"
-	vmwarev1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/vmware/v1beta1"
+	infrav1 "sigs.k8s.io/cluster-api-provider-vsphere/api/govmomi/v1beta2"
+	vmwarev1 "sigs.k8s.io/cluster-api-provider-vsphere/api/supervisor/v1beta2"
 	capvcontext "sigs.k8s.io/cluster-api-provider-vsphere/pkg/context"
+	vmoprvhub "sigs.k8s.io/cluster-api-provider-vsphere/pkg/conversion/api/vmoperator/hub"
 )
 
 // NewControllerManagerContext returns a fake ControllerManagerContext for unit
@@ -38,13 +40,14 @@ import (
 
 func NewControllerManagerContext(initObjects ...client.Object) *capvcontext.ControllerManagerContext {
 	scheme := runtime.NewScheme()
-	_ = clientgoscheme.AddToScheme(scheme)
-	_ = clusterv1.AddToScheme(scheme)
-	_ = controlplanev1.AddToScheme(scheme)
-	_ = infrav1.AddToScheme(scheme)
-	_ = vmwarev1.AddToScheme(scheme)
-	_ = vmoprv1.AddToScheme(scheme)
-	_ = ipamv1beta1.AddToScheme(scheme)
+	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
+	utilruntime.Must(clusterv1.AddToScheme(scheme))
+	utilruntime.Must(controlplanev1.AddToScheme(scheme))
+	utilruntime.Must(infrav1.AddToScheme(scheme))
+	utilruntime.Must(vmwarev1.AddToScheme(scheme))
+	utilruntime.Must(vmoprvhub.AddToScheme(scheme))
+	utilruntime.Must(vmoprv1alpha5.AddToScheme(scheme))
+	utilruntime.Must(ipamv1.AddToScheme(scheme))
 
 	clientWithObjects := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(
 		&infrav1.VSphereVM{},

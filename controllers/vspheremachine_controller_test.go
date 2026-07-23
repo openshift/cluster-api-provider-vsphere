@@ -25,15 +25,14 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"
-	clusterv1beta1 "sigs.k8s.io/cluster-api/api/core/v1beta1"
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	capiutil "sigs.k8s.io/cluster-api/util"
-	v1beta1conditions "sigs.k8s.io/cluster-api/util/deprecated/v1beta1/conditions"
-	"sigs.k8s.io/cluster-api/util/deprecated/v1beta1/patch"
+	"sigs.k8s.io/cluster-api/util/conditions"
+	"sigs.k8s.io/cluster-api/util/patch"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	ctrlutil "sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
-	infrav1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/v1beta1"
+	infrav1 "sigs.k8s.io/cluster-api-provider-vsphere/api/govmomi/v1beta2"
 )
 
 var _ = Describe("VsphereMachineReconciler", func() {
@@ -48,13 +47,17 @@ var _ = Describe("VsphereMachineReconciler", func() {
 		key    client.ObjectKey
 	)
 
-	isPresentAndFalseWithReason := func(getter v1beta1conditions.Getter, condition clusterv1beta1.ConditionType, reason string) bool {
-		ExpectWithOffset(1, testEnv.Get(ctx, key, getter)).To(Succeed())
-		if !v1beta1conditions.Has(getter, condition) {
+	isPresentAndFalseWithReason := func(object client.Object, condition string, reason string) bool {
+		ExpectWithOffset(1, testEnv.Get(ctx, key, object)).To(Succeed())
+
+		getter, ok := object.(conditions.Getter)
+		Expect(ok).To(BeTrue())
+
+		if !conditions.Has(getter, condition) {
 			return false
 		}
-		objectCondition := v1beta1conditions.Get(getter, condition)
-		return objectCondition.Status == corev1.ConditionFalse &&
+		objectCondition := conditions.Get(getter, condition)
+		return objectCondition.Status == metav1.ConditionFalse &&
 			objectCondition.Reason == reason
 	}
 
@@ -84,14 +87,16 @@ var _ = Describe("VsphereMachineReconciler", func() {
 				Namespace: testNs.Name,
 				OwnerReferences: []metav1.OwnerReference{
 					{
-						APIVersion: "cluster.x-k8s.io/v1beta1",
+						APIVersion: clusterv1.GroupVersion.String(),
 						Kind:       "Cluster",
 						Name:       capiCluster.Name,
 						UID:        "blah",
 					},
 				},
 			},
-			Spec: infrav1.VSphereClusterSpec{},
+			Spec: infrav1.VSphereClusterSpec{
+				Server: "test-server",
+			},
 		}
 		Expect(testEnv.Create(ctx, infraCluster)).To(Succeed())
 
@@ -144,7 +149,7 @@ var _ = Describe("VsphereMachineReconciler", func() {
 					Template: "ubuntu-k9s-1.19",
 					Network: infrav1.NetworkSpec{
 						Devices: []infrav1.NetworkDeviceSpec{
-							{NetworkName: "network-1", DHCP4: true},
+							{NetworkName: "network-1", DHCP4: ptr.To(true)},
 						},
 					},
 				},
@@ -166,7 +171,7 @@ var _ = Describe("VsphereMachineReconciler", func() {
 			if err := testEnv.Get(ctx, key, infraMachine); err != nil {
 				return false
 			}
-			return isPresentAndFalseWithReason(infraMachine, infrav1.VMProvisionedCondition, infrav1.WaitingForClusterInfrastructureReason)
+			return isPresentAndFalseWithReason(infraMachine, infrav1.VSphereVMVirtualMachineProvisionedCondition, infrav1.VSphereMachineVirtualMachineWaitingForClusterInfrastructureReadyReason)
 		}, timeout).Should(BeTrue())
 
 		By("setting the cluster infrastructure to be ready")
@@ -178,7 +183,7 @@ var _ = Describe("VsphereMachineReconciler", func() {
 		}, timeout).Should(Succeed())
 
 		Eventually(func() bool {
-			return isPresentAndFalseWithReason(infraMachine, infrav1.VMProvisionedCondition, infrav1.WaitingForClusterInfrastructureReason)
+			return isPresentAndFalseWithReason(infraMachine, infrav1.VSphereVMVirtualMachineProvisionedCondition, infrav1.VSphereMachineVirtualMachineWaitingForClusterInfrastructureReadyReason)
 		}, timeout).Should(BeFalse())
 	})
 
@@ -196,7 +201,7 @@ var _ = Describe("VsphereMachineReconciler", func() {
 				Expect(testEnv.List(ctx, &vms, client.InNamespace(testNs.Name), client.MatchingLabels{
 					clusterv1.ClusterNameLabel: capiCluster.Name,
 				})).To(Succeed())
-				return isPresentAndFalseWithReason(infraMachine, infrav1.VMProvisionedCondition, infrav1.WaitingForBootstrapDataReason) &&
+				return isPresentAndFalseWithReason(infraMachine, infrav1.VSphereMachineVirtualMachineProvisionedCondition, infrav1.VSphereMachineVirtualMachineWaitingForBootstrapDataReason) &&
 					len(vms.Items) == 0
 			}, timeout).Should(BeTrue())
 
@@ -257,14 +262,16 @@ func Test_machineReconciler_Metadata(t *testing.T) {
 			Namespace: ns.Name,
 			OwnerReferences: []metav1.OwnerReference{
 				{
-					APIVersion: "cluster.x-k8s.io/v1beta1",
+					APIVersion: clusterv1.GroupVersion.String(),
 					Kind:       "Cluster",
 					Name:       capiCluster.Name,
 					UID:        "blah",
 				},
 			},
 		},
-		Spec: infrav1.VSphereClusterSpec{},
+		Spec: infrav1.VSphereClusterSpec{
+			Server: "test-server",
+		},
 	}
 
 	capiMachine := &clusterv1.Machine{
@@ -312,7 +319,7 @@ func Test_machineReconciler_Metadata(t *testing.T) {
 				// This ownerReference should be removed by the reconciler as it's no longer needed.
 				// These ownerReferences were previously added by CAPV to prevent machines becoming orphaned.
 				{
-					APIVersion: "infrastructure.cluster.x-k8s.io/v1beta1",
+					APIVersion: infrav1.GroupVersion.String(),
 					Kind:       "VSphereCluster",
 					Name:       vSphereCluster.Name,
 					UID:        "blah",
@@ -324,7 +331,7 @@ func Test_machineReconciler_Metadata(t *testing.T) {
 				Template: "ubuntu-k9s-1.19",
 				Network: infrav1.NetworkSpec{
 					Devices: []infrav1.NetworkDeviceSpec{
-						{NetworkName: "network-1", DHCP4: true},
+						{NetworkName: "network-1", DHCP4: ptr.To(true)},
 					},
 				},
 			},
@@ -372,7 +379,7 @@ func Test_machineReconciler_Metadata(t *testing.T) {
 					Template: "ubuntu-k9s-1.19",
 					Network: infrav1.NetworkSpec{
 						Devices: []infrav1.NetworkDeviceSpec{
-							{NetworkName: "network-1", DHCP4: true},
+							{NetworkName: "network-1", DHCP4: ptr.To(true)},
 						},
 					},
 				},

@@ -29,7 +29,7 @@ import (
 
 	"github.com/onsi/ginkgo/v2"
 	"github.com/pkg/errors"
-	vmoprv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha2"
+	vmoprv1alpha5 "github.com/vmware-tanzu/vm-operator/api/v1alpha5"
 	"github.com/vmware/govmomi/simulator"
 	"golang.org/x/tools/go/packages"
 	admissionv1 "k8s.io/api/admissionregistration/v1"
@@ -37,7 +37,9 @@ import (
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/selection"
 	kerrors "k8s.io/apimachinery/pkg/util/errors"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -50,6 +52,7 @@ import (
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/cluster-api/util/kubeconfig"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/config"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
@@ -57,11 +60,12 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
-	infrav1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/v1beta1"
+	infrav1 "sigs.k8s.io/cluster-api-provider-vsphere/api/govmomi/v1beta2"
 	"sigs.k8s.io/cluster-api-provider-vsphere/feature"
 	"sigs.k8s.io/cluster-api-provider-vsphere/internal/test/helpers/vcsim"
 	"sigs.k8s.io/cluster-api-provider-vsphere/internal/webhooks"
 	capvcontext "sigs.k8s.io/cluster-api-provider-vsphere/pkg/context"
+	conversionapi "sigs.k8s.io/cluster-api-provider-vsphere/pkg/conversion/api"
 	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/manager"
 )
 
@@ -90,7 +94,7 @@ func init() {
 	utilruntime.Must(admissionv1.AddToScheme(scheme))
 	utilruntime.Must(clusterv1.AddToScheme(scheme))
 	utilruntime.Must(infrav1.AddToScheme(scheme))
-	utilruntime.Must(vmoprv1.AddToScheme(scheme))
+	utilruntime.Must(vmoprv1alpha5.AddToScheme(scheme))
 
 	// Get the root of the current file to use in CRD paths.
 	_, filename, _, ok := goruntime.Caller(0)
@@ -175,8 +179,38 @@ func NewTestEnvironment(ctx context.Context) *TestEnvironment {
 		}
 	}
 
+	req, _ := labels.NewRequirement(clusterv1.ClusterNameLabel, selection.Exists, nil)
+	clusterSecretCacheSelector := labels.NewSelector().Add(*req)
+
 	managerOpts := manager.Options{
 		Options: ctrl.Options{
+			Cache: cache.Options{
+				ByObject: map[client.Object]cache.ByObject{
+					&corev1.Secret{}: {
+						Label: clusterSecretCacheSelector,
+						// Drop data of secrets that we don't use.
+						Transform: func(in any) (any, error) {
+							if s, ok := in.(*corev1.Secret); ok {
+								s.SetManagedFields(nil)
+								if !strings.HasSuffix(s.Name, "-kubeconfig") && s.Type != corev1.SecretTypeServiceAccountToken {
+									s.Data = nil
+								}
+							}
+							return in, nil
+						},
+					},
+				},
+			},
+			Client: client.Options{
+				Cache: &client.CacheOptions{
+					DisableFor: []client.Object{
+						// We are configuring the mgr.GetClient() to not use the cache for secrets, so that if we miss some
+						// Secret Get calls they are not hitting a cache with partial data.
+						// If Secrets from the cache should be accessed, we should use the secretCachingClient instead.
+						&corev1.Secret{},
+					},
+				},
+			},
 			Controller: config.Controller{
 				UsePriorityQueue: ptr.To[bool](feature.Gates.Enabled(feature.PriorityQueue)),
 			},
@@ -195,6 +229,7 @@ func NewTestEnvironment(ctx context.Context) *TestEnvironment {
 		KubeConfig: env.Config,
 		Username:   simr.Username(),
 		Password:   simr.Password(),
+		Converter:  conversionapi.DefaultConverterFor(vmoprv1alpha5.GroupVersion),
 	}
 	managerOpts.AddToManager = func(_ context.Context, _ *capvcontext.ControllerManagerContext, mgr ctrlmgr.Manager) error {
 		if err := (&webhooks.VSphereClusterTemplate{}).SetupWebhookWithManager(mgr); err != nil {

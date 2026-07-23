@@ -21,22 +21,9 @@ import (
 	"testing"
 
 	. "github.com/onsi/gomega"
-	"k8s.io/utils/ptr"
 
-	infrav1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/v1beta1"
+	infrav1 "sigs.k8s.io/cluster-api-provider-vsphere/api/govmomi/v1beta2"
 )
-
-func TestVsphereFailureDomain_Default(t *testing.T) {
-	g := NewWithT(t)
-	m := &infrav1.VSphereFailureDomain{
-		Spec: infrav1.VSphereFailureDomainSpec{},
-	}
-	webhook := &VSphereFailureDomain{}
-	g.Expect(webhook.Default(context.Background(), m)).ToNot(HaveOccurred())
-
-	g.Expect(*m.Spec.Zone.AutoConfigure).To(BeFalse())
-	g.Expect(*m.Spec.Region.AutoConfigure).To(BeFalse())
-}
 
 func TestVSphereFailureDomain_ValidateCreate(t *testing.T) {
 	g := NewWithT(t)
@@ -50,10 +37,9 @@ func TestVSphereFailureDomain_ValidateCreate(t *testing.T) {
 			name: "region failureDomain type is hostGroup",
 			failureDomain: infrav1.VSphereFailureDomain{Spec: infrav1.VSphereFailureDomainSpec{
 				Region: infrav1.FailureDomain{
-					Name:          "foo",
-					Type:          infrav1.HostGroupFailureDomain,
-					TagCategory:   "k8s-bar",
-					AutoConfigure: ptr.To(true),
+					Name:        "foo",
+					Type:        infrav1.HostGroupFailureDomain,
+					TagCategory: "k8s-bar",
 				},
 			}},
 		},
@@ -62,8 +48,8 @@ func TestVSphereFailureDomain_ValidateCreate(t *testing.T) {
 			failureDomain: infrav1.VSphereFailureDomain{Spec: infrav1.VSphereFailureDomainSpec{
 				Topology: infrav1.Topology{
 					Datacenter:     "/blah",
-					ComputeCluster: nil,
-					Hosts: &infrav1.FailureDomainHosts{
+					ComputeCluster: "",
+					Hosts: infrav1.FailureDomainHosts{
 						VMGroupName:   "vm-foo",
 						HostGroupName: "host-foo",
 					},
@@ -85,8 +71,7 @@ func TestVSphereFailureDomain_ValidateCreate(t *testing.T) {
 				},
 				Topology: infrav1.Topology{
 					Datacenter:     "/blah",
-					ComputeCluster: ptr.To("blah2"),
-					Hosts:          nil,
+					ComputeCluster: "blah2",
 				},
 			}},
 		},
@@ -105,8 +90,8 @@ func TestVSphereFailureDomain_ValidateCreate(t *testing.T) {
 				},
 				Topology: infrav1.Topology{
 					Datacenter:     "/blah",
-					ComputeCluster: nil,
-					Hosts: &infrav1.FailureDomainHosts{
+					ComputeCluster: "",
+					Hosts: infrav1.FailureDomainHosts{
 						VMGroupName:   "vm-foo",
 						HostGroupName: "host-foo",
 					},
@@ -128,7 +113,7 @@ func TestVSphereFailureDomain_ValidateCreate(t *testing.T) {
 				},
 				Topology: infrav1.Topology{
 					Datacenter:     "/blah",
-					ComputeCluster: nil,
+					ComputeCluster: "",
 				},
 			}},
 		},
@@ -147,7 +132,7 @@ func TestVSphereFailureDomain_ValidateCreate(t *testing.T) {
 				},
 				Topology: infrav1.Topology{
 					Datacenter:            "/blah",
-					ComputeCluster:        ptr.To("blah2"),
+					ComputeCluster:        "blah2",
 					Networks:              []string{"nw-1"},
 					NetworkConfigurations: []infrav1.NetworkConfiguration{{NetworkName: "nw-1"}},
 				},

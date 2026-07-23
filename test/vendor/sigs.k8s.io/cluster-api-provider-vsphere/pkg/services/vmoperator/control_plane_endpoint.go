@@ -19,21 +19,23 @@ package vmoperator
 import (
 	"context"
 	"fmt"
+	"reflect"
 
 	"github.com/pkg/errors"
-	vmoprv1 "github.com/vmware-tanzu/vm-operator/api/v1alpha2"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/klog/v2"
-	clusterv1beta1 "sigs.k8s.io/cluster-api/api/core/v1beta1"
-	v1beta1conditions "sigs.k8s.io/cluster-api/util/deprecated/v1beta1/conditions"
-	v1beta2conditions "sigs.k8s.io/cluster-api/util/deprecated/v1beta1/conditions/v1beta2"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
+	"sigs.k8s.io/cluster-api/util/conditions"
+	deprecatedv1beta1conditions "sigs.k8s.io/cluster-api/util/conditions/deprecated/v1beta1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	ctrlutil "sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
-	vmwarev1 "sigs.k8s.io/cluster-api-provider-vsphere/apis/vmware/v1beta1"
+	vmwarev1 "sigs.k8s.io/cluster-api-provider-vsphere/api/supervisor/v1beta2"
 	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/context/vmware"
+	vmoprvhub "sigs.k8s.io/cluster-api-provider-vsphere/pkg/conversion/api/vmoperator/hub"
+	conversionclient "sigs.k8s.io/cluster-api-provider-vsphere/pkg/conversion/client"
 	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/services"
 )
 
@@ -68,10 +70,7 @@ type CPService struct {
 }
 
 // ReconcileControlPlaneEndpointService manages the lifecycle of a control plane endpoint managed by a vmoperator VirtualMachineService.
-func (s *CPService) ReconcileControlPlaneEndpointService(ctx context.Context, clusterCtx *vmware.ClusterContext, netProvider services.NetworkProvider) (*clusterv1beta1.APIEndpoint, error) {
-	log := ctrl.LoggerFrom(ctx)
-	log.V(4).Info("Reconciling control plane VirtualMachineService for cluster")
-
+func (s *CPService) ReconcileControlPlaneEndpointService(ctx context.Context, clusterCtx *vmware.ClusterContext, netProvider services.NetworkProvider) (*vmwarev1.APIEndpoint, error) {
 	// If the NetworkProvider does not support a load balancer, this should be a no-op
 	if !netProvider.HasLoadBalancer() {
 		return nil, nil
@@ -81,11 +80,11 @@ func (s *CPService) ReconcileControlPlaneEndpointService(ctx context.Context, cl
 	if err != nil {
 		if !apierrors.IsNotFound(err) {
 			err = errors.Wrapf(err, "failed to check if VirtualMachineService exists")
-			v1beta1conditions.MarkFalse(clusterCtx.VSphereCluster, vmwarev1.LoadBalancerReadyCondition, vmwarev1.LoadBalancerCreationFailedReason, clusterv1beta1.ConditionSeverityWarning, "%v", err)
-			v1beta2conditions.Set(clusterCtx.VSphereCluster, metav1.Condition{
-				Type:    vmwarev1.VSphereClusterLoadBalancerReadyV1Beta2Condition,
+			deprecatedv1beta1conditions.MarkFalse(clusterCtx.VSphereCluster, vmwarev1.LoadBalancerReadyV1Beta1Condition, vmwarev1.LoadBalancerCreationFailedV1Beta1Reason, clusterv1.ConditionSeverityWarning, "%v", err)
+			conditions.Set(clusterCtx.VSphereCluster, metav1.Condition{
+				Type:    vmwarev1.VSphereClusterLoadBalancerReadyCondition,
 				Status:  metav1.ConditionFalse,
-				Reason:  vmwarev1.VSphereClusterLoadBalancerNotReadyV1Beta2Reason,
+				Reason:  vmwarev1.VSphereClusterLoadBalancerNotReadyReason,
 				Message: err.Error(),
 			})
 			return nil, err
@@ -95,11 +94,11 @@ func (s *CPService) ReconcileControlPlaneEndpointService(ctx context.Context, cl
 		annotations, err := netProvider.GetVMServiceAnnotations(ctx, clusterCtx)
 		if err != nil {
 			err = errors.Wrapf(err, "failed to get provider VirtualMachineService annotations")
-			v1beta1conditions.MarkFalse(clusterCtx.VSphereCluster, vmwarev1.LoadBalancerReadyCondition, vmwarev1.LoadBalancerCreationFailedReason, clusterv1beta1.ConditionSeverityWarning, "%v", err)
-			v1beta2conditions.Set(clusterCtx.VSphereCluster, metav1.Condition{
-				Type:    vmwarev1.VSphereClusterLoadBalancerReadyV1Beta2Condition,
+			deprecatedv1beta1conditions.MarkFalse(clusterCtx.VSphereCluster, vmwarev1.LoadBalancerReadyV1Beta1Condition, vmwarev1.LoadBalancerCreationFailedV1Beta1Reason, clusterv1.ConditionSeverityWarning, "%v", err)
+			conditions.Set(clusterCtx.VSphereCluster, metav1.Condition{
+				Type:    vmwarev1.VSphereClusterLoadBalancerReadyCondition,
 				Status:  metav1.ConditionFalse,
-				Reason:  vmwarev1.VSphereClusterLoadBalancerNotReadyV1Beta2Reason,
+				Reason:  vmwarev1.VSphereClusterLoadBalancerNotReadyReason,
 				Message: err.Error(),
 			})
 			return nil, err
@@ -108,11 +107,11 @@ func (s *CPService) ReconcileControlPlaneEndpointService(ctx context.Context, cl
 		vmService, err = s.createVMControlPlaneService(ctx, clusterCtx, annotations)
 		if err != nil {
 			err = errors.Wrapf(err, "failed to create VirtualMachineService")
-			v1beta1conditions.MarkFalse(clusterCtx.VSphereCluster, vmwarev1.LoadBalancerReadyCondition, vmwarev1.LoadBalancerCreationFailedReason, clusterv1beta1.ConditionSeverityWarning, "%v", err)
-			v1beta2conditions.Set(clusterCtx.VSphereCluster, metav1.Condition{
-				Type:    vmwarev1.VSphereClusterLoadBalancerReadyV1Beta2Condition,
+			deprecatedv1beta1conditions.MarkFalse(clusterCtx.VSphereCluster, vmwarev1.LoadBalancerReadyV1Beta1Condition, vmwarev1.LoadBalancerCreationFailedV1Beta1Reason, clusterv1.ConditionSeverityWarning, "%v", err)
+			conditions.Set(clusterCtx.VSphereCluster, metav1.Condition{
+				Type:    vmwarev1.VSphereClusterLoadBalancerReadyCondition,
 				Status:  metav1.ConditionFalse,
-				Reason:  vmwarev1.VSphereClusterLoadBalancerNotReadyV1Beta2Reason,
+				Reason:  vmwarev1.VSphereClusterLoadBalancerNotReadyReason,
 				Message: err.Error(),
 			})
 			return nil, err
@@ -123,11 +122,11 @@ func (s *CPService) ReconcileControlPlaneEndpointService(ctx context.Context, cl
 	vip, err := getVMServiceVIP(vmService)
 	if err != nil {
 		err = errors.Wrapf(err, "VirtualMachineService LB does not yet have VIP assigned")
-		v1beta1conditions.MarkFalse(clusterCtx.VSphereCluster, vmwarev1.LoadBalancerReadyCondition, vmwarev1.WaitingForLoadBalancerIPReason, clusterv1beta1.ConditionSeverityInfo, "%v", err)
-		v1beta2conditions.Set(clusterCtx.VSphereCluster, metav1.Condition{
-			Type:    vmwarev1.VSphereClusterLoadBalancerReadyV1Beta2Condition,
+		deprecatedv1beta1conditions.MarkFalse(clusterCtx.VSphereCluster, vmwarev1.LoadBalancerReadyV1Beta1Condition, vmwarev1.WaitingForLoadBalancerIPV1Beta1Reason, clusterv1.ConditionSeverityInfo, "%v", err)
+		conditions.Set(clusterCtx.VSphereCluster, metav1.Condition{
+			Type:    vmwarev1.VSphereClusterLoadBalancerReadyCondition,
 			Status:  metav1.ConditionFalse,
-			Reason:  vmwarev1.VSphereClusterLoadBalancerWaitingForIPV1Beta2Reason,
+			Reason:  vmwarev1.VSphereClusterLoadBalancerWaitingForIPReason,
 			Message: err.Error(),
 		})
 		return nil, err
@@ -136,21 +135,21 @@ func (s *CPService) ReconcileControlPlaneEndpointService(ctx context.Context, cl
 	cpEndpoint, err := getAPIEndpointFromVIP(vmService, vip)
 	if err != nil {
 		err = errors.Wrapf(err, "VirtualMachineService LB does not have an apiserver endpoint")
-		v1beta1conditions.MarkFalse(clusterCtx.VSphereCluster, vmwarev1.LoadBalancerReadyCondition, vmwarev1.WaitingForLoadBalancerIPReason, clusterv1beta1.ConditionSeverityWarning, "%v", err)
-		v1beta2conditions.Set(clusterCtx.VSphereCluster, metav1.Condition{
-			Type:    vmwarev1.VSphereClusterLoadBalancerReadyV1Beta2Condition,
+		deprecatedv1beta1conditions.MarkFalse(clusterCtx.VSphereCluster, vmwarev1.LoadBalancerReadyV1Beta1Condition, vmwarev1.WaitingForLoadBalancerIPV1Beta1Reason, clusterv1.ConditionSeverityWarning, "%v", err)
+		conditions.Set(clusterCtx.VSphereCluster, metav1.Condition{
+			Type:    vmwarev1.VSphereClusterLoadBalancerReadyCondition,
 			Status:  metav1.ConditionFalse,
-			Reason:  vmwarev1.VSphereClusterLoadBalancerWaitingForIPV1Beta2Reason,
+			Reason:  vmwarev1.VSphereClusterLoadBalancerWaitingForIPReason,
 			Message: err.Error(),
 		})
 		return nil, err
 	}
 
-	v1beta1conditions.MarkTrue(clusterCtx.VSphereCluster, vmwarev1.LoadBalancerReadyCondition)
-	v1beta2conditions.Set(clusterCtx.VSphereCluster, metav1.Condition{
-		Type:   vmwarev1.VSphereClusterLoadBalancerReadyV1Beta2Condition,
+	deprecatedv1beta1conditions.MarkTrue(clusterCtx.VSphereCluster, vmwarev1.LoadBalancerReadyV1Beta1Condition)
+	conditions.Set(clusterCtx.VSphereCluster, metav1.Condition{
+		Type:   vmwarev1.VSphereClusterLoadBalancerReadyCondition,
 		Status: metav1.ConditionTrue,
-		Reason: vmwarev1.VSphereClusterLoadBalancerReadyV1Beta2Reason,
+		Reason: vmwarev1.VSphereClusterLoadBalancerReadyReason,
 	})
 	return cpEndpoint, nil
 }
@@ -183,75 +182,87 @@ func clusterRoleVMLabels(ctx *vmware.ClusterContext, controlPlane bool) map[stri
 	return result
 }
 
-func newVirtualMachineService(ctx *vmware.ClusterContext) *vmoprv1.VirtualMachineService {
-	return &vmoprv1.VirtualMachineService{
+func newVirtualMachineService(ctx *vmware.ClusterContext) *vmoprvhub.VirtualMachineService {
+	return &vmoprvhub.VirtualMachineService{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      controlPlaneVMServiceName(ctx.Cluster.Name),
 			Namespace: ctx.Cluster.Namespace,
 		},
-		TypeMeta: metav1.TypeMeta{
-			APIVersion: vmoprv1.GroupVersion.String(),
-			Kind:       "VirtualMachineService",
-		},
 	}
 }
 
-func (s *CPService) createVMControlPlaneService(ctx context.Context, clusterCtx *vmware.ClusterContext, annotations map[string]string) (*vmoprv1.VirtualMachineService, error) {
+func (s *CPService) createVMControlPlaneService(ctx context.Context, clusterCtx *vmware.ClusterContext, annotations map[string]string) (*vmoprvhub.VirtualMachineService, error) {
 	// Note that the current implementation will only create a VirtualMachineService for a load balanced endpoint
-	serviceType := vmoprv1.VirtualMachineServiceTypeLoadBalancer
+	serviceType := vmoprvhub.VirtualMachineServiceTypeLoadBalancer
 
 	vmService := newVirtualMachineService(clusterCtx)
 
-	_, err := ctrlutil.CreateOrPatch(ctx, s.Client, vmService, func() error {
-		if vmService.Annotations == nil {
-			vmService.Annotations = annotations
-		} else {
-			for k, v := range annotations {
-				vmService.Annotations[k] = v
-			}
+	vmServiceExists := true
+	if err := s.Client.Get(ctx, client.ObjectKeyFromObject(vmService), vmService); err != nil {
+		if !apierrors.IsNotFound(err) {
+			return nil, err
 		}
+		vmServiceExists = false
+	}
+	originalVMService := vmService.DeepCopy()
+
+	if vmService.Annotations == nil {
 		vmService.Annotations = annotations
-		vmService.Spec = vmoprv1.VirtualMachineServiceSpec{
-			Type: serviceType,
-			Ports: []vmoprv1.VirtualMachineServicePort{
-				{
-					Name:       controlPlaneServiceAPIServerPortName,
-					Protocol:   "TCP",
-					Port:       defaultAPIBindPort,
-					TargetPort: defaultAPIBindPort,
-				},
+	} else {
+		for k, v := range annotations {
+			vmService.Annotations[k] = v
+		}
+	}
+	vmService.Annotations = annotations
+	vmService.Spec = vmoprvhub.VirtualMachineServiceSpec{
+		Type: serviceType,
+		Ports: []vmoprvhub.VirtualMachineServicePort{
+			{
+				Name:       controlPlaneServiceAPIServerPortName,
+				Protocol:   "TCP",
+				Port:       defaultAPIBindPort,
+				TargetPort: defaultAPIBindPort,
 			},
-			Selector: clusterRoleVMLabels(clusterCtx, true),
-		}
+		},
+		Selector: clusterRoleVMLabels(clusterCtx, true),
+	}
 
-		if err := ctrlutil.SetOwnerReference(
-			clusterCtx.VSphereCluster,
-			vmService,
-			s.Client.Scheme(),
-		); err != nil {
-			return errors.Wrapf(
-				err,
-				"error setting %s/%s as owner of %s/%s",
-				clusterCtx.VSphereCluster.Namespace,
-				clusterCtx.VSphereCluster.Name,
-				vmService.Namespace,
-				vmService.Name,
-			)
-		}
+	if err := ctrlutil.SetOwnerReference(
+		clusterCtx.VSphereCluster,
+		vmService,
+		s.Client.Scheme(),
+	); err != nil {
+		return nil, errors.Wrapf(
+			err,
+			"error setting %s/%s as owner of %s/%s",
+			clusterCtx.VSphereCluster.Namespace,
+			clusterCtx.VSphereCluster.Name,
+			vmService.Namespace,
+			vmService.Name,
+		)
+	}
 
-		return nil
-	})
-	if err != nil {
-		return nil, err
+	if !vmServiceExists {
+		if err := s.Client.Create(ctx, vmService); err != nil {
+			return nil, err
+		}
+	} else if !reflect.DeepEqual(originalVMService, vmService) {
+		patch, err := conversionclient.MergeFrom(ctx, s.Client, originalVMService)
+		if err != nil {
+			return nil, errors.Wrapf(err, "failed to create patch for VirtualMachineService object")
+		}
+		if err := s.Client.Patch(ctx, vmService, patch); err != nil {
+			return nil, errors.Wrapf(err, "failed to patch VirtualMachineService object")
+		}
 	}
 
 	return vmService, nil
 }
 
-func (s *CPService) getVMControlPlaneService(ctx context.Context, clusterCtx *vmware.ClusterContext) (*vmoprv1.VirtualMachineService, error) {
+func (s *CPService) getVMControlPlaneService(ctx context.Context, clusterCtx *vmware.ClusterContext) (*vmoprvhub.VirtualMachineService, error) {
 	log := ctrl.LoggerFrom(ctx)
 
-	vmService := &vmoprv1.VirtualMachineService{}
+	vmService := &vmoprvhub.VirtualMachineService{}
 	vmServiceKey := client.ObjectKey{
 		Namespace: clusterCtx.Cluster.Namespace,
 		Name:      controlPlaneVMServiceName(clusterCtx.Cluster.Name),
@@ -276,11 +287,26 @@ func (s *CPService) getVMControlPlaneService(ctx context.Context, clusterCtx *vm
 		}
 	}
 
+	// Verify OwnerReference UID to prevent adopting a service from a
+	// previous cluster with the same name.
+	refs := vmService.GetOwnerReferences()
+	for _, ref := range refs {
+		if ref.Kind == "VSphereCluster" && ref.UID != clusterCtx.VSphereCluster.UID {
+			return nil, fmt.Errorf("VirtualMachineService %s exists but is owned by a different VSphereCluster instance %s", vmServiceKey.Name, ref.UID)
+		}
+	}
+
+	// If the service is being deleted, it could be an old service with the same name,
+	// return error.
+	if !vmService.DeletionTimestamp.IsZero() {
+		return nil, fmt.Errorf("VirtualMachineService %s exists but is being deleted", vmServiceKey.Name)
+	}
+
 	return vmService, nil
 }
 
-func getVMServiceVIP(vmService *vmoprv1.VirtualMachineService) (string, error) {
-	if vmService.Spec.Type != vmoprv1.VirtualMachineServiceTypeLoadBalancer {
+func getVMServiceVIP(vmService *vmoprvhub.VirtualMachineService) (string, error) {
+	if vmService.Spec.Type != vmoprvhub.VirtualMachineServiceTypeLoadBalancer {
 		return "", fmt.Errorf("VirtualMachineService for control plane does not have load balancer")
 	}
 
@@ -297,7 +323,7 @@ func getVMServiceVIP(vmService *vmoprv1.VirtualMachineService) (string, error) {
 	return "", fmt.Errorf("VirtualMachineService LoadBalancer does not have any Ingresses")
 }
 
-func getAPIEndpointFromVIP(vmService *vmoprv1.VirtualMachineService, vip string) (*clusterv1beta1.APIEndpoint, error) {
+func getAPIEndpointFromVIP(vmService *vmoprvhub.VirtualMachineService, vip string) (*vmwarev1.APIEndpoint, error) {
 	name := controlPlaneServiceAPIServerPortName
 	servicePort := int32(-1)
 	for _, port := range vmService.Spec.Ports {
@@ -311,7 +337,7 @@ func getAPIEndpointFromVIP(vmService *vmoprv1.VirtualMachineService, vip string)
 		return nil, fmt.Errorf("VirtualMachineService does not have port entry for %q", name)
 	}
 
-	return &clusterv1beta1.APIEndpoint{
+	return &vmwarev1.APIEndpoint{
 		Host: vip,
 		Port: servicePort,
 	}, nil
