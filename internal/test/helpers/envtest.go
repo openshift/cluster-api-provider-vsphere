@@ -28,7 +28,7 @@ import (
 	"time"
 
 	"github.com/onsi/ginkgo/v2"
-	"github.com/pkg/errors"
+	pkgerrors "github.com/pkg/errors"
 	vmoprv1alpha5 "github.com/vmware-tanzu/vm-operator/api/v1alpha5"
 	"github.com/vmware/govmomi/simulator"
 	"golang.org/x/tools/go/packages"
@@ -232,10 +232,15 @@ func NewTestEnvironment(ctx context.Context) *TestEnvironment {
 		Converter:  conversionapi.DefaultConverterFor(vmoprv1alpha5.GroupVersion),
 	}
 	managerOpts.AddToManager = func(_ context.Context, _ *capvcontext.ControllerManagerContext, mgr ctrlmgr.Manager) error {
+		if err := (&webhooks.VSphereCluster{}).SetupWebhookWithManager(mgr); err != nil {
+			return err
+		}
 		if err := (&webhooks.VSphereClusterTemplate{}).SetupWebhookWithManager(mgr); err != nil {
 			return err
 		}
-
+		if err := (&webhooks.VSphereClusterIdentity{}).SetupWebhookWithManager(mgr); err != nil {
+			return err
+		}
 		if err := (&webhooks.VSphereMachine{}).SetupWebhookWithManager(mgr); err != nil {
 			return err
 		}
@@ -327,7 +332,7 @@ func (t *TestEnvironment) CleanupAndWait(ctx context.Context, objs ...client.Obj
 				return false, nil
 			})
 		if err != nil {
-			errs = append(errs, errors.Wrapf(err, "key %s, %s is not being deleted from the testenv client cache", o.GetObjectKind().GroupVersionKind().String(), key))
+			errs = append(errs, pkgerrors.Wrapf(err, "key %s, %s is not being deleted from the testenv client cache", o.GetObjectKind().GroupVersionKind().String(), key))
 		}
 	}
 	return kerrors.NewAggregate(errs)
@@ -356,7 +361,7 @@ func (t *TestEnvironment) CreateKubeconfigSecret(ctx context.Context, cluster *c
 }
 
 func getFilePathToCAPICRDs() []string {
-	packageName := "sigs.k8s.io/cluster-api"
+	packageName := "sigs.k8s.io/cluster-api/core"
 	packageConfig := &packages.Config{
 		Mode: packages.NeedModule,
 	}
@@ -369,7 +374,7 @@ func getFilePathToCAPICRDs() []string {
 	pkg := pkgs[0]
 
 	return []string{
-		filepath.Join(pkg.Module.Dir, "config", "crd", "bases"),
+		filepath.Join(pkg.Module.Dir, "core", "config", "crd", "bases"),
 		filepath.Join(pkg.Module.Dir, "controlplane", "kubeadm", "config", "crd", "bases"),
 	}
 }

@@ -23,28 +23,28 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
-	"github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	"github.com/pkg/errors"
+	pkgerrors "github.com/pkg/errors"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	kerrors "k8s.io/apimachinery/pkg/util/errors"
-	"k8s.io/apimachinery/pkg/util/httpstream"
+	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/util/httpstream" //nolint:staticcheck // Let's migrate this to the new package after we did the same in core Cluster API.
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/remotecommand"
 	"k8s.io/klog/v2"
-	"k8s.io/utils/ptr"
 	"sigs.k8s.io/cluster-api/test/framework"
 	. "sigs.k8s.io/cluster-api/test/framework/ginkgoextensions"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
 
-func LoadImagesFunc(ctx context.Context) func(clusterProxy framework.ClusterProxy) {
-	sourceFile := os.Getenv("DOCKER_IMAGE_TAR")
+func LoadImagesFunc(ctx context.Context, sourceFile string) func(clusterProxy framework.ClusterProxy) {
 	Expect(sourceFile).ToNot(BeEmpty(), "DOCKER_IMAGE_TAR must be set")
 
 	return func(clusterProxy framework.ClusterProxy) {
@@ -61,55 +61,102 @@ func loadImagesToCluster(ctx context.Context, sourceFile string, clusterProxy fr
 	_, err := controllerutil.CreateOrPatch(ctx, ctrlClient, daemonSet, daemonSetMutateFn)
 	Expect(err).ToNot(HaveOccurred())
 
-	// Wait for DaemonSet to be available.
-	waitForDaemonSetAvailable(ctx, waitForDaemonSetAvailableInput{Getter: ctrlClient, Daemonset: daemonSet}, time.Minute*3, time.Second*10)
+	// Create informer.
+	podInformer, err := clusterProxy.GetCache(ctx).GetInformer(ctx, &corev1.Pod{})
+	Expect(err).ToNot(HaveOccurred(), "Failed to create controller-runtime informer from cache")
 
-	// List all pods and load images via each found pod.
-	pods := &corev1.PodList{}
-	Expect(ctrlClient.List(
-		ctx,
-		pods,
-		client.InNamespace(daemonSet.Namespace),
-		client.MatchingLabels(daemonSetLabels),
-	)).To(Succeed())
+	// Add event handler to informer
+	eventHandler := newLoadImagesEventHandler(ctx, clusterProxy, sourceFile, labels.Set(daemonSetLabels).AsSelector())
+	handlerRegistration, err := podInformer.AddEventHandler(eventHandler)
+	Expect(err).ToNot(HaveOccurred())
 
-	errs := []error{}
-	for j := range pods.Items {
-		pod := pods.Items[j]
-		Byf("Loading images to node %s via pod %s", pod.Spec.NodeName, klog.KObj(&pod))
-		if err := loadImagesViaPod(ctx, clusterProxy, sourceFile, pod.Namespace, pod.Name, pod.Spec.Containers[0].Name); err != nil {
-			errs = append(errs, err)
-		}
-	}
-	Expect(kerrors.NewAggregate(errs)).ToNot(HaveOccurred())
-
-	// Delete the DaemonSet.
-	Expect(ctrlClient.Delete(ctx, daemonSet)).To(Succeed())
+	go func() {
+		defer GinkgoRecover()
+		<-ctx.Done()
+		Expect(podInformer.RemoveEventHandler(handlerRegistration)).To(Succeed())
+	}()
 }
 
-func loadImagesViaPod(ctx context.Context, clusterProxy framework.ClusterProxy, sourceFile, namespace, podName, containerName string) error {
-	// Open source tar file.
-	reader, writer := io.Pipe()
-	file, err := os.Open(filepath.Clean(sourceFile))
-	if err != nil {
-		return err
+type loadImagesEventHandler struct {
+	//nolint:containedctx
+	ctx           context.Context
+	clusterProxy  framework.ClusterProxy
+	sourceFile    string
+	selector      labels.Selector
+	imageLoadPods sync.Map
+}
+
+func newLoadImagesEventHandler(ctx context.Context, clusterProxy framework.ClusterProxy, sourceFile string, selector labels.Selector) cache.ResourceEventHandler {
+	return &loadImagesEventHandler{
+		ctx:           ctx,
+		clusterProxy:  clusterProxy,
+		sourceFile:    sourceFile,
+		selector:      selector,
+		imageLoadPods: sync.Map{},
+	}
+}
+
+func (eh *loadImagesEventHandler) OnAdd(obj interface{}, _ bool) {
+	pod := obj.(*corev1.Pod)
+
+	eh.loadImagesViaPod(eh.ctx, eh.clusterProxy, eh.sourceFile, pod, pod.Spec.Containers[0].Name)
+}
+
+func (eh *loadImagesEventHandler) OnUpdate(_, newObj interface{}) {
+	pod := newObj.(*corev1.Pod)
+	eh.loadImagesViaPod(eh.ctx, eh.clusterProxy, eh.sourceFile, pod, pod.Spec.Containers[0].Name)
+}
+
+func (eh *loadImagesEventHandler) OnDelete(_ interface{}) {}
+
+func (eh *loadImagesEventHandler) loadImagesViaPod(ctx context.Context, clusterProxy framework.ClusterProxy, sourceFile string, pod *corev1.Pod, containerName string) {
+	if pod.Namespace != metav1.NamespaceSystem { // The DaemonSet is deployed in kube-system.
+		return
+	}
+	if !eh.selector.Matches(labels.Set(pod.GetLabels())) {
+		return
+	}
+	if pod.Status.Phase != corev1.PodRunning {
+		return
+	}
+	if _, loaded := eh.imageLoadPods.LoadOrStore(pod.GetUID(), struct{}{}); loaded {
+		return
 	}
 
-	// Use go routine to pipe source file content into then stdin.
-	go func(file *os.File, writer io.WriteCloser) {
-		defer writer.Close()
-		defer file.Close()
-		// Ignoring the error here because the execPod command should fail in case of
-		// failure copying over the data.
-		_, err := io.Copy(writer, file)
-		if err != nil {
-			fmt.Fprintf(ginkgo.GinkgoWriter, "Failed to copy file data to io.Pipe: %v\n", err)
-		}
-	}(file, writer)
+	_ = wait.PollUntilContextCancel(ctx, 15*time.Second, true, func(ctx context.Context) (bool, error) {
+		Byf("Loading images to Node %s via Pod %s", pod.Spec.NodeName, klog.KObj(pod))
 
-	// Load the container images using ctr and delete the file.
-	loadCommand := "ctr -n k8s.io images import -"
-	return execPod(ctx, clusterProxy, namespace, podName, containerName, loadCommand, reader)
+		// Open source tar file.
+		reader, writer := io.Pipe()
+		file, err := os.Open(filepath.Clean(sourceFile))
+		if err != nil {
+			Byf("Failed loading images to Node %s via Pod %s: failed to load source file %s: %v", pod.Spec.NodeName, klog.KObj(pod), sourceFile, err)
+			return false, nil
+		}
+
+		// Use go routine to pipe source file content into then stdin.
+		go func(file *os.File, writer io.WriteCloser) {
+			defer writer.Close()
+			defer file.Close()
+			// Ignoring the error here because the execPod command should fail in case of
+			// failure copying over the data.
+			_, err := io.Copy(writer, file)
+			if err != nil {
+				fmt.Fprintf(GinkgoWriter, "Failed to copy file data to io.Pipe: %v\n", err)
+			}
+		}(file, writer)
+
+		// Load the container images using ctr and delete the file.
+		loadCommand := "ctr -n k8s.io images import -"
+
+		if err := execPod(ctx, clusterProxy, pod.Namespace, pod.Name, containerName, loadCommand, reader); err != nil {
+			Byf("Failed loading images to Node %s via Pod %s: %s", pod.Spec.NodeName, klog.KObj(pod), err)
+			eh.imageLoadPods.Delete(pod.GetUID()) // Delete so we try again on next update.
+			return false, nil
+		}
+		Byf("Succeeded loading images to Node %s via Pod %s", pod.Spec.NodeName, klog.KObj(pod))
+		return true, nil
+	})
 }
 
 // execPod executes a command at a pod.
@@ -157,7 +204,7 @@ func execPod(ctx context.Context, clusterProxy framework.ClusterProxy, namespace
 		Tty:    false,
 	})
 	if err != nil {
-		return errors.Wrapf(err, "running command %q stdout=%q, stderr=%q", cmd, stdout.String(), stderr.String())
+		return pkgerrors.Wrapf(err, "running command %q stdout=%q, stderr=%q", cmd, stdout.String(), stderr.String())
 	}
 
 	return nil
@@ -187,29 +234,22 @@ func getPreloadDaemonset() (*appsv1.DaemonSet, controllerutil.MutateFn, map[stri
 				Spec: corev1.PodSpec{
 					Containers: []corev1.Container{
 						{
-							Name:    "pause",
-							Image:   "registry.k8s.io/pause:3.9",
-							Command: []string{"/usr/bin/tail", "-f", "/dev/null"},
-							SecurityContext: &corev1.SecurityContext{
-								Privileged: ptr.To(true),
-							},
+							Name:  "importer",
+							Image: "gcr.io/k8s-staging-capi-vsphere/extra/ctr:latest",
 							VolumeMounts: []corev1.VolumeMount{
 								{
-									Name:      "host",
-									MountPath: "/",
+									Name:      "containerd-socket",
+									MountPath: "/run/containerd/containerd.sock",
 								},
 							},
 						},
 					},
-					HostPID: true,
-					HostIPC: true,
 					Volumes: []corev1.Volume{
 						{
-							Name: "host",
+							Name: "containerd-socket",
 							VolumeSource: corev1.VolumeSource{
 								HostPath: &corev1.HostPathVolumeSource{
-									Path: "/",
-									Type: ptr.To(corev1.HostPathDirectory),
+									Path: "/run/containerd/containerd.sock",
 								},
 							},
 						},

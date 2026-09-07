@@ -23,7 +23,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
-	"sigs.k8s.io/cluster-api/errors"
+	"sigs.k8s.io/cluster-api/api/deprecated/errors"
 )
 
 // VSphereMachineVolume defines a PVC attachment.
@@ -114,6 +114,32 @@ type VSphereMachineSpec struct {
 	// naming allows configuring the naming strategy used when calculating the name of the VirtualMachine.
 	// +optional
 	Naming VirtualMachineNamingSpec `json:"naming,omitempty,omitzero"`
+
+	// policies specifies a list of optional infrastructure policies to be applied to the virtual machine.
+	// +optional
+	// +listType=atomic
+	// +kubebuilder:validation:MinItems=1
+	// +kubebuilder:validation:MaxItems=64
+	Policies []PolicyRef `json:"policies,omitempty"`
+}
+
+// PolicyRef identifies an optional infrastructure policy to specify for the virtual machine by name and kind.
+type PolicyRef struct {
+	// name of the infrastructure policy.
+	// name must consist of lower case alphanumeric characters, '-' or '.', and must start and end with an alphanumeric character.
+	// +required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=253
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$`
+	Name string `json:"name,omitempty"`
+
+	// kind of the infrastructure policy object being referenced.
+	// kind must be a CamelCase Kubernetes Kind starting with an uppercase letter (e.g. ComputePolicy).
+	// +required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern=`^[a-zA-Z]([-a-zA-Z0-9]*[a-zA-Z0-9])?$`
+	Kind string `json:"kind,omitempty"`
 }
 
 // VSphereMachineNetworkSpec defines the network configuration of a VSphereMachine.
@@ -123,6 +149,16 @@ type VSphereMachineNetworkSpec struct {
 	//
 	// +optional
 	Interfaces InterfacesSpec `json:"interfaces,omitempty,omitzero"`
+
+	// vlans is a list of VLAN sub-interfaces to be configured on the secondary
+	// network interfaces. Each VLAN is linked to a specific secondary interface
+	// via the link field.
+	//
+	// +kubebuilder:validation:MinItems=1
+	// +kubebuilder:validation:MaxItems=100
+	// +listType=atomic
+	// +optional
+	VLANs []VLANSpec `json:"vlans,omitempty"`
 }
 
 // IsDefined returns true if the VSphereMachineNetworkSpec is defined.
@@ -408,6 +444,39 @@ type VSphereMachineV1Beta1DeprecatedStatus struct {
 	FailureMessage *string `json:"failureMessage,omitempty"` //nolint:kubeapilinter // field will be removed when v1beta1 is removed
 }
 
+// VLANSpec defines a VLAN sub-interface configuration linked to a secondary interface.
+type VLANSpec struct {
+	// name is the name of the VLAN sub-interface as it appears inside
+	// the guest operating system.
+	//
+	// The name must conform to Linux network interface naming rules:
+	// it must be between 1 and 15 characters long, start with an
+	// alphanumeric character, and contain only alphanumeric characters,
+	// hyphens, underscores, or dots.
+	//
+	// +required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=15
+	// +kubebuilder:validation:Pattern="^[a-zA-Z0-9][a-zA-Z0-9._-]*$"
+	Name string `json:"name,omitempty"`
+
+	// id is the VLAN ID used to tag traffic on this sub-interface,
+	// a number between 0 and 4094.
+	//
+	// +required
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=4094
+	ID *int32 `json:"id,omitempty"`
+
+	// link is the name of the secondary interface this VLAN is associated with.
+	//
+	// +required
+	// +kubebuilder:validation:Pattern="^[a-z0-9]{2,}$"
+	// +kubebuilder:validation:MinLength=2
+	// +kubebuilder:validation:MaxLength=15
+	Link string `json:"link,omitempty"`
+}
+
 // VSphereMachine is the Schema for the vspheremachines API
 //
 // +kubebuilder:object:root=true
@@ -424,6 +493,7 @@ type VSphereMachineV1Beta1DeprecatedStatus struct {
 // +kubebuilder:printcolumn:name="Provisioned",type="string",JSONPath=".status.initialization.provisioned",description="VSphereMachine is provisioned"
 // +kubebuilder:printcolumn:name="Phase",type="string",JSONPath=".status.phase",description="VSphereMachine phase"
 // +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp",description="Time duration since creation of VSphereMachine"
+// +kubebuilder:validation:XValidation:rule="has(self.spec.policies) == has(oldSelf.spec.policies) && (!has(self.spec.policies) || self.spec.policies == oldSelf.spec.policies)",message="policies are immutable after creation"
 type VSphereMachine struct {
 	metav1.TypeMeta `json:",inline"`
 	// metadata is the standard object's metadata.

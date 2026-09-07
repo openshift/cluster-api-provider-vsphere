@@ -25,7 +25,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/pkg/errors"
+	pkgerrors "github.com/pkg/errors"
 )
 
 const gcfgTag = "gcfg"
@@ -36,7 +36,7 @@ var iniEscapeChars = regexp.MustCompile(`([\\"])`)
 // configuration data.
 func (c *CPIConfig) MarshalINI() ([]byte, error) {
 	if c == nil {
-		return nil, errors.New("config is nil")
+		return nil, pkgerrors.New("config is nil")
 	}
 
 	buf := &bytes.Buffer{}
@@ -90,7 +90,7 @@ func (c *CPIConfig) marshalINISectionProperties(
 	sectionValue reflect.Value,
 	sectionName string) error {
 	switch sectionValue.Kind() {
-	case reflect.Interface, reflect.Ptr:
+	case reflect.Interface, reflect.Pointer:
 		return c.marshalINISectionProperties(out, sectionValue.Elem(), sectionName)
 	}
 
@@ -114,7 +114,7 @@ func (c *CPIConfig) marshalINISectionProperties(
 		}
 
 		switch propertyValue.Kind() {
-		case reflect.Interface, reflect.Ptr:
+		case reflect.Interface, reflect.Pointer:
 			propertyValue = propertyValue.Elem()
 		}
 
@@ -172,7 +172,7 @@ func IsNotEmpty(obj interface{}) bool {
 // isEmpty returns true if an object's fields are all set to their empty values.
 func isEmpty(val reflect.Value) bool {
 	switch val.Kind() {
-	case reflect.Interface, reflect.Ptr:
+	case reflect.Interface, reflect.Pointer:
 		return val.IsNil() || isEmpty(val.Elem())
 
 	case reflect.Struct:
@@ -200,6 +200,6 @@ func isEmpty(val reflect.Value) bool {
 		return val.Int() == 0
 
 	default:
-		panic(errors.Errorf("invalid kind: %s", val.Kind()))
+		panic(pkgerrors.Errorf("invalid kind: %s", val.Kind()))
 	}
 }

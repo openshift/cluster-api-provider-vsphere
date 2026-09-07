@@ -20,8 +20,11 @@ import (
 	"testing"
 
 	vmoprv1alpha5 "github.com/vmware-tanzu/vm-operator/api/v1alpha5"
+	"k8s.io/apimachinery/pkg/api/apitesting/fuzzer"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	runtimeserializer "k8s.io/apimachinery/pkg/runtime/serializer"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	"sigs.k8s.io/randfill"
 
 	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/conversion"
 	vmoprvhub "sigs.k8s.io/cluster-api-provider-vsphere/pkg/conversion/api/vmoperator/hub"
@@ -39,6 +42,9 @@ func TestFuzzyConversion(t *testing.T) {
 		Converter: converter,
 		Hub:       &vmoprvhub.VirtualMachine{},
 		Spoke:     &vmoprv1alpha5.VirtualMachine{},
+		FuzzerFuncs: []fuzzer.FuzzerFuncs{
+			virtualMachineFuncs,
+		},
 	}))
 	t.Run("for VirtualMachineClass", conversiontest.RoundTripTest(conversiontest.RoundTripTestInput{
 		Converter: converter,
@@ -59,6 +65,9 @@ func TestFuzzyConversion(t *testing.T) {
 		Converter: converter,
 		Hub:       &vmoprvhub.VirtualMachineService{},
 		Spoke:     &vmoprv1alpha5.VirtualMachineService{},
+		FuzzerFuncs: []fuzzer.FuzzerFuncs{
+			virtualMachineServiceFuncs,
+		},
 	}))
 	t.Run("for VirtualMachineSetResourcePolicy", conversiontest.RoundTripTest(conversiontest.RoundTripTestInput{
 		Converter: converter,
@@ -70,4 +79,40 @@ func TestFuzzyConversion(t *testing.T) {
 		Hub:       &vmoprvhub.ClusterVirtualMachineImage{},
 		Spoke:     &vmoprv1alpha5.ClusterVirtualMachineImage{},
 	}))
+}
+
+func virtualMachineFuncs(_ runtimeserializer.CodecFactory) []interface{} {
+	return []interface{}{
+		hubVirtualMachineNetworkSpec,
+		hubVirtualMachineNetworkInterfaceSpec,
+	}
+}
+
+func virtualMachineServiceFuncs(_ runtimeserializer.CodecFactory) []interface{} {
+	return []interface{}{
+		hubVirtualMachineServiceSpec,
+	}
+}
+
+func hubVirtualMachineServiceSpec(in *vmoprvhub.VirtualMachineServiceSpec, c randfill.Continue) {
+	c.FillNoCustom(in)
+	in.IPFamilies = nil
+	in.IPFamilyPolicy = nil
+}
+
+func hubVirtualMachineNetworkInterfaceSpec(in *vmoprvhub.VirtualMachineNetworkInterfaceSpec, c randfill.Continue) {
+	c.FillNoCustom(in)
+	// Fields existing in hub but not in v1alpha5.VirtualMachineNetworkInterfaceSpec
+	in.AdvancedProperties = nil
+	in.IPAMModes = nil
+	in.Type = ""
+	in.VMXNet3 = nil
+	in.VNUMANodeID = nil
+}
+
+func hubVirtualMachineNetworkSpec(in *vmoprvhub.VirtualMachineNetworkSpec, c randfill.Continue) {
+	c.FillNoCustom(in)
+	// VLANs exists in hub and v1alpha6 but not in v1alpha5; zero it so the
+	// hub-spoke-hub round-trip test does not report spurious data loss.
+	in.VLANs = nil
 }
