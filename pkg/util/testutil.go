@@ -19,7 +19,9 @@ package util
 import (
 	netopv1 "github.com/vmware-tanzu/net-operator-api/api/v1alpha1"
 	vmoprv1alpha5 "github.com/vmware-tanzu/vm-operator/api/v1alpha5"
+	vmoprv1alpha6 "github.com/vmware-tanzu/vm-operator/api/v1alpha6"
 	ncpv1 "github.com/vmware-tanzu/vm-operator/external/ncp/api/v1alpha1"
+	topologyv1 "github.com/vmware-tanzu/vm-operator/external/tanzu-topology/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -31,7 +33,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	vmwarev1 "sigs.k8s.io/cluster-api-provider-vsphere/api/supervisor/v1beta2"
-	topologyv1 "sigs.k8s.io/cluster-api-provider-vsphere/internal/apis/topology/v1alpha1"
 	capvcontext "sigs.k8s.io/cluster-api-provider-vsphere/pkg/context"
 	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/context/vmware"
 	conversionapi "sigs.k8s.io/cluster-api-provider-vsphere/pkg/conversion/api"
@@ -58,6 +59,11 @@ func CreateCluster(clusterName string) *clusterv1.Cluster {
 			Namespace: corev1.NamespaceDefault,
 		},
 		Spec: clusterv1.ClusterSpec{
+			ClusterNetwork: clusterv1.ClusterNetwork{
+				Pods: clusterv1.NetworkRanges{
+					CIDRBlocks: []string{"192.168.0.0/16"},
+				},
+			},
 			InfrastructureRef: clusterv1.ContractVersionedObjectReference{
 				APIGroup: vmwarev1.GroupVersion.Group,
 				Kind:     infraClusterKind,
@@ -152,6 +158,7 @@ func createScheme() *runtime.Scheme {
 	utilruntime.Must(topologyv1.AddToScheme(scheme))
 	utilruntime.Must(vmoprvhub.AddToScheme(scheme))
 	utilruntime.Must(vmoprv1alpha5.AddToScheme(scheme))
+	utilruntime.Must(vmoprv1alpha6.AddToScheme(scheme))
 	utilruntime.Must(netopv1.AddToScheme(scheme))
 	utilruntime.Must(ncpv1.AddToScheme(scheme))
 	return scheme
@@ -169,6 +176,36 @@ func CreateClusterContext(cluster *clusterv1.Cluster, vsphereCluster *vmwarev1.V
 			&vmoprv1alpha5.VirtualMachine{},
 		).Build(),
 		conversionapi.DefaultConverterFor(vmoprv1alpha5.GroupVersion),
+	)
+	if err != nil {
+		panic(err)
+	}
+
+	// Build the cluster context.
+	return &vmware.ClusterContext{
+			Cluster:        cluster,
+			VSphereCluster: vsphereCluster,
+		}, &capvcontext.ControllerManagerContext{
+			Logger: klog.Background().WithName("controller-manager-logger"),
+			Scheme: scheme,
+			// NOTE: use a client that can handle conversions from API versions that exist in the supervisor
+			// and the internal hub version used in the reconciler.
+			Client: cc,
+		}
+}
+
+func CreateClusterContextV1Alpha6(cluster *clusterv1.Cluster, vsphereCluster *vmwarev1.VSphereCluster) (*vmware.ClusterContext, *capvcontext.ControllerManagerContext) {
+	scheme := createScheme()
+
+	cc, err := conversionclient.NewWithConverter(
+		fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(
+			&vmoprvhub.VirtualMachineService{},
+			&vmoprvhub.VirtualMachine{},
+			// NOTE: use vm-operator native types for testing (the reconciler uses the internal hub version).
+			&vmoprv1alpha6.VirtualMachineService{},
+			&vmoprv1alpha6.VirtualMachine{},
+		).Build(),
+		conversionapi.DefaultConverterFor(vmoprv1alpha6.GroupVersion),
 	)
 	if err != nil {
 		panic(err)

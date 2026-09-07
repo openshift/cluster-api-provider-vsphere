@@ -41,7 +41,7 @@ const (
 // VSphereCluster's Ready condition and corresponding reasons that will be used in v1Beta2 API version.
 const (
 	// VSphereClusterReadyCondition is true if the VSphereCluster's deletionTimestamp is not set, VSphereCluster's
-	// ResourcePolicyReady, NetworkReady, LoadBalancerReady, ProviderServiceAccountsReady and ServiceDiscoveryReady conditions are true.
+	// ResourcePolicyReady, NetworkReady, LoadBalancerReady, FailureDomainsReady, ProviderServiceAccountsReady and ServiceDiscoveryReady conditions are true.
 	VSphereClusterReadyCondition = clusterv1.ReadyCondition
 
 	// VSphereClusterReadyReason surfaces when the VSphereCluster readiness criteria is met.
@@ -99,6 +99,10 @@ const (
 	// VSphereClusterLoadBalancerWaitingForIPReason surfaces when the LoadBalancer for a VSphereCluster is waiting for an IP to be assigned.
 	VSphereClusterLoadBalancerWaitingForIPReason = "WaitingForIP"
 
+	// VSphereClusterLoadBalancerWaitingForKubeadmControlPlaneSpecReadyReason surfaces when the LoadBalancer has IP(s) but CAPV is waiting for
+	// KubeadmControlPlane to have correct certSANs and observedGeneration == generation (avoids extra rollout for dual stack).
+	VSphereClusterLoadBalancerWaitingForKubeadmControlPlaneSpecReadyReason = "WaitingForKubeadmControlPlaneSpecReady"
+
 	// VSphereClusterLoadBalancerDeletingReason surfaces when the LoadBalancer for a VSphereCluster is being deleted.
 	VSphereClusterLoadBalancerDeletingReason = clusterv1.DeletingReason
 )
@@ -125,6 +129,24 @@ const (
 
 	// VSphereClusterServiceDiscoveryNotReadyReason surfaces when the service discovery for a VSphereCluster is not ready.
 	VSphereClusterServiceDiscoveryNotReadyReason = clusterv1.NotReadyReason
+)
+
+// VSphereCluster's FailureDomainsReady condition and corresponding reasons that will be used in v1Beta2 API version.
+const (
+	// VSphereClusterFailureDomainsReadyCondition documents the status of the FailureDomains discovery and filtering for a VSphereCluster.
+	VSphereClusterFailureDomainsReadyCondition = "FailureDomainsReady"
+
+	// VSphereClusterFailureDomainsReadyReason surfaces when the FailureDomains are successfully discovered and matched.
+	VSphereClusterFailureDomainsReadyReason = clusterv1.ReadyReason
+
+	// VSphereClusterFailureDomainsNotReadyReason surfaces when no failure domains match the specified control plane label selector.
+	VSphereClusterFailureDomainsNotReadyReason = clusterv1.NotReadyReason
+
+	// VSphereClusterFailureDomainsReadyInternalErrorReason surfaces unexpected failures during FailureDomains discovery.
+	VSphereClusterFailureDomainsReadyInternalErrorReason = clusterv1.InternalErrorReason
+
+	// VSphereClusterFailureDomainsReadyDeletingReason surfaces when the cluster is being deleted.
+	VSphereClusterFailureDomainsReadyDeletingReason = clusterv1.DeletingReason
 )
 
 // NSXVPC defines the configuration when the network provider is NSX-VPC.
@@ -166,6 +188,29 @@ type VSphereClusterSpec struct {
 	// network defines the network configuration for the cluster with different network providers.
 	// +optional
 	Network Network `json:"network,omitempty,omitzero"`
+
+	// failureDomains defines the failure domains.
+	// +optional
+	FailureDomains FailureDomainsSpec `json:"failureDomains,omitempty,omitzero"`
+}
+
+// FailureDomainsSpec defines the desired state of FailureDomains.
+// +kubebuilder:validation:MinProperties=1
+type FailureDomainsSpec struct {
+	// controlPlane defines the failure domains for controlPlane.
+	// +optional
+	ControlPlane FailureDomainsControlPlaneSpec `json:"controlPlane,omitempty,omitzero"`
+}
+
+// FailureDomainsControlPlaneSpec defines the control plane failure domains.
+// +kubebuilder:validation:MinProperties=1
+type FailureDomainsControlPlaneSpec struct {
+	// selector is a label selector to dynamically match supervisor's Zone CR.
+	// Note: This feature requires the NamespaceScopedZones feature gate to be enabled.
+	// If a selector is provided while the feature gate is disabled, cluster
+	// reconciliation will fail and requeue.
+	// +optional
+	Selector *metav1.LabelSelector `json:"selector,omitempty"`
 }
 
 // APIEndpoint represents a reachable Kubernetes API endpoint.
@@ -199,7 +244,7 @@ func (v APIEndpoint) String() string {
 type VSphereClusterStatus struct {
 	// conditions represents the observations of a VSphereCluster's current state.
 	// Known condition types are Ready, ResourcePolicyReady, NetworkReady, LoadBalancerReady,
-	// ProviderServiceAccountsReady, ServiceDiscoveryReady and Paused.
+	// FailureDomainsReady, ProviderServiceAccountsReady, ServiceDiscoveryReady and Paused.
 	// +optional
 	// +listType=map
 	// +listMapKey=type

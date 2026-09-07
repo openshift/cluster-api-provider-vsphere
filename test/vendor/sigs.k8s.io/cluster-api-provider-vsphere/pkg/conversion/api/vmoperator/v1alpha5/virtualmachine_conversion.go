@@ -82,6 +82,7 @@ func convert_v1alpha5_VirtualMachine_To_hub_VirtualMachine(_ context.Context, sr
 	dst.Spec.ClassName = src.Spec.ClassName
 	dst.Spec.GroupName = src.Spec.GroupName
 	dst.Spec.ImageName = src.Spec.ImageName
+	dst.Spec.MinHardwareVersion = src.Spec.MinHardwareVersion
 	if src.Spec.Network != nil {
 		dst.Spec.Network = &vmoprvhub.VirtualMachineNetworkSpec{}
 		if src.Spec.Network.Interfaces != nil {
@@ -89,13 +90,19 @@ func convert_v1alpha5_VirtualMachine_To_hub_VirtualMachine(_ context.Context, sr
 			for _, iface := range src.Spec.Network.Interfaces {
 				d := vmoprvhub.VirtualMachineNetworkInterfaceSpec{}
 				d.Addresses = iface.Addresses
+				// AdvancedProperties existing in hub but not in v1alpha5.VirtualMachineNetworkInterfaceSpec
 				d.DHCP4 = iface.DHCP4
 				d.DHCP6 = iface.DHCP6
 				d.Gateway4 = iface.Gateway4
 				d.Gateway6 = iface.Gateway6
+				d.GuestDeviceName = iface.GuestDeviceName
+				// IPAMModes existing in hub but not in v1alpha5.VirtualMachineNetworkInterfaceSpec
+				d.MACAddr = iface.MACAddr
 				if iface.MTU != nil {
 					d.MTU = ptr.To(*iface.MTU)
 				}
+				d.Name = iface.Name
+				d.Nameservers = iface.Nameservers
 				if iface.Network != nil {
 					d.Network = &vmoprvhub.PartialObjectRef{
 						TypeMeta: metav1.TypeMeta{
@@ -105,10 +112,6 @@ func convert_v1alpha5_VirtualMachine_To_hub_VirtualMachine(_ context.Context, sr
 						Name: iface.Network.Name,
 					}
 				}
-				d.GuestDeviceName = iface.GuestDeviceName
-				d.Name = iface.Name
-				d.Nameservers = iface.Nameservers
-				d.MACAddr = iface.MACAddr
 				if iface.Routes != nil {
 					d.Routes = []vmoprvhub.VirtualMachineNetworkRouteSpec{}
 					for _, route := range iface.Routes {
@@ -120,11 +123,24 @@ func convert_v1alpha5_VirtualMachine_To_hub_VirtualMachine(_ context.Context, sr
 					}
 				}
 				d.SearchDomains = iface.SearchDomains
+				// Type existing in hub but not in v1alpha5.VirtualMachineNetworkInterfaceSpec
+				// VMXNet3 existing in hub but not in v1alpha5.VirtualMachineNetworkInterfaceSpec
+				// VNUMANodeID existing in hub but not in v1alpha5.VirtualMachineNetworkInterfaceSpec
 				dst.Spec.Network.Interfaces = append(dst.Spec.Network.Interfaces, d)
 			}
 		}
+		// VLANs existing in hub but not in v1alpha5.VirtualMachineNetworkSpec
 	}
-	dst.Spec.MinHardwareVersion = src.Spec.MinHardwareVersion
+	if src.Spec.Policies != nil {
+		dst.Spec.Policies = make([]vmoprvhub.PolicySpec, len(src.Spec.Policies))
+		for i, p := range src.Spec.Policies {
+			dst.Spec.Policies[i] = vmoprvhub.PolicySpec{
+				APIVersion: p.APIVersion,
+				Kind:       p.Kind,
+				Name:       p.Name,
+			}
+		}
+	}
 	dst.Spec.PowerOffMode = vmoprvhub.VirtualMachinePowerOpMode(src.Spec.PowerOffMode)
 	dst.Spec.PowerState = vmoprvhub.VirtualMachinePowerState(src.Spec.PowerState)
 	if src.Spec.ReadinessProbe != nil {
@@ -256,6 +272,19 @@ func convert_v1alpha5_VirtualMachine_To_hub_VirtualMachine(_ context.Context, sr
 		dst.Status.Network.PrimaryIP6 = src.Status.Network.PrimaryIP6
 	}
 	dst.Status.NodeName = src.Status.NodeName
+	if src.Status.Policies != nil {
+		dst.Status.Policies = make([]vmoprvhub.PolicyStatus, len(src.Status.Policies))
+		for i, p := range src.Status.Policies {
+			dst.Status.Policies[i] = vmoprvhub.PolicyStatus{
+				PolicySpec: vmoprvhub.PolicySpec{
+					APIVersion: p.APIVersion,
+					Kind:       p.Kind,
+					Name:       p.Name,
+				},
+				Generation: p.Generation,
+			}
+		}
+	}
 	dst.Status.PowerState = vmoprvhub.VirtualMachinePowerState(src.Status.PowerState)
 	dst.Status.Zone = src.Status.Zone
 
@@ -315,6 +344,7 @@ func convert_hub_VirtualMachine_To_v1alpha5_VirtualMachine(_ context.Context, sr
 	dst.Spec.ClassName = src.Spec.ClassName
 	dst.Spec.GroupName = src.Spec.GroupName
 	dst.Spec.ImageName = src.Spec.ImageName
+	dst.Spec.MinHardwareVersion = src.Spec.MinHardwareVersion
 	if src.Spec.Network != nil {
 		dst.Spec.Network = &vmoprv1alpha5.VirtualMachineNetworkSpec{}
 		if src.Spec.Network.Interfaces != nil {
@@ -322,13 +352,19 @@ func convert_hub_VirtualMachine_To_v1alpha5_VirtualMachine(_ context.Context, sr
 			for _, iface := range src.Spec.Network.Interfaces {
 				d := vmoprv1alpha5.VirtualMachineNetworkInterfaceSpec{}
 				d.Addresses = iface.Addresses
+				// AdvancedProperties existing in hub but not in v1alpha5.VirtualMachineNetworkInterfaceSpec
 				d.DHCP4 = iface.DHCP4
 				d.DHCP6 = iface.DHCP6
 				d.Gateway4 = iface.Gateway4
 				d.Gateway6 = iface.Gateway6
+				d.GuestDeviceName = iface.GuestDeviceName
+				// IPAMModes existing in hub but not in v1alpha5.VirtualMachineNetworkInterfaceSpec
+				d.MACAddr = iface.MACAddr
 				if iface.MTU != nil {
 					d.MTU = ptr.To(*iface.MTU)
 				}
+				d.Name = iface.Name
+				d.Nameservers = iface.Nameservers
 				if iface.Network != nil {
 					d.Network = &vmoprv1alpha5common.PartialObjectRef{
 						TypeMeta: metav1.TypeMeta{
@@ -338,10 +374,6 @@ func convert_hub_VirtualMachine_To_v1alpha5_VirtualMachine(_ context.Context, sr
 						Name: iface.Network.Name,
 					}
 				}
-				d.GuestDeviceName = iface.GuestDeviceName
-				d.Name = iface.Name
-				d.Nameservers = iface.Nameservers
-				d.MACAddr = iface.MACAddr
 				if iface.Routes != nil {
 					d.Routes = []vmoprv1alpha5.VirtualMachineNetworkRouteSpec{}
 					for _, route := range iface.Routes {
@@ -353,11 +385,24 @@ func convert_hub_VirtualMachine_To_v1alpha5_VirtualMachine(_ context.Context, sr
 					}
 				}
 				d.SearchDomains = iface.SearchDomains
+				// Type existing in hub but not in v1alpha5.VirtualMachineNetworkInterfaceSpec
+				// VMXNet3 existing in hub but not in v1alpha5.VirtualMachineNetworkInterfaceSpec
+				// VNUMANodeID existing in hub but not in v1alpha5.VirtualMachineNetworkInterfaceSpec
 				dst.Spec.Network.Interfaces = append(dst.Spec.Network.Interfaces, d)
 			}
 		}
+		// VLANs existing in hub but not in v1alpha5.VirtualMachineNetworkSpec
 	}
-	dst.Spec.MinHardwareVersion = src.Spec.MinHardwareVersion
+	if src.Spec.Policies != nil {
+		dst.Spec.Policies = make([]vmoprv1alpha5.PolicySpec, len(src.Spec.Policies))
+		for i, p := range src.Spec.Policies {
+			dst.Spec.Policies[i] = vmoprv1alpha5.PolicySpec{
+				APIVersion: p.APIVersion,
+				Kind:       p.Kind,
+				Name:       p.Name,
+			}
+		}
+	}
 	dst.Spec.PowerOffMode = vmoprv1alpha5.VirtualMachinePowerOpMode(src.Spec.PowerOffMode)
 	dst.Spec.PowerState = vmoprv1alpha5.VirtualMachinePowerState(src.Spec.PowerState)
 	if src.Spec.ReadinessProbe != nil {
@@ -488,6 +533,19 @@ func convert_hub_VirtualMachine_To_v1alpha5_VirtualMachine(_ context.Context, sr
 		}
 		dst.Status.Network.PrimaryIP4 = src.Status.Network.PrimaryIP4
 		dst.Status.Network.PrimaryIP6 = src.Status.Network.PrimaryIP6
+	}
+	if src.Status.Policies != nil {
+		dst.Status.Policies = make([]vmoprv1alpha5.PolicyStatus, len(src.Status.Policies))
+		for i, p := range src.Status.Policies {
+			dst.Status.Policies[i] = vmoprv1alpha5.PolicyStatus{
+				PolicySpec: vmoprv1alpha5.PolicySpec{
+					APIVersion: p.APIVersion,
+					Kind:       p.Kind,
+					Name:       p.Name,
+				},
+				Generation: p.Generation,
+			}
+		}
 	}
 	dst.Status.PowerState = vmoprv1alpha5.VirtualMachinePowerState(src.Status.PowerState)
 	dst.Status.Zone = src.Status.Zone

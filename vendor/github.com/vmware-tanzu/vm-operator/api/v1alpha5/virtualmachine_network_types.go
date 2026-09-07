@@ -7,7 +7,7 @@ package v1alpha5
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	vmopv1common "github.com/vmware-tanzu/vm-operator/api/v1alpha5/common"
+	vmopv1a5common "github.com/vmware-tanzu/vm-operator/api/v1alpha5/common"
 )
 
 // VirtualMachineNetworkRouteSpec defines a static route for a guest.
@@ -46,7 +46,7 @@ type VirtualMachineNetworkInterfaceSpec struct {
 	//
 	// If no network is provided, then this interface will be connected to the
 	// Namespace's default network.
-	Network *vmopv1common.PartialObjectRef `json:"network,omitempty"`
+	Network *vmopv1a5common.PartialObjectRef `json:"network,omitempty"`
 
 	// +optional
 	// +kubebuilder:validation:Pattern=^\w\w+$
@@ -388,7 +388,7 @@ type VirtualMachineNetworkDHCPOptionsStatus struct {
 	// reported per interface would be:
 	// key='1', value='prepend domain-name-servers 192.0.2.1;'
 	// key='2', value='require subnet-mask, domain-name-servers;'.
-	Config []vmopv1common.KeyValuePair `json:"config,omitempty"`
+	Config []vmopv1a5common.KeyValuePair `json:"config,omitempty"`
 
 	// +optional
 
@@ -660,7 +660,7 @@ type VirtualMachineNetworkIPStackStatus struct {
 	// 'key=value' as provided by the underlying provider. For example, on
 	// Linux and/or BSD, the systcl -a output would be reported as:
 	// key='5', value='net.ipv4.tcp_keepalive_time = 7200'.
-	KernelConfig []vmopv1common.KeyValuePair `json:"kernelConfig,omitempty"`
+	KernelConfig []vmopv1a5common.KeyValuePair `json:"kernelConfig,omitempty"`
 }
 
 // VirtualMachineNetworkStatus defines the observed state of a VM's
