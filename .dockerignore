@@ -6,6 +6,7 @@
 bin/
 **/*.yaml
 !test/framework/vmoperator/vmoperator-capabilities-9.1.yaml
+!test/framework/vmoperator/vmoperator-capabilities-9.2.yaml
 out/
 docs/
 packaging/
@@ -42,9 +43,6 @@ go.work.sum
 
 # Output of the go coverage tool, specifically when used with LiteIDE
 **/*.out
-
-# Openshift specific overriding
-!openshift/capi-operator-manifests/**
 
 # Common editor / temporary files
 **/*~

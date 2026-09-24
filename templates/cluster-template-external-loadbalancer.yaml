@@ -130,6 +130,8 @@ spec:
       sudo: ALL=(ALL) NOPASSWD:ALL
   machineTemplate:
     spec:
+      deletion:
+        nodeDeletionTimeoutSeconds: 0
       infrastructureRef:
         apiGroup: infrastructure.cluster.x-k8s.io
         kind: VSphereMachineTemplate
@@ -190,6 +192,8 @@ spec:
           kind: KubeadmConfigTemplate
           name: '${CLUSTER_NAME}-md-0'
       clusterName: '${CLUSTER_NAME}'
+      deletion:
+        nodeDeletionTimeoutSeconds: 0
       infrastructureRef:
         apiGroup: infrastructure.cluster.x-k8s.io
         kind: VSphereMachineTemplate
@@ -268,6 +272,7 @@ data:
       name: csi.vsphere.vmware.com
     spec:
       attachRequired: true
+      podInfoOnMount: false
     ---
     apiVersion: v1
     kind: ServiceAccount
@@ -587,6 +592,7 @@ data:
           app: vsphere-csi-controller
       strategy:
         rollingUpdate:
+          maxSurge: 0
           maxUnavailable: 1
         type: RollingUpdate
       template:
@@ -742,7 +748,7 @@ data:
             name: vsphere-syncer
             ports:
             - containerPort: 2113
-              name: prometheus
+              name: prometheus-sync
               protocol: TCP
             securityContext:
               runAsGroup: 65532
@@ -1213,6 +1219,14 @@ data:
           - list
           - watch
           - update
+      - apiGroups:
+          - "discovery.k8s.io"
+        resources:
+          - endpointslices
+        verbs:
+          - get
+          - list
+          - watch
       - apiGroups:
           - ""
         resources:

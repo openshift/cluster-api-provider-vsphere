@@ -25,7 +25,8 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	"github.com/pkg/errors"
+	pkgerrors "github.com/pkg/errors"
+	topologyv1 "github.com/vmware-tanzu/vm-operator/external/tanzu-topology/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -48,7 +49,6 @@ import (
 
 	infrav1 "sigs.k8s.io/cluster-api-provider-vsphere/api/govmomi/v1beta2"
 	vmwarev1 "sigs.k8s.io/cluster-api-provider-vsphere/api/supervisor/v1beta2"
-	topologyv1 "sigs.k8s.io/cluster-api-provider-vsphere/internal/apis/topology/v1alpha1"
 	vcsimv1 "sigs.k8s.io/cluster-api-provider-vsphere/test/infrastructure/vcsim/api/v1alpha1"
 )
 
@@ -146,12 +146,12 @@ var _ = Describe("Ensure OwnerReferences and Finalizers are resilient [vcsim] [s
 					Eventually(func() error {
 						machineList := &clusterv1.MachineList{}
 						if err := proxy.GetClient().List(ctx, machineList, ctrlclient.InNamespace(namespace)); err != nil {
-							return errors.Wrap(err, "list machines")
+							return pkgerrors.Wrap(err, "list machines")
 						}
 
 						for _, machine := range machineList.Items {
 							if !conditions.IsTrue(&machine, clusterv1.MachineNodeHealthyCondition) {
-								return errors.Errorf("machine %q does not have %q condition set to true", machine.GetName(), clusterv1.MachineNodeHealthyCondition)
+								return pkgerrors.Errorf("machine %q does not have %q condition set to true", machine.GetName(), clusterv1.MachineNodeHealthyCondition)
 							}
 						}
 
@@ -403,7 +403,7 @@ func checkSupervisorVSphereClusterFailureDomains(ctx context.Context, proxy fram
 	avalabilityZones := &topologyv1.AvailabilityZoneList{}
 	Expect(proxy.GetClient().List(ctx, avalabilityZones)).To(Succeed())
 
-	wantFailureDomains := []clusterv1.FailureDomain{}
+	wantFailureDomains := make([]clusterv1.FailureDomain, 0, len(avalabilityZones.Items))
 	for _, zone := range avalabilityZones.Items {
 		wantFailureDomains = append(wantFailureDomains, clusterv1.FailureDomain{
 			Name:         zone.Name,
@@ -434,7 +434,7 @@ func checkClusterIdentitySecretOwnerRefAndFinalizer(ctx context.Context, c ctrlc
 			return err
 		}
 		if !sets.NewString(s.GetFinalizers()...).Equal(sets.NewString(infrav1.SecretIdentitySetFinalizer)) {
-			return errors.Errorf("the ClusterIdentitySecret %s does not have finalizers", klog.KRef(clusterIdentitySecretNamespace, clusterIdentityName))
+			return pkgerrors.Errorf("the ClusterIdentitySecret %s does not have finalizers", klog.KRef(clusterIdentitySecretNamespace, clusterIdentityName))
 		}
 		return nil
 	}, 1*time.Minute).Should(Succeed())
@@ -443,7 +443,7 @@ func checkClusterIdentitySecretOwnerRefAndFinalizer(ctx context.Context, c ctrlc
 	By("Removing all the ownerReferences and finalizers for the ClusterIdentitySecret")
 	helper, err := patch.NewHelper(s, c)
 	Expect(err).ToNot(HaveOccurred())
-	newOwners := []metav1.OwnerReference{}
+	newOwners := make([]metav1.OwnerReference, 0, len(s.GetOwnerReferences()))
 	for _, owner := range s.GetOwnerReferences() {
 		var gv schema.GroupVersion
 		gv, err := schema.ParseGroupVersion(owner.APIVersion)
@@ -470,7 +470,7 @@ func checkClusterIdentitySecretOwnerRefAndFinalizer(ctx context.Context, c ctrlc
 			return err
 		}
 		if !sets.NewString(s.GetFinalizers()...).Equal(sets.NewString(infrav1.SecretIdentitySetFinalizer)) {
-			return errors.Errorf("the ClusterIdentitySecret %s does not have finalizers", klog.KRef(clusterIdentitySecretNamespace, clusterIdentityName))
+			return pkgerrors.Errorf("the ClusterIdentitySecret %s does not have finalizers", klog.KRef(clusterIdentitySecretNamespace, clusterIdentityName))
 		}
 		return nil
 	}, 5*time.Minute).Should(Succeed())

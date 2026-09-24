@@ -25,7 +25,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/pkg/errors"
+	pkgerrors "github.com/pkg/errors"
+	topologyv1 "github.com/vmware-tanzu/vm-operator/external/tanzu-topology/api/v1alpha1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
@@ -40,7 +41,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	vmwarev1 "sigs.k8s.io/cluster-api-provider-vsphere/api/supervisor/v1beta2"
-	topologyv1 "sigs.k8s.io/cluster-api-provider-vsphere/internal/apis/topology/v1alpha1"
 	vmoprvhub "sigs.k8s.io/cluster-api-provider-vsphere/pkg/conversion/api/vmoperator/hub"
 	conversionclient "sigs.k8s.io/cluster-api-provider-vsphere/pkg/conversion/client"
 	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/services/vmoperator"
@@ -151,7 +151,7 @@ func (r *VirtualMachineGroupReconciler) reconcileNormal(ctx context.Context, clu
 
 		log.Info("Creating VirtualMachineGroup", "members", nameList(memberNames(newVMG)))
 		if err := r.Client.Create(ctx, newVMG); err != nil {
-			return reconcile.Result{}, errors.Wrapf(err, "failed to create new VMG")
+			return reconcile.Result{}, pkgerrors.Wrapf(err, "failed to create new VMG")
 		}
 		return reconcile.Result{}, nil
 	}
@@ -184,10 +184,10 @@ func (r *VirtualMachineGroupReconciler) reconcileNormal(ctx context.Context, clu
 	}
 	patch, err := conversionclient.MergeFromWithOptions(ctx, r.Client, currentVMG, client.MergeFromWithOptimisticLock{})
 	if err != nil {
-		return reconcile.Result{}, errors.Wrapf(err, "failed to create patch for VirtualMachineGroup object")
+		return reconcile.Result{}, pkgerrors.Wrapf(err, "failed to create patch for VirtualMachineGroup object")
 	}
 	if err := r.Client.Patch(ctx, updatedVMG, patch); err != nil {
-		return reconcile.Result{}, errors.Wrapf(err, "failed to patch VirtualMachineGroup object")
+		return reconcile.Result{}, pkgerrors.Wrapf(err, "failed to patch VirtualMachineGroup object")
 	}
 	return reconcile.Result{}, nil
 }
@@ -500,7 +500,7 @@ func (r *VirtualMachineGroupReconciler) getVirtualMachineGroup(ctx context.Conte
 	vmg := &vmoprvhub.VirtualMachineGroup{}
 	if err := r.Client.Get(ctx, client.ObjectKeyFromObject(cluster), vmg); err != nil {
 		if !apierrors.IsNotFound(err) {
-			return nil, errors.Wrapf(err, "failed to get VirtualMachineGroup %s", klog.KObj(vmg))
+			return nil, pkgerrors.Wrapf(err, "failed to get VirtualMachineGroup %s", klog.KObj(vmg))
 		}
 		return nil, nil
 	}
@@ -514,7 +514,7 @@ func (r *VirtualMachineGroupReconciler) getVSphereMachines(ctx context.Context, 
 		client.MatchingLabels{clusterv1.ClusterNameLabel: cluster.Name},
 		client.HasLabels{clusterv1.MachineDeploymentNameLabel},
 	); err != nil {
-		return nil, errors.Wrap(err, "failed to get VSphereMachines")
+		return nil, pkgerrors.Wrap(err, "failed to get VSphereMachines")
 	}
 	return vsMachineList.Items, nil
 }
@@ -525,7 +525,7 @@ func (r *VirtualMachineGroupReconciler) getMachineDeployments(ctx context.Contex
 		client.InNamespace(cluster.Namespace),
 		client.MatchingLabels{clusterv1.ClusterNameLabel: cluster.Name},
 	); err != nil {
-		return nil, errors.Wrap(err, "failed to list MachineDeployments")
+		return nil, pkgerrors.Wrap(err, "failed to list MachineDeployments")
 	}
 	return machineDeployments.Items, nil
 }
