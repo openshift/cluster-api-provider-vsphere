@@ -131,6 +131,11 @@ type VirtualMachineImageCacheFileStatus struct {
 
 	// +optional
 
+	// Name describes the original name of the file.
+	Name string `json:"name,omitempty"`
+
+	// +optional
+
 	// DiskType describes the type of disk.
 	// This field is only non-empty when Type=Disk.
 	DiskType VolumeType `json:"diskType,omitempty"`
@@ -232,7 +237,6 @@ func (i *VirtualMachineImageCache) SetConditions(conditions []metav1.Condition) 
 
 // +kubebuilder:object:root=true
 // +kubebuilder:resource:scope=Namespaced,shortName=vmic;vmicache;vmimagecache
-// +kubebuilder:storageversion
 // +kubebuilder:subresource:status
 
 // VirtualMachineImageCache is the schema for the

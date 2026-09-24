@@ -19,7 +19,7 @@ package controllers
 import (
 	"context"
 
-	"github.com/pkg/errors"
+	pkgerrors "github.com/pkg/errors"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	kerrors "k8s.io/apimachinery/pkg/util/errors"
 	capicontrollerutil "sigs.k8s.io/cluster-api/util/controller"
@@ -44,6 +44,7 @@ type VMOperatorDependenciesReconciler struct {
 // +kubebuilder:rbac:groups=vcsim.infrastructure.cluster.x-k8s.io,resources=vmoperatordependencies,verbs=get;list;watch;patch
 // +kubebuilder:rbac:groups=vcsim.infrastructure.cluster.x-k8s.io,resources=vmoperatordependencies/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups="",resources=services;services/status,verbs=get;list;watch;create;update;patch
+// +kubebuilder:rbac:groups=infra.vmware.com,resources=storagepolicies,verbs=get;list;watch;create;update;patch
 
 func (r *VMOperatorDependenciesReconciler) Reconcile(ctx context.Context, req ctrl.Request) (_ ctrl.Result, reterr error) {
 	// Fetch the VMOperatorDependencies instance
@@ -114,10 +115,10 @@ func (r *VMOperatorDependenciesReconciler) SetupWithManager(ctx context.Context,
 		For(&vcsimv1.VMOperatorDependencies{}).
 		WithOptions(options).
 		WithEventFilter(predicates.ResourceNotPausedAndHasFilterLabel(mgr.GetScheme(), predicateLog, r.WatchFilterValue)).
-		Complete(r)
+		Complete(ctx, r)
 
 	if err != nil {
-		return errors.Wrap(err, "failed setting up with a controller manager")
+		return pkgerrors.Wrap(err, "failed setting up with a controller manager")
 	}
 	return nil
 }

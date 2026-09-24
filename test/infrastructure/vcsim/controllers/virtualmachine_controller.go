@@ -25,19 +25,21 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/pkg/errors"
+	pkgerrors "github.com/pkg/errors"
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	kerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/klog/v2"
 	"k8s.io/utils/ptr"
-	clusterv1beta1 "sigs.k8s.io/cluster-api/api/core/v1beta1"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	inmemoryruntime "sigs.k8s.io/cluster-api/test/infrastructure/inmemory/pkg/runtime"
 	inmemoryserver "sigs.k8s.io/cluster-api/test/infrastructure/inmemory/pkg/server"
+	capiutil "sigs.k8s.io/cluster-api/util"
 	"sigs.k8s.io/cluster-api/util/annotations"
 	"sigs.k8s.io/cluster-api/util/conditions"
 	capicontrollerutil "sigs.k8s.io/cluster-api/util/controller"
@@ -55,6 +57,7 @@ import (
 	vcsimhelpers "sigs.k8s.io/cluster-api-provider-vsphere/internal/test/helpers/vcsim"
 	vmoprvhub "sigs.k8s.io/cluster-api-provider-vsphere/pkg/conversion/api/vmoperator/hub"
 	conversionclient "sigs.k8s.io/cluster-api-provider-vsphere/pkg/conversion/client"
+	servicesvmoperator "sigs.k8s.io/cluster-api-provider-vsphere/pkg/services/vmoperator"
 	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/session"
 	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/util"
 	"sigs.k8s.io/cluster-api-provider-vsphere/test/framework/vmoperator"
@@ -73,8 +76,10 @@ type VirtualMachineReconciler struct {
 
 // +kubebuilder:rbac:groups=vmoperator.vmware.com,resources=virtualmachines,verbs=get;list;watch;update;patch;delete
 // +kubebuilder:rbac:groups=vmoperator.vmware.com,resources=virtualmachines/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=vmoperator.vmware.com,resources=virtualmachines/finalizers,verbs=get;update;patch
 // +kubebuilder:rbac:groups=vmware.infrastructure.cluster.x-k8s.io,resources=vsphereclusters,verbs=get;list;watch
 // +kubebuilder:rbac:groups=vmware.infrastructure.cluster.x-k8s.io,resources=vspheremachines,verbs=get;list;watch
+// +kubebuilder:rbac:groups=vmware.infrastructure.cluster.x-k8s.io,resources=vspheremachines/finalizers,verbs=get;update;patch
 // +kubebuilder:rbac:groups=cluster.x-k8s.io,resources=machines,verbs=get;list;watch;update;patch
 // +kubebuilder:rbac:groups=cluster.x-k8s.io,resources=clusters,verbs=get;list;watch;update;patch
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch
@@ -93,11 +98,6 @@ func (r *VirtualMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		return ctrl.Result{}, err
 	}
 
-	// Add finalizer first if not set to avoid the race condition between init and delete.
-	if finalizerAdded, err := ensureFinalizer(ctx, r.Client, virtualMachine, vcsimv1.VMFinalizer); err != nil || finalizerAdded {
-		return ctrl.Result{}, err
-	}
-
 	// Fetch the owner VSphereMachine.
 	// Note: Temporarily using a local copy of util.GetOwnerVSphereMachine until this controller can be migrated to v1beta2.
 	vSphereMachine, err := GetOwnerVMWareMachine(ctx, r.Client, virtualMachine.ObjectMeta)
@@ -113,7 +113,7 @@ func (r *VirtualMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	ctx = ctrl.LoggerInto(ctx, log)
 
 	// Fetch the Machine.
-	machine, err := getOwnerMachineV1Beta1(ctx, r.Client, vSphereMachine.ObjectMeta)
+	machine, err := capiutil.GetOwnerMachine(ctx, r.Client, vSphereMachine.ObjectMeta)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -125,20 +125,20 @@ func (r *VirtualMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	ctx = ctrl.LoggerInto(ctx, log)
 
 	// Fetch the Cluster.
-	cluster, err := getClusterV1Beta1FromMetadata(ctx, r.Client, machine.ObjectMeta)
+	cluster, err := capiutil.GetClusterFromMetadata(ctx, r.Client, machine.ObjectMeta)
 	if err != nil {
 		log.Info("VSphereMachine owner Machine is missing cluster label or cluster does not exist")
 		return ctrl.Result{}, err
 	}
 	if cluster == nil {
-		log.Info(fmt.Sprintf("Please associate this machine with a cluster using the label %s: <name of cluster>", clusterv1beta1.ClusterNameLabel))
+		log.Info(fmt.Sprintf("Please associate this machine with a cluster using the label %s: <name of cluster>", clusterv1.ClusterNameLabel))
 		return ctrl.Result{}, nil
 	}
 	log = log.WithValues("Cluster", klog.KObj(cluster))
 	ctx = ctrl.LoggerInto(ctx, log)
 
 	// Return early if the object or Cluster is paused.
-	if cluster.Spec.Paused || annotations.HasPaused(virtualMachine) {
+	if ptr.Deref(cluster.Spec.Paused, false) || annotations.HasPaused(virtualMachine) {
 		log.Info("Reconciliation is paused for this object")
 		return ctrl.Result{}, nil
 	}
@@ -155,6 +155,11 @@ func (r *VirtualMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	}
 	log = log.WithValues("VSphereCluster", klog.KObj(vsphereCluster))
 	ctx = ctrl.LoggerInto(ctx, log)
+
+	// Add finalizer first if not set to avoid the race condition between init and delete.
+	if finalizerAdded, err := ensureFinalizer(ctx, r.Client, virtualMachine, vcsimv1.VMFinalizer); err != nil || finalizerAdded {
+		return ctrl.Result{}, err
+	}
 
 	// Compute the resource group unique name.
 	resourceGroup := klog.KObj(cluster).String()
@@ -175,11 +180,11 @@ func (r *VirtualMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 
 		if err := inmemoryClient.Get(ctx, client.ObjectKeyFromObject(ns), ns); err != nil {
 			if !apierrors.IsNotFound(err) {
-				return ctrl.Result{}, errors.Wrapf(err, "failed to get %s Namespace", nsName)
+				return ctrl.Result{}, pkgerrors.Wrapf(err, "failed to get %s Namespace", nsName)
 			}
 
 			if err := inmemoryClient.Create(ctx, ns); err != nil && !apierrors.IsAlreadyExists(err) {
-				return ctrl.Result{}, errors.Wrapf(err, "failed to create %s Namespace", nsName)
+				return ctrl.Result{}, pkgerrors.Wrapf(err, "failed to create %s Namespace", nsName)
 			}
 		}
 	}
@@ -201,7 +206,7 @@ func (r *VirtualMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				// This can happen e.g. if the vcsim controller is restarted
 				orig := cluster.DeepCopy()
 				cluster.Spec.ControlPlaneEndpoint.Host = c.Status.Host
-				if cluster.Spec.Topology != nil {
+				if cluster.Spec.Topology.IsDefined() {
 					for i, variable := range cluster.Spec.Topology.Variables {
 						if variable.Name == "controlPlaneIpAddr" {
 							cluster.Spec.Topology.Variables[i].Value = apiextensionsv1.JSON{Raw: []byte(fmt.Sprintf("%q", c.Status.Host))}
@@ -210,26 +215,26 @@ func (r *VirtualMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 					}
 				}
 				if err := r.Client.Patch(ctx, cluster, client.MergeFrom(orig)); err != nil {
-					return ctrl.Result{}, errors.Wrap(err, "failed to fixup controlPlaneEndpoint on Cluster")
+					return ctrl.Result{}, pkgerrors.Wrap(err, "failed to fixup controlPlaneEndpoint on Cluster")
 				}
 			}
 
 			// Note: Check if the kubeconfig secret has the wrong controlPlaneEndpoint, if yes, fix it up
 			kubeconfigSecret := &corev1.Secret{}
 			if err := r.Client.Get(ctx, client.ObjectKey{Namespace: cluster.Namespace, Name: cluster.Name + "-kubeconfig"}, kubeconfigSecret); err != nil {
-				return ctrl.Result{}, errors.Wrap(err, "failed to get kubeconfig Secret for Cluster")
+				return ctrl.Result{}, pkgerrors.Wrap(err, "failed to get kubeconfig Secret for Cluster")
 			}
 			data, ok := kubeconfigSecret.Data[secret.KubeconfigDataName]
 			if !ok {
-				return ctrl.Result{}, errors.Errorf("missing key %q in kubeconfig Secret for Cluster", secret.KubeconfigDataName)
+				return ctrl.Result{}, pkgerrors.Errorf("missing key %q in kubeconfig Secret for Cluster", secret.KubeconfigDataName)
 			}
 			config, err := clientcmd.Load(data)
 			if err != nil {
-				return ctrl.Result{}, errors.Wrap(err, "failed to convert kubeconfig Secret into a clientcmdapi.Config")
+				return ctrl.Result{}, pkgerrors.Wrap(err, "failed to convert kubeconfig Secret into a clientcmdapi.Config")
 			}
 			kubeconfigCluster, ok := config.Clusters[cluster.Name]
 			if !ok {
-				return ctrl.Result{}, errors.Errorf("missing clusters map entry in kubeconfig Secret for Cluster")
+				return ctrl.Result{}, pkgerrors.Errorf("missing clusters map entry in kubeconfig Secret for Cluster")
 			}
 			desiredServer := fmt.Sprintf("https://%s", net.JoinHostPort(c.Status.Host, strconv.Itoa(int(c.Status.Port))))
 			if kubeconfigCluster.Server != desiredServer {
@@ -255,7 +260,7 @@ func (r *VirtualMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			break
 		}
 		if !found {
-			return ctrl.Result{}, errors.Errorf("unable to find a ControlPlaneEndpoint for host %s, port %d", cluster.Spec.ControlPlaneEndpoint.Host, cluster.Spec.ControlPlaneEndpoint.Port)
+			return ctrl.Result{}, pkgerrors.Errorf("unable to find a ControlPlaneEndpoint for host %s, port %d", cluster.Spec.ControlPlaneEndpoint.Host, cluster.Spec.ControlPlaneEndpoint.Port)
 		}
 	}
 
@@ -268,7 +273,7 @@ func (r *VirtualMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	conditionsTracker := &infrav1beta1.VSphereVM{}
 	if err := inmemoryClient.Get(ctx, client.ObjectKeyFromObject(virtualMachine), conditionsTracker); err != nil {
 		if !apierrors.IsNotFound(err) {
-			return ctrl.Result{}, errors.Wrap(err, "failed to get conditionsTracker")
+			return ctrl.Result{}, pkgerrors.Wrap(err, "failed to get conditionsTracker")
 		}
 
 		conditionsTracker = &infrav1beta1.VSphereVM{
@@ -278,7 +283,7 @@ func (r *VirtualMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			},
 		}
 		if err := inmemoryClient.Create(ctx, conditionsTracker); err != nil {
-			return ctrl.Result{}, errors.Wrap(err, "failed to create conditionsTracker")
+			return ctrl.Result{}, pkgerrors.Wrap(err, "failed to create conditionsTracker")
 		}
 	}
 
@@ -300,7 +305,7 @@ func (r *VirtualMachineReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	return r.reconcileNormal(ctx, cluster, machine, virtualMachine, conditionsTracker)
 }
 
-func (r *VirtualMachineReconciler) reconcileNormal(ctx context.Context, cluster *clusterv1beta1.Cluster, machine *clusterv1beta1.Machine, virtualMachine *vmoprvhub.VirtualMachine, conditionsTracker *infrav1beta1.VSphereVM) (ctrl.Result, error) {
+func (r *VirtualMachineReconciler) reconcileNormal(ctx context.Context, cluster *clusterv1.Cluster, machine *clusterv1.Machine, virtualMachine *vmoprvhub.VirtualMachine, conditionsTracker *infrav1beta1.VSphereVM) (ctrl.Result, error) {
 	// When simulating vm-operator, run the simulate code.
 	if r.VMOperatorSimMode {
 		if ret, err := r.simulateVMOperatorReconcileNormal(ctx, cluster, machine, virtualMachine); !ret.IsZero() || err != nil {
@@ -324,7 +329,7 @@ func (r *VirtualMachineReconciler) reconcileNormal(ctx context.Context, cluster 
 	return ctrl.Result{}, nil
 }
 
-func (r *VirtualMachineReconciler) reconcileDelete(ctx context.Context, cluster *clusterv1beta1.Cluster, machine *clusterv1beta1.Machine, virtualMachine *vmoprvhub.VirtualMachine, conditionsTracker *infrav1beta1.VSphereVM) (ctrl.Result, error) {
+func (r *VirtualMachineReconciler) reconcileDelete(ctx context.Context, cluster *clusterv1.Cluster, machine *clusterv1.Machine, virtualMachine *vmoprvhub.VirtualMachine, conditionsTracker *infrav1beta1.VSphereVM) (ctrl.Result, error) {
 	bootstrapReconciler := r.getVMBootstrapReconciler(virtualMachine)
 	if ret, err := bootstrapReconciler.reconcileDelete(ctx, cluster, machine, conditionsTracker); !ret.IsZero() || err != nil {
 		return ret, err
@@ -339,16 +344,16 @@ func (r *VirtualMachineReconciler) reconcileDelete(ctx context.Context, cluster 
 
 	patch, err := conversionclient.MergeFrom(ctx, r.Client, original)
 	if err != nil {
-		return ctrl.Result{}, errors.Wrapf(err, "failed to create patch for VirtualMachine object")
+		return ctrl.Result{}, pkgerrors.Wrapf(err, "failed to create patch for VirtualMachine object")
 	}
 
 	if err := r.Client.Patch(ctx, virtualMachine, patch); err != nil {
-		return ctrl.Result{}, errors.Wrapf(err, "failed to patch VirtualMachine object")
+		return ctrl.Result{}, pkgerrors.Wrapf(err, "failed to patch VirtualMachine object")
 	}
 	return ctrl.Result{}, nil
 }
 
-func (r *VirtualMachineReconciler) getVMIpReconciler(cluster *clusterv1beta1.Cluster, virtualMachine *vmoprvhub.VirtualMachine) *vmIPReconciler {
+func (r *VirtualMachineReconciler) getVMIpReconciler(cluster *clusterv1.Cluster, virtualMachine *vmoprvhub.VirtualMachine) *vmIPReconciler {
 	return &vmIPReconciler{
 		Client: r.Client,
 
@@ -398,7 +403,7 @@ var ( // TODO: make this configurable
 	vmPowerOnJitter   = 0.3
 )
 
-func (r *VirtualMachineReconciler) simulateVMOperatorReconcileNormal(ctx context.Context, _ *clusterv1beta1.Cluster, machine *clusterv1beta1.Machine, virtualMachine *vmoprvhub.VirtualMachine) (ret ctrl.Result, retErr error) {
+func (r *VirtualMachineReconciler) simulateVMOperatorReconcileNormal(ctx context.Context, _ *clusterv1.Cluster, machine *clusterv1.Machine, virtualMachine *vmoprvhub.VirtualMachine) (ret ctrl.Result, retErr error) {
 	// no-op if the VirtualMachine is already powered on
 	if virtualMachine.Status.PowerState == vmoprvhub.VirtualMachinePowerStateOn {
 		return ctrl.Result{}, nil
@@ -410,12 +415,12 @@ func (r *VirtualMachineReconciler) simulateVMOperatorReconcileNormal(ctx context
 	defer func() {
 		patch, err := conversionclient.MergeFrom(ctx, r.Client, original)
 		if err != nil {
-			retErr = kerrors.NewAggregate([]error{retErr, errors.Wrapf(err, "failed to create patch for VirtualMachine object")})
+			retErr = kerrors.NewAggregate([]error{retErr, pkgerrors.Wrapf(err, "failed to create patch for VirtualMachine object")})
 			return
 		}
 
 		if err := r.Client.Status().Patch(ctx, virtualMachine, patch); err != nil {
-			retErr = kerrors.NewAggregate([]error{retErr, errors.Wrapf(err, "failed to create patch for VirtualMachine object")})
+			retErr = kerrors.NewAggregate([]error{retErr, pkgerrors.Wrapf(err, "failed to create patch for VirtualMachine object")})
 		}
 	}()
 
@@ -462,7 +467,7 @@ func (r *VirtualMachineReconciler) simulateVMOperatorReconcileNormal(ctx context
 		Status: metav1.ConditionTrue,
 		Reason: "VMOperatorSim",
 	})
-	virtualMachine.Status.Zone = ptr.Deref(machine.Spec.FailureDomain, "")
+	virtualMachine.Status.Zone = machine.Spec.FailureDomain
 
 	// Simulate VM creation
 	conditions.Set(virtualMachine, metav1.Condition{
@@ -505,7 +510,7 @@ func (r *VirtualMachineReconciler) SetupWithManager(ctx context.Context, mgr ctr
 	// NOTE: use vm-operator native types for watches (the reconciler uses the internal hub version).
 	vm, err := conversionclient.WatchObject(r.Client, &vmoprvhub.VirtualMachine{})
 	if err != nil {
-		return errors.Wrap(err, "failed to create watch object for VirtualMachine")
+		return pkgerrors.Wrap(err, "failed to create watch object for VirtualMachine")
 	}
 
 	predicateLog := ctrl.LoggerFrom(ctx).WithValues("controller", "virtualmachine")
@@ -514,26 +519,47 @@ func (r *VirtualMachineReconciler) SetupWithManager(ctx context.Context, mgr ctr
 		For(vm).
 		// Ensure the controller waits for these informer to sync to avoid informer sync errors during reconcile
 		Watches(
-			&clusterv1beta1.Machine{},
+			&clusterv1.Machine{},
 			handler.EnqueueRequestsFromMapFunc(func(_ context.Context, _ client.Object) []reconcile.Request { return nil }),
 		).
 		Watches(
-			&clusterv1beta1.Cluster{},
+			&clusterv1.Cluster{},
 			handler.EnqueueRequestsFromMapFunc(func(_ context.Context, _ client.Object) []reconcile.Request { return nil }),
 		).
 		Watches(
 			&vmwarev1beta1.VSphereMachine{},
-			handler.EnqueueRequestsFromMapFunc(func(_ context.Context, _ client.Object) []reconcile.Request { return nil }),
+			handler.EnqueueRequestsFromMapFunc(func(_ context.Context, obj client.Object) []reconcile.Request {
+				vSphereMachine, ok := obj.(*vmwarev1beta1.VSphereMachine)
+				if !ok {
+					return nil
+				}
+
+				// Note: vSphereMachine name is identical to the Machine name
+				naming := vmwarev1.VirtualMachineNamingSpec{}
+				if vSphereMachine.Spec.NamingStrategy != nil {
+					naming.Template = ptr.Deref(vSphereMachine.Spec.NamingStrategy.Template, "")
+				}
+				virtualMachineName, err := servicesvmoperator.GenerateVirtualMachineName(vSphereMachine.Name, naming)
+				if err != nil {
+					return nil
+				}
+
+				return []reconcile.Request{
+					{
+						NamespacedName: types.NamespacedName{Namespace: vSphereMachine.Namespace, Name: virtualMachineName},
+					},
+				}
+			}),
 		).
 		Watches(
 			&vmwarev1beta1.VSphereCluster{},
 			handler.EnqueueRequestsFromMapFunc(func(_ context.Context, _ client.Object) []reconcile.Request { return nil }),
 		).
 		WithOptions(options).
-		Complete(r)
+		Complete(ctx, r)
 
 	if err != nil {
-		return errors.Wrap(err, "failed setting up with a controller manager")
+		return pkgerrors.Wrap(err, "failed setting up with a controller manager")
 	}
 	return nil
 }
@@ -554,11 +580,11 @@ func ensureFinalizer(ctx context.Context, c client.Client, o client.Object, fina
 
 	patch, err := conversionclient.MergeFrom(ctx, c, original)
 	if err != nil {
-		return false, errors.Wrapf(err, "failed to create patch for VirtualMachine object")
+		return false, pkgerrors.Wrapf(err, "failed to create patch for VirtualMachine object")
 	}
 
 	if err := c.Patch(ctx, o, patch); err != nil {
-		return false, errors.Wrapf(err, "failed to patch VirtualMachine object")
+		return false, pkgerrors.Wrapf(err, "failed to patch VirtualMachine object")
 	}
 
 	return true, nil

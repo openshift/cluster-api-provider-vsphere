@@ -21,7 +21,7 @@ import (
 	"fmt"
 	"reflect"
 
-	"github.com/pkg/errors"
+	pkgerrors "github.com/pkg/errors"
 	nsxvpcv1 "github.com/vmware-tanzu/nsx-operator/pkg/apis/vpc/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -38,9 +38,11 @@ import (
 	ctrlutil "sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	vmwarev1 "sigs.k8s.io/cluster-api-provider-vsphere/api/supervisor/v1beta2"
+	"sigs.k8s.io/cluster-api-provider-vsphere/feature"
 	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/context/vmware"
 	vmoprvhub "sigs.k8s.io/cluster-api-provider-vsphere/pkg/conversion/api/vmoperator/hub"
 	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/services"
+	infrautilv1 "sigs.k8s.io/cluster-api-provider-vsphere/pkg/util"
 )
 
 // nsxtVPCNetworkProvider provisions nsx-vpc type cluster network.
@@ -53,6 +55,10 @@ func NSXTVpcNetworkProvider(client client.Client) services.NetworkProvider {
 	return &nsxtVPCNetworkProvider{
 		client: client,
 	}
+}
+
+func (vp *nsxtVPCNetworkProvider) SupportsIPv6DualStack() bool {
+	return feature.Gates.Enabled(feature.IPv6DualStack)
 }
 
 func (vp *nsxtVPCNetworkProvider) HasLoadBalancer() bool {
@@ -87,7 +93,7 @@ func (vp *nsxtVPCNetworkProvider) verifyNsxtVpcSubnetSetStatus(vspherecluster *v
 				Reason:  vmwarev1.VSphereClusterNetworkNotReadyReason,
 				Message: condition.Message,
 			})
-			return errors.Errorf("subnetset ready status is: '%s' in cluster %s. reason: %s, message: %s",
+			return pkgerrors.Errorf("subnetset ready status is: '%s' in cluster %s. reason: %s, message: %s",
 				condition.Status, types.NamespacedName{Namespace: namespace, Name: clusterName}, condition.Reason, condition.Message)
 		}
 	}
@@ -100,7 +106,7 @@ func (vp *nsxtVPCNetworkProvider) verifyNsxtVpcSubnetSetStatus(vspherecluster *v
 			Reason:  vmwarev1.VSphereClusterNetworkNotReadyReason,
 			Message: "No Ready status for SubnetSet",
 		})
-		return errors.Errorf("subnetset ready status in cluster %s has not been set", types.NamespacedName{Namespace: namespace, Name: clusterName})
+		return pkgerrors.Errorf("subnetset ready status in cluster %s has not been set", types.NamespacedName{Namespace: namespace, Name: clusterName})
 	}
 
 	deprecatedv1beta1conditions.MarkTrue(vspherecluster, vmwarev1.ClusterNetworkReadyV1Beta1Condition)
@@ -168,6 +174,24 @@ func (vp *nsxtVPCNetworkProvider) ProvisionClusterNetwork(ctx context.Context, c
 		Spec: nsxvpcv1.SubnetSetSpec{},
 	}
 
+	if vp.SupportsIPv6DualStack() {
+		ipFamily, err := infrautilv1.DetermineClusterIPFamily(clusterCtx.Cluster)
+		if err != nil {
+			return pkgerrors.Wrap(err, "failed to determine cluster IP family")
+		}
+
+		switch ipFamily {
+		case infrautilv1.IPv4SingleStack:
+			subnetset.Spec.IPAddressType = nsxvpcv1.IPAddressTypeIPv4
+		case infrautilv1.IPv6SingleStack:
+			subnetset.Spec.IPAddressType = nsxvpcv1.IPAddressTypeIPv6
+		case infrautilv1.DualStackIPv4Primary, infrautilv1.DualStackIPv6Primary:
+			subnetset.Spec.IPAddressType = nsxvpcv1.IPAddressTypeIPv4IPv6
+		default:
+			subnetset.Spec.IPAddressType = nsxvpcv1.IPAddressTypeIPv4
+		}
+	}
+
 	subnetSetExists := true
 	if err := vp.client.Get(ctx, client.ObjectKeyFromObject(subnetset), subnetset); err != nil {
 		if !apierrors.IsNotFound(err) {
@@ -182,7 +206,7 @@ func (vp *nsxtVPCNetworkProvider) ProvisionClusterNetwork(ctx context.Context, c
 		subnetset,
 		vp.client.Scheme(),
 	); err != nil {
-		return errors.Wrapf(err, "error setting %s as owner of %s", klog.KObj(clusterCtx.VSphereCluster), klog.KObj(subnetset))
+		return pkgerrors.Wrapf(err, "error setting %s as owner of %s", klog.KObj(clusterCtx.VSphereCluster), klog.KObj(subnetset))
 	}
 
 	var err error
@@ -200,7 +224,7 @@ func (vp *nsxtVPCNetworkProvider) ProvisionClusterNetwork(ctx context.Context, c
 			Reason:  vmwarev1.VSphereClusterNetworkNotReadyReason,
 			Message: err.Error(),
 		})
-		return errors.Wrap(err, "Failed to provision network")
+		return pkgerrors.Wrap(err, "Failed to provision network")
 	}
 
 	return vp.verifyNsxtVpcSubnetSetStatus(clusterCtx.VSphereCluster, subnetset)
@@ -230,10 +254,15 @@ func (vp *nsxtVPCNetworkProvider) GetVMServiceAnnotations(_ context.Context, _ *
 func (vp *nsxtVPCNetworkProvider) ConfigureVirtualMachine(_ context.Context, clusterCtx *vmware.ClusterContext, machine *vmwarev1.VSphereMachine, vm *vmoprvhub.VirtualMachine) error {
 	vm.Spec.Network = &vmoprvhub.VirtualMachineNetworkSpec{}
 
+	ipamModes, err := getIPAMModes(clusterCtx)
+	if err != nil {
+		return err
+	}
+
 	// Set the VM primary interface
 	if createSubnetSet(clusterCtx) {
 		if machine.Spec.Network.Interfaces.Primary.IsDefined() {
-			return errors.New("primary interface can not be configured when createSubnetSet is true")
+			return pkgerrors.New("primary interface can not be configured when createSubnetSet is true")
 		}
 		networkName := clusterCtx.VSphereCluster.Name
 		vm.Spec.Network.Interfaces = append(vm.Spec.Network.Interfaces, vmoprvhub.VirtualMachineNetworkInterfaceSpec{
@@ -245,10 +274,11 @@ func (vp *nsxtVPCNetworkProvider) ConfigureVirtualMachine(_ context.Context, clu
 				},
 				Name: networkName,
 			},
+			IPAMModes: ipamModes,
 		})
 	} else {
 		if !machine.Spec.Network.Interfaces.Primary.IsDefined() {
-			return errors.New("primary interface must be configured when createSubnetSet is false")
+			return pkgerrors.New("primary interface must be configured when createSubnetSet is false")
 		}
 		primary := machine.Spec.Network.Interfaces.Primary
 		var mtu *int64
@@ -264,15 +294,41 @@ func (vp *nsxtVPCNetworkProvider) ConfigureVirtualMachine(_ context.Context, clu
 				},
 				Name: primary.NetworkRef.Name,
 			},
-			MTU: mtu,
+			MTU:       mtu,
+			IPAMModes: ipamModes,
 		}
 		setRoutes(&vmInterface, primary.Routes)
 		vm.Spec.Network.Interfaces = append(vm.Spec.Network.Interfaces, vmInterface)
 	}
 
 	// Set the VM secondary interfaces
-	setVMSecondaryInterfaces(machine, vm)
-	return nil
+	setVMSecondaryInterfaces(machine, vm, ipamModes)
+
+	// Set the VM VLAN sub-interfaces
+	return setVLANs(machine, vm)
+}
+
+// getIPAMModes maps the ClusterIPFamily to the VM Operator's expected IPAMModes format.
+// For dual-stack configurations, it always returns [IPv4, IPv6] regardless of which is primary.
+// Note: This function is feature gated by IPv6DualStack.
+func getIPAMModes(clusterCtx *vmware.ClusterContext) ([]corev1.IPFamily, error) {
+	if !feature.Gates.Enabled(feature.IPv6DualStack) {
+		return nil, nil
+	}
+	ipFamily, err := infrautilv1.DetermineClusterIPFamily(clusterCtx.Cluster)
+	if err != nil {
+		return nil, pkgerrors.Wrap(err, "failed to determine cluster IP family")
+	}
+	switch ipFamily {
+	case infrautilv1.IPv4SingleStack:
+		return []corev1.IPFamily{corev1.IPv4Protocol}, nil
+	case infrautilv1.IPv6SingleStack:
+		return []corev1.IPFamily{corev1.IPv6Protocol}, nil
+	case infrautilv1.DualStackIPv4Primary, infrautilv1.DualStackIPv6Primary:
+		return []corev1.IPFamily{corev1.IPv4Protocol, corev1.IPv6Protocol}, nil
+	default:
+		return []corev1.IPFamily{corev1.IPv4Protocol}, nil
+	}
 }
 
 func setRoutes(vmInterface *vmoprvhub.VirtualMachineNetworkInterfaceSpec, routes []vmwarev1.RouteSpec) {
@@ -284,7 +340,7 @@ func setRoutes(vmInterface *vmoprvhub.VirtualMachineNetworkInterfaceSpec, routes
 	}
 }
 
-func setVMSecondaryInterfaces(machine *vmwarev1.VSphereMachine, vm *vmoprvhub.VirtualMachine) {
+func setVMSecondaryInterfaces(machine *vmwarev1.VSphereMachine, vm *vmoprvhub.VirtualMachine, ipamModes []corev1.IPFamily) {
 	if len(machine.Spec.Network.Interfaces.Secondary) == 0 {
 		return
 	}
@@ -302,11 +358,32 @@ func setVMSecondaryInterfaces(machine *vmwarev1.VSphereMachine, vm *vmoprvhub.Vi
 				},
 				Name: secondaryInterface.NetworkRef.Name,
 			},
-			MTU:      mtu,
-			Gateway4: "None",
-			Gateway6: "None",
+			MTU:       mtu,
+			Gateway4:  "None",
+			Gateway6:  "None",
+			IPAMModes: ipamModes,
 		}
 		setRoutes(&vmInterface, secondaryInterface.Routes)
 		vm.Spec.Network.Interfaces = append(vm.Spec.Network.Interfaces, vmInterface)
 	}
+}
+
+func setVLANs(machine *vmwarev1.VSphereMachine, vm *vmoprvhub.VirtualMachine) error {
+	if len(machine.Spec.Network.VLANs) == 0 {
+		return nil
+	}
+	if !feature.Gates.Enabled(feature.VLANSubinterface) {
+		return pkgerrors.New("invalid configuration: VLANs cannot be used as feature gate VLANSubinterface is not enabled")
+	}
+	if vm.Spec.Network == nil {
+		vm.Spec.Network = &vmoprvhub.VirtualMachineNetworkSpec{}
+	}
+	for _, vlan := range machine.Spec.Network.VLANs {
+		vm.Spec.Network.VLANs = append(vm.Spec.Network.VLANs, vmoprvhub.VirtualMachineNetworkVLANSpec{
+			Name: vlan.Name,
+			ID:   int64(ptr.Deref(vlan.ID, 0)),
+			Link: vlan.Link,
+		})
+	}
+	return nil
 }

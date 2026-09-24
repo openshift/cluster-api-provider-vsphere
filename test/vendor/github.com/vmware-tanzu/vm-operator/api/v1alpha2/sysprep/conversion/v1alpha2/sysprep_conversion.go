@@ -11,11 +11,11 @@ import (
 	apiconversion "k8s.io/apimachinery/pkg/conversion"
 
 	vmopv1a2sysprep "github.com/vmware-tanzu/vm-operator/api/v1alpha2/sysprep"
-	vmopv1sysprep "github.com/vmware-tanzu/vm-operator/api/v1alpha5/sysprep"
+	vmopv1sysprep "github.com/vmware-tanzu/vm-operator/api/v1alpha6/sysprep"
 )
 
 // Convert_sysprep_Sysprep_To_sysprep_Sysprep converts the Sysprep from v1alpha2
-// to v1alpha5.
+// to v1alpha6.
 // Please see https://github.com/kubernetes/code-generator/issues/172 for why
 // this function exists in this directory structure.
 func Convert_sysprep_Sysprep_To_sysprep_Sysprep(

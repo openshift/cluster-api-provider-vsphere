@@ -29,6 +29,7 @@ import (
 	vmwarev1 "sigs.k8s.io/cluster-api-provider-vsphere/api/supervisor/v1beta2"
 	"sigs.k8s.io/cluster-api-provider-vsphere/feature"
 	"sigs.k8s.io/cluster-api-provider-vsphere/internal/webhooks"
+	"sigs.k8s.io/cluster-api-provider-vsphere/internal/webhooks/vmware/conversion"
 	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/manager"
 	pkgnetwork "sigs.k8s.io/cluster-api-provider-vsphere/pkg/services/network"
 )
@@ -46,12 +47,14 @@ var _ admission.Validator[*vmwarev1.VSphereMachine] = &VSphereMachine{}
 func (webhook *VSphereMachine) SetupWebhookWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewWebhookManagedBy(mgr, &vmwarev1.VSphereMachine{}).
 		WithValidator(webhook).
+		WithConverter(conversion.VSphereMachine).
 		Complete()
 }
 
 // ValidateCreate implements webhook.Validator so a webhook will be registered for the type.
 func (webhook *VSphereMachine) ValidateCreate(_ context.Context, objTyped *vmwarev1.VSphereMachine) (admission.Warnings, error) {
 	allErrs := validateNetwork(webhook.NetworkProvider, objTyped.Spec.Network, field.NewPath("spec", "network"))
+	allErrs = append(allErrs, validatePolicies(objTyped.Spec.Policies, field.NewPath("spec", "policies"))...)
 
 	return nil, webhooks.AggregateObjErrors(objTyped.GroupVersionKind().GroupKind(), objTyped.Name, allErrs)
 }
@@ -88,6 +91,7 @@ func (webhook *VSphereMachine) ValidateUpdate(_ context.Context, oldTyped, newTy
 	}
 
 	allErrs = append(allErrs, validateNetwork(webhook.NetworkProvider, newSpec.Network, field.NewPath("spec", "network"))...)
+	allErrs = append(allErrs, validatePolicies(newSpec.Policies, field.NewPath("spec", "policies"))...)
 
 	return nil, webhooks.AggregateObjErrors(newTyped.GroupVersionKind().GroupKind(), newTyped.Name, allErrs)
 }
@@ -161,5 +165,106 @@ func validateNetwork(networkProvider string, network vmwarev1.VSphereMachineNetw
 			}
 		}
 	}
+
+	if len(network.VLANs) > 0 {
+		allErrs = append(allErrs, validateVLANs(networkProvider, network, fldPath)...)
+	}
+
 	return allErrs
+}
+
+func validateVLANs(networkProvider string, network vmwarev1.VSphereMachineNetworkSpec, fldPath *field.Path) field.ErrorList {
+	var allErrs field.ErrorList
+
+	if !feature.Gates.Enabled(feature.VLANSubinterface) {
+		allErrs = append(allErrs, field.Forbidden(
+			fldPath.Child("vlans"),
+			"vlans can only be set when feature gate VLANSubinterface is enabled"))
+		return allErrs
+	}
+	// vlan sub-interfaces feature only supports NSX-VPC Provider
+	if networkProvider != manager.NSXVPCNetworkProvider {
+		allErrs = append(allErrs, field.Forbidden(
+			fldPath.Child("vlans"),
+			fmt.Sprintf("vlans can only be set when network provider is %s", manager.NSXVPCNetworkProvider)))
+		return allErrs
+	}
+	// vlan sub-interfaces only can link to a secondary interface
+	if !network.Interfaces.IsDefined() || len(network.Interfaces.Secondary) == 0 {
+		allErrs = append(allErrs, field.Required(
+			fldPath.Child("vlans"),
+			"vlans can only be specified if there are corresponding secondary interfaces"))
+		return allErrs
+	}
+	// secondaryNames records all the secondary interface names, for checking vlan Link refers to an existing secondary interface name
+	secondaryNames := map[string]struct{}{}
+	// vlanNames records all the VLAN interface names, for checking duplicated VLAN interface name
+	vlanNames := map[string]struct{}{}
+	// vlanIDsPerLink maps a Link to its configured VLAN ID and name. Format: vlan Link(Secondary Interface Name) -> vlan ID -> vlan Name
+	// for tracking assigned VLAN IDs per Link to detect duplicates
+	vlanIDsPerLink := map[string]map[int32]string{}
+	for _, s := range network.Interfaces.Secondary {
+		secondaryNames[s.Name] = struct{}{}
+	}
+	for i, vlan := range network.VLANs {
+		if _, ok := vlanNames[vlan.Name]; ok {
+			allErrs = append(allErrs, field.Invalid(
+				fldPath.Child("vlans").Index(i).Child("name"),
+				vlan.Name,
+				"VLAN name must be unique"))
+		} else if vlan.Name == pkgnetwork.PrimaryInterfaceName {
+			allErrs = append(allErrs, field.Invalid(
+				fldPath.Child("vlans").Index(i).Child("name"),
+				vlan.Name,
+				"VLAN name is already in use by the primary interface"))
+		} else if _, ok := secondaryNames[vlan.Name]; ok {
+			allErrs = append(allErrs, field.Invalid(
+				fldPath.Child("vlans").Index(i).Child("name"),
+				vlan.Name,
+				"VLAN name is already in use by a secondary interface"))
+		} else {
+			vlanNames[vlan.Name] = struct{}{}
+		}
+		if _, ok := secondaryNames[vlan.Link]; !ok {
+			allErrs = append(allErrs, field.Invalid(
+				fldPath.Child("vlans").Index(i).Child("link"),
+				vlan.Link,
+				"link must reference an existing secondary interface name"))
+		}
+
+		if vlan.ID == nil {
+			allErrs = append(allErrs, field.Required(
+				fldPath.Child("vlans").Index(i).Child("id"),
+				"VLAN ID cannot be unset"))
+			continue
+		}
+
+		if vlanIDsPerLink[vlan.Link] == nil {
+			vlanIDsPerLink[vlan.Link] = map[int32]string{}
+		}
+		if existingVlanName, exists := vlanIDsPerLink[vlan.Link][*vlan.ID]; exists {
+			allErrs = append(allErrs, field.Invalid(
+				fldPath.Child("vlans").Index(i).Child("id"),
+				vlan.ID,
+				fmt.Sprintf("VLAN ID %d is already used by VLAN %q on the same link %q",
+					*vlan.ID, existingVlanName, vlan.Link),
+			))
+		} else {
+			vlanIDsPerLink[vlan.Link][*vlan.ID] = vlan.Name
+		}
+	}
+	return allErrs
+}
+
+// validatePolicies validates the policies field is only set when the feature gate InfrastructurePolicies is enabled.
+func validatePolicies(policies []vmwarev1.PolicyRef, fldPath *field.Path) field.ErrorList {
+	if len(policies) == 0 {
+		return nil
+	}
+	if feature.Gates.Enabled(feature.InfrastructurePolicies) {
+		return nil
+	}
+	return field.ErrorList{
+		field.Forbidden(fldPath, "policies can only be set when feature gate InfrastructurePolicies is enabled"),
+	}
 }

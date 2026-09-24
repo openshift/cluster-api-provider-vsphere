@@ -20,7 +20,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/pkg/errors"
+	pkgerrors "github.com/pkg/errors"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -28,7 +28,8 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	kerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/klog/v2"
-	clusterv1beta1 "sigs.k8s.io/cluster-api/api/core/v1beta1"
+	"k8s.io/utils/ptr"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	inmemoryruntime "sigs.k8s.io/cluster-api/test/infrastructure/inmemory/pkg/runtime"
 	inmemoryserver "sigs.k8s.io/cluster-api/test/infrastructure/inmemory/pkg/server"
 	capiutil "sigs.k8s.io/cluster-api/util"
@@ -84,11 +85,6 @@ func (r *VSphereVMReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, err
 	}
 
-	// Add finalizer first if not set to avoid the race condition between init and delete.
-	if finalizerAdded, err := finalizers.EnsureFinalizer(ctx, r.Client, vSphereVM, vcsimv1.VMFinalizer); err != nil || finalizerAdded {
-		return ctrl.Result{}, err
-	}
-
 	// Fetch the owner VSphereMachine.
 	// Note: Temporarily using a local copy of util.GetOwnerVSphereMachine until this controller can be migrated to v1beta2.
 	vSphereMachine, err := GetOwnerVSphereMachine(ctx, r.Client, vSphereVM.ObjectMeta)
@@ -105,7 +101,7 @@ func (r *VSphereVMReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	ctx = ctrl.LoggerInto(ctx, log)
 
 	// Fetch the Machine.
-	machine, err := getOwnerMachineV1Beta1(ctx, r.Client, vSphereMachine.ObjectMeta)
+	machine, err := capiutil.GetOwnerMachine(ctx, r.Client, vSphereMachine.ObjectMeta)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -117,20 +113,20 @@ func (r *VSphereVMReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	ctx = ctrl.LoggerInto(ctx, log)
 
 	// Fetch the Cluster.
-	cluster, err := getClusterV1Beta1FromMetadata(ctx, r.Client, machine.ObjectMeta)
+	cluster, err := capiutil.GetClusterFromMetadata(ctx, r.Client, machine.ObjectMeta)
 	if err != nil {
 		log.Info("VSphereVM owner Machine is missing cluster label or cluster does not exist")
 		return ctrl.Result{}, err
 	}
 	if cluster == nil {
-		log.Info(fmt.Sprintf("Please associate this machine with a cluster using the label %s: <name of cluster>", clusterv1beta1.ClusterNameLabel))
+		log.Info(fmt.Sprintf("Please associate this machine with a cluster using the label %s: <name of cluster>", clusterv1.ClusterNameLabel))
 		return ctrl.Result{}, nil
 	}
 	log = log.WithValues("Cluster", klog.KObj(cluster))
 	ctx = ctrl.LoggerInto(ctx, log)
 
 	// Return early if the object or Cluster is paused.
-	if cluster.Spec.Paused || annotations.HasPaused(vSphereVM) {
+	if ptr.Deref(cluster.Spec.Paused, false) || annotations.HasPaused(vSphereVM) {
 		log.Info("Reconciliation is paused for this object")
 		return ctrl.Result{}, nil
 	}
@@ -147,6 +143,11 @@ func (r *VSphereVMReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 	log = log.WithValues("VSphereCluster", klog.KObj(vSphereCluster))
 	ctx = ctrl.LoggerInto(ctx, log)
+
+	// Add finalizer first if not set to avoid the race condition between init and delete.
+	if finalizerAdded, err := finalizers.EnsureFinalizer(ctx, r.Client, vSphereVM, vcsimv1.VMFinalizer); err != nil || finalizerAdded {
+		return ctrl.Result{}, err
+	}
 
 	// Compute the resource group unique name.
 	resourceGroup := klog.KObj(cluster).String()
@@ -167,11 +168,11 @@ func (r *VSphereVMReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 		if err := inmemoryClient.Get(ctx, client.ObjectKeyFromObject(ns), ns); err != nil {
 			if !apierrors.IsNotFound(err) {
-				return ctrl.Result{}, errors.Wrapf(err, "failed to get %s Namespace", nsName)
+				return ctrl.Result{}, pkgerrors.Wrapf(err, "failed to get %s Namespace", nsName)
 			}
 
 			if err := inmemoryClient.Create(ctx, ns); err != nil && !apierrors.IsAlreadyExists(err) {
-				return ctrl.Result{}, errors.Wrapf(err, "failed to create %s Namespace", nsName)
+				return ctrl.Result{}, pkgerrors.Wrapf(err, "failed to create %s Namespace", nsName)
 			}
 		}
 	}
@@ -198,7 +199,7 @@ func (r *VSphereVMReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			break
 		}
 		if !found {
-			return ctrl.Result{}, errors.Errorf("unable to find a ControlPlaneEndpoint for host %s, port %d", cluster.Spec.ControlPlaneEndpoint.Host, cluster.Spec.ControlPlaneEndpoint.Port)
+			return ctrl.Result{}, pkgerrors.Errorf("unable to find a ControlPlaneEndpoint for host %s, port %d", cluster.Spec.ControlPlaneEndpoint.Host, cluster.Spec.ControlPlaneEndpoint.Port)
 		}
 	}
 
@@ -210,7 +211,7 @@ func (r *VSphereVMReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	conditionsTracker := &infrav1beta1.VSphereVM{}
 	if err := inmemoryClient.Get(ctx, client.ObjectKeyFromObject(vSphereVM), conditionsTracker); err != nil {
 		if !apierrors.IsNotFound(err) {
-			return ctrl.Result{}, errors.Wrap(err, "failed to get conditionsTracker")
+			return ctrl.Result{}, pkgerrors.Wrap(err, "failed to get conditionsTracker")
 		}
 
 		conditionsTracker = &infrav1beta1.VSphereVM{
@@ -220,7 +221,7 @@ func (r *VSphereVMReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			},
 		}
 		if err := inmemoryClient.Create(ctx, conditionsTracker); err != nil {
-			return ctrl.Result{}, errors.Wrap(err, "failed to create conditionsTracker")
+			return ctrl.Result{}, pkgerrors.Wrap(err, "failed to create conditionsTracker")
 		}
 	}
 
@@ -253,7 +254,7 @@ func (r *VSphereVMReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	return r.reconcileNormal(ctx, cluster, vSphereCluster, machine, vSphereVM, conditionsTracker)
 }
 
-func (r *VSphereVMReconciler) reconcileNormal(ctx context.Context, cluster *clusterv1beta1.Cluster, vSphereCluster *infrav1beta1.VSphereCluster, machine *clusterv1beta1.Machine, vSphereVM *infrav1beta1.VSphereVM, conditionsTracker *infrav1beta1.VSphereVM) (ctrl.Result, error) {
+func (r *VSphereVMReconciler) reconcileNormal(ctx context.Context, cluster *clusterv1.Cluster, vSphereCluster *infrav1beta1.VSphereCluster, machine *clusterv1.Machine, vSphereVM *infrav1beta1.VSphereVM, conditionsTracker *infrav1beta1.VSphereVM) (ctrl.Result, error) {
 	ipReconciler := r.getVMIpReconciler(vSphereCluster, vSphereVM)
 	if ret, err := ipReconciler.ReconcileIP(ctx); !ret.IsZero() || err != nil {
 		return ret, err
@@ -267,7 +268,7 @@ func (r *VSphereVMReconciler) reconcileNormal(ctx context.Context, cluster *clus
 	return ctrl.Result{}, nil
 }
 
-func (r *VSphereVMReconciler) reconcileDelete(ctx context.Context, cluster *clusterv1beta1.Cluster, _ *infrav1beta1.VSphereCluster, machine *clusterv1beta1.Machine, vSphereVM *infrav1beta1.VSphereVM, conditionsTracker *infrav1beta1.VSphereVM) (ctrl.Result, error) {
+func (r *VSphereVMReconciler) reconcileDelete(ctx context.Context, cluster *clusterv1.Cluster, _ *infrav1beta1.VSphereCluster, machine *clusterv1.Machine, vSphereVM *infrav1beta1.VSphereVM, conditionsTracker *infrav1beta1.VSphereVM) (ctrl.Result, error) {
 	bootstrapReconciler := r.getVMBootstrapReconciler(vSphereVM)
 	if ret, err := bootstrapReconciler.reconcileDelete(ctx, cluster, machine, conditionsTracker); !ret.IsZero() || err != nil {
 		return ret, err
@@ -319,13 +320,13 @@ func (r *VSphereVMReconciler) getVMBootstrapReconciler(vSphereVM *infrav1beta1.V
 
 func (r *VSphereVMReconciler) getVCenterSession(ctx context.Context, vSphereCluster *infrav1beta1.VSphereCluster, vSphereVM *infrav1beta1.VSphereVM) (*session.Session, error) {
 	if vSphereCluster.Spec.IdentityRef == nil {
-		return nil, errors.New("vcsim do not support using credentials provided to the manager")
+		return nil, pkgerrors.New("vcsim do not support using credentials provided to the manager")
 	}
 
 	// Note: Temporarily using a local copy of identity.GetCredentials until this controller can be migrated to v1beta2.
 	creds, err := GetCredentials(ctx, r.Client, vSphereCluster, capvNamespace)
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to retrieve credentials from IdentityRef")
+		return nil, pkgerrors.Wrap(err, "failed to retrieve credentials from IdentityRef")
 	}
 
 	params := session.NewParams().
@@ -345,61 +346,12 @@ func (r *VSphereVMReconciler) SetupWithManager(ctx context.Context, mgr ctrl.Man
 		For(&infrav1beta1.VSphereVM{}).
 		WithOptions(options).
 		WithEventFilter(predicates.ResourceNotPausedAndHasFilterLabel(mgr.GetScheme(), predicateLog, r.WatchFilterValue)).
-		Complete(r)
+		Complete(ctx, r)
 
 	if err != nil {
-		return errors.Wrap(err, "failed setting up with a controller manager")
+		return pkgerrors.Wrap(err, "failed setting up with a controller manager")
 	}
 	return nil
-}
-
-// Reimplementation of some functions at "sigs.k8s.io/cluster-api/util" to be compatible to v1beta1.
-
-// getClusterV1Beta1FromMetadata returns the Cluster object (if present) using the object metadata.
-func getClusterV1Beta1FromMetadata(ctx context.Context, c client.Client, obj metav1.ObjectMeta) (*clusterv1beta1.Cluster, error) {
-	if obj.Labels[clusterv1beta1.ClusterNameLabel] == "" {
-		return nil, errors.WithStack(capiutil.ErrNoCluster)
-	}
-	return getClusterV1Beta1ByName(ctx, c, obj.Namespace, obj.Labels[clusterv1beta1.ClusterNameLabel])
-}
-
-// getClusterV1Beta1ByName finds and return a Cluster object using the specified params.
-func getClusterV1Beta1ByName(ctx context.Context, c client.Client, namespace, name string) (*clusterv1beta1.Cluster, error) {
-	cluster := &clusterv1beta1.Cluster{}
-	key := client.ObjectKey{
-		Namespace: namespace,
-		Name:      name,
-	}
-
-	if err := c.Get(ctx, key, cluster); err != nil {
-		return nil, errors.Wrapf(err, "failed to get Cluster/%s", name)
-	}
-
-	return cluster, nil
-}
-
-// getOwnerMachineV1Beta1 returns the Machine object owning the current resource.
-func getOwnerMachineV1Beta1(ctx context.Context, c client.Client, obj metav1.ObjectMeta) (*clusterv1beta1.Machine, error) {
-	for _, ref := range obj.GetOwnerReferences() {
-		gv, err := schema.ParseGroupVersion(ref.APIVersion)
-		if err != nil {
-			return nil, err
-		}
-		if ref.Kind == "Machine" && gv.Group == clusterv1beta1.GroupVersion.Group {
-			return getMachineByName(ctx, c, obj.Namespace, ref.Name)
-		}
-	}
-	return nil, nil
-}
-
-// getMachineByName finds and return a Machine object using the specified params.
-func getMachineByName(ctx context.Context, c client.Client, namespace, name string) (*clusterv1beta1.Machine, error) {
-	m := &clusterv1beta1.Machine{}
-	key := client.ObjectKey{Name: name, Namespace: namespace}
-	if err := c.Get(ctx, key, m); err != nil {
-		return nil, err
-	}
-	return m, nil
 }
 
 // Credentials are the user credentials used with the VSphere API.
@@ -430,16 +382,16 @@ func GetCredentials(ctx context.Context, c client.Client, cluster *infrav1beta1.
 		}
 
 		if !identity.Status.Ready {
-			return nil, errors.New("identity isn't ready to be used yet")
+			return nil, pkgerrors.New("identity isn't ready to be used yet")
 		}
 
 		if identity.Spec.AllowedNamespaces == nil {
-			return nil, errors.New("allowedNamespaces set to nil, no namespaces are allowed to use this identity")
+			return nil, pkgerrors.New("allowedNamespaces set to nil, no namespaces are allowed to use this identity")
 		}
 
 		selector, err := metav1.LabelSelectorAsSelector(&identity.Spec.AllowedNamespaces.Selector)
 		if err != nil {
-			return nil, errors.New("failed to build selector")
+			return nil, pkgerrors.New("failed to build selector")
 		}
 
 		ns := &corev1.Namespace{}

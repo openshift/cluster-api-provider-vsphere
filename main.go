@@ -27,10 +27,11 @@ import (
 	"strings"
 	"time"
 
-	perrors "github.com/pkg/errors"
+	pkgerrors "github.com/pkg/errors"
 	"github.com/spf13/pflag"
 	vmoprv1alpha2 "github.com/vmware-tanzu/vm-operator/api/v1alpha2"
 	vmoprv1alpha5 "github.com/vmware-tanzu/vm-operator/api/v1alpha5"
+	vmoprv1alpha6 "github.com/vmware-tanzu/vm-operator/api/v1alpha6"
 	"gopkg.in/fsnotify.v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -40,6 +41,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/selection"
 	kerrors "k8s.io/apimachinery/pkg/util/errors"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/rest"
 	cliflag "k8s.io/component-base/cli/flag"
@@ -48,11 +50,14 @@ import (
 	_ "k8s.io/component-base/logs/json/register"
 	"k8s.io/klog/v2"
 	"k8s.io/utils/ptr"
+	bootstrapv1 "sigs.k8s.io/cluster-api/api/bootstrap/kubeadm/v1beta2"
+	controlplanev1 "sigs.k8s.io/cluster-api/api/controlplane/kubeadm/v1beta2"
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/cluster-api/controllers/clustercache"
 	"sigs.k8s.io/cluster-api/controllers/crdmigrator"
 	"sigs.k8s.io/cluster-api/controllers/remote"
 	"sigs.k8s.io/cluster-api/util/apiwarnings"
+	capicontrollerutil "sigs.k8s.io/cluster-api/util/controller"
 	capiflags "sigs.k8s.io/cluster-api/util/flags"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
@@ -98,7 +103,8 @@ var (
 	syncPeriod                  time.Duration
 	webhookOpts                 webhook.Options
 	watchNamespace              string
-	apiVersionVMOperator        string
+	vmOperatorAPIVersion        string
+	featureGates                string
 
 	clusterCacheConcurrency           int
 	vSphereClusterConcurrency         int
@@ -118,6 +124,8 @@ var (
 	defaultSyncPeriod       = manager.DefaultSyncPeriod
 	defaultLeaderElectionID = manager.DefaultLeaderElectionID
 	defaultPodName          = manager.DefaultPodName
+
+	supportedVMOperatorAPIVersions = []string{vmoprv1alpha2.GroupVersion.Version, vmoprv1alpha5.GroupVersion.Version, vmoprv1alpha6.GroupVersion.Version}
 )
 
 // InitFlags initializes the flags.
@@ -133,22 +141,22 @@ func InitFlags(fs *pflag.FlagSet) {
 	fs.IntVar(&clusterCacheConcurrency, "clustercache-concurrency", 100,
 		"Number of clusters to process simultaneously")
 
-	fs.IntVar(&vSphereClusterConcurrency, "vspherecluster-concurrency", 10,
+	fs.IntVar(&vSphereClusterConcurrency, "vspherecluster-concurrency", 50,
 		"Number of vSphere clusters to process simultaneously")
 
-	fs.IntVar(&vSphereMachineConcurrency, "vspheremachine-concurrency", 10,
+	fs.IntVar(&vSphereMachineConcurrency, "vspheremachine-concurrency", 100,
 		"Number of vSphere machines to process simultaneously")
 
 	fs.IntVar(&vSphereMachineTemplateConcurrency, "vspheremachinetemplate-concurrency", 10,
 		"Number of vSphere machine templates to process simultaneously")
 
-	fs.IntVar(&providerServiceAccountConcurrency, "providerserviceaccount-concurrency", 10,
+	fs.IntVar(&providerServiceAccountConcurrency, "providerserviceaccount-concurrency", 50,
 		"Number of provider service accounts to process simultaneously")
 
-	fs.IntVar(&serviceDiscoveryConcurrency, "servicediscovery-concurrency", 10,
+	fs.IntVar(&serviceDiscoveryConcurrency, "servicediscovery-concurrency", 50,
 		"Number of vSphere clusters for service discovery to process simultaneously")
 
-	fs.IntVar(&vSphereVMConcurrency, "vspherevm-concurrency", 10,
+	fs.IntVar(&vSphereVMConcurrency, "vspherevm-concurrency", 100,
 		"Number of vSphere vms to process simultaneously")
 
 	fs.IntVar(&vSphereClusterIdentityConcurrency, "vsphereclusteridentity-concurrency", 10,
@@ -157,7 +165,7 @@ func InitFlags(fs *pflag.FlagSet) {
 	fs.IntVar(&vSphereDeploymentZoneConcurrency, "vspheredeploymentzone-concurrency", 10,
 		"Number of vSphere deployment zones to process simultaneously")
 
-	fs.IntVar(&virtualMachineGroupConcurrency, "virtualmachinegroup-concurrency", 10,
+	fs.IntVar(&virtualMachineGroupConcurrency, "virtualmachinegroup-concurrency", 50,
 		"Number of virtual machine group to process simultaneously")
 
 	fs.StringVar(
@@ -181,10 +189,10 @@ func InitFlags(fs *pflag.FlagSet) {
 	)
 
 	fs.StringVar(
-		&apiVersionVMOperator,
+		&vmOperatorAPIVersion,
 		"vm-operator-api-version",
 		vmoprv1alpha5.GroupVersion.Version,
-		fmt.Sprintf("the API version to use when reading and writing VM Operator resources in supervisor mode. Valid values are: %s, %s", vmoprv1alpha2.GroupVersion.Version, vmoprv1alpha5.GroupVersion.Version),
+		fmt.Sprintf("the API version to use when reading and writing VM Operator resources in supervisor mode. Valid values are: %s", strings.Join(supportedVMOperatorAPIVersions, ", ")),
 	)
 
 	// Flags common between CAPI and CAPV
@@ -250,7 +258,7 @@ func InitFlags(fs *pflag.FlagSet) {
 	)
 
 	capiflags.AddManagerOptions(fs, &managerOptions)
-	feature.MutableGates.AddFlag(fs)
+	feature.AddFlag(fs, &featureGates, supportedVMOperatorAPIVersions)
 }
 
 // Add RBAC for the authorized diagnostics endpoint.
@@ -352,17 +360,29 @@ func main() {
 		}
 	}
 
+	if isGovmomiCRDLoaded {
+		if err := feature.SetGovmomiGates(featureGates); err != nil {
+			setupLog.Error(err, "invalid argument: --feature-gates")
+			os.Exit(1)
+		}
+	}
+
 	var vm runtime.Object
 	var converter *conversion.Converter
 	if isSupervisorCRDLoaded {
-		if apiVersionVMOperator != vmoprv1alpha2.GroupVersion.Version && apiVersionVMOperator != vmoprv1alpha5.GroupVersion.Version {
-			fmt.Printf("Invalid argument: --vm-operator-api-version must be one of : %s, %s\n", vmoprv1alpha2.GroupVersion.Version, vmoprv1alpha5.GroupVersion.Version)
+		if !sets.New(supportedVMOperatorAPIVersions...).Has(vmOperatorAPIVersion) {
+			setupLog.Info(fmt.Sprintf("Invalid argument: --vm-operator-api-version must be one of : %s\n", strings.Join(supportedVMOperatorAPIVersions, ", ")))
 			os.Exit(1)
 		}
-		setupLog.Info(fmt.Sprintf("Target API Version for group %s: %s", vmoprvhub.GroupVersion.Group, apiVersionVMOperator))
+		setupLog.Info(fmt.Sprintf("Target API Version for group %s: %s", vmoprvhub.GroupVersion.Group, vmOperatorAPIVersion))
+
+		if err := feature.SetSupervisorGates(vmOperatorAPIVersion, featureGates); err != nil {
+			setupLog.Error(err, "invalid argument: --feature-gates")
+			os.Exit(1)
+		}
 
 		converter = conversionapi.DefaultConverterFor(
-			schema.GroupVersion{Group: vmoprvhub.GroupVersion.Group, Version: apiVersionVMOperator},
+			schema.GroupVersion{Group: vmoprvhub.GroupVersion.Group, Version: vmOperatorAPIVersion},
 		)
 
 		// Get vm-operator native types in the preferred version for cache filters.
@@ -381,6 +401,10 @@ func main() {
 			setupLog.Error(err, "Unable to start manager; failed register v1alpha5 version for vm-operator API types")
 			os.Exit(1)
 		}
+		if err := vmoprv1alpha6.AddToScheme(scheme); err != nil {
+			setupLog.Error(err, "Unable to start manager; failed register v1alpha6 version for vm-operator API types")
+			os.Exit(1)
+		}
 
 		vm, err = scheme.New(vmGVK)
 		if err != nil {
@@ -395,6 +419,7 @@ func main() {
 	req, _ = labels.NewRequirement(vmoperator.ClusterSelectorKey, selection.Exists, nil)
 	virtualMachineCacheSelector := labels.NewSelector().Add(*req)
 
+	managerOpts.Scheme = runtime.NewScheme()
 	managerOpts.Cache = cache.Options{
 		DefaultNamespaces: watchNamespaces,
 		SyncPeriod:        &syncPeriod,
@@ -438,9 +463,39 @@ func main() {
 						return in, nil
 					},
 				}
+				if feature.Gates.Enabled(feature.IPv6DualStack) {
+					byObject[&controlplanev1.KubeadmControlPlane{}] = cache.ByObject{
+						Transform: func(in any) (any, error) {
+							kcp, ok := in.(*controlplanev1.KubeadmControlPlane)
+							if !ok {
+								return in, nil
+							}
+
+							kcp.SetManagedFields(nil)
+
+							kcp.Spec = controlplanev1.KubeadmControlPlaneSpec{
+								KubeadmConfigSpec: bootstrapv1.KubeadmConfigSpec{
+									ClusterConfiguration: bootstrapv1.ClusterConfiguration{
+										APIServer: bootstrapv1.APIServer{
+											CertSANs: kcp.Spec.KubeadmConfigSpec.ClusterConfiguration.APIServer.CertSANs,
+										},
+									},
+								},
+							}
+
+							kcp.Status = controlplanev1.KubeadmControlPlaneStatus{
+								ObservedGeneration: kcp.Status.ObservedGeneration,
+								Conditions:         kcp.Status.Conditions,
+							}
+
+							return kcp, nil
+						},
+					}
+				}
 			}
 			return byObject
 		}(),
+		NewInformer: capicontrollerutil.NewInformerFunc(managerOpts.Scheme, controllerName),
 	}
 	managerOpts.Client = func() client.Options {
 		// Optimize the cache for supervisor mode. govmomi mode might have different caching requirements
@@ -463,8 +518,6 @@ func main() {
 		goruntime.SetBlockProfileRate(1)
 	}
 
-	setupLog.Info(fmt.Sprintf("Feature gates: %+v\n", feature.Gates))
-
 	managerOpts.LeaseDuration = &leaderElectionLeaseDuration
 	managerOpts.RenewDeadline = &leaderElectionRenewDeadline
 	managerOpts.RetryPeriod = &leaderElectionRetryPeriod
@@ -478,12 +531,12 @@ func main() {
 			},
 		})
 		if err != nil {
-			return perrors.Wrapf(err, "unable to create secret caching client")
+			return pkgerrors.Wrapf(err, "unable to create secret caching client")
 		}
 
 		clusterCache, err := setupClusterCache(ctx, mgr, secretCachingClient, isSupervisorCRDLoaded)
 		if err != nil {
-			return perrors.Wrapf(err, "unable to create remote cluster cache tracker")
+			return pkgerrors.Wrapf(err, "unable to create remote cluster cache tracker")
 		}
 
 		if isGovmomiCRDLoaded {
@@ -506,21 +559,21 @@ func main() {
 		// with the CRDs that should be migrated by this provider.
 		crdMigratorConfig := map[client.Object]crdmigrator.ByObjectConfig{}
 		if isGovmomiCRDLoaded {
-			crdMigratorConfig[&infrav1.VSphereCluster{}] = crdmigrator.ByObjectConfig{UseCache: true, UseStatusForStorageVersionMigration: true}
+			crdMigratorConfig[&infrav1.VSphereCluster{}] = crdmigrator.ByObjectConfig{UseCache: false, UseStatusForStorageVersionMigration: true}
 			crdMigratorConfig[&infrav1.VSphereClusterTemplate{}] = crdmigrator.ByObjectConfig{UseCache: false}
-			crdMigratorConfig[&infrav1.VSphereMachine{}] = crdmigrator.ByObjectConfig{UseCache: true, UseStatusForStorageVersionMigration: true}
-			crdMigratorConfig[&infrav1.VSphereMachineTemplate{}] = crdmigrator.ByObjectConfig{UseCache: true}
-			crdMigratorConfig[&infrav1.VSphereVM{}] = crdmigrator.ByObjectConfig{UseCache: true, UseStatusForStorageVersionMigration: true}
-			crdMigratorConfig[&infrav1.VSphereClusterIdentity{}] = crdmigrator.ByObjectConfig{UseCache: true, UseStatusForStorageVersionMigration: true}
-			crdMigratorConfig[&infrav1.VSphereDeploymentZone{}] = crdmigrator.ByObjectConfig{UseCache: true, UseStatusForStorageVersionMigration: true}
-			crdMigratorConfig[&infrav1.VSphereFailureDomain{}] = crdmigrator.ByObjectConfig{UseCache: true}
+			crdMigratorConfig[&infrav1.VSphereMachine{}] = crdmigrator.ByObjectConfig{UseCache: false, UseStatusForStorageVersionMigration: true}
+			crdMigratorConfig[&infrav1.VSphereMachineTemplate{}] = crdmigrator.ByObjectConfig{UseCache: false}
+			crdMigratorConfig[&infrav1.VSphereVM{}] = crdmigrator.ByObjectConfig{UseCache: false, UseStatusForStorageVersionMigration: true}
+			crdMigratorConfig[&infrav1.VSphereClusterIdentity{}] = crdmigrator.ByObjectConfig{UseCache: false, UseStatusForStorageVersionMigration: true}
+			crdMigratorConfig[&infrav1.VSphereDeploymentZone{}] = crdmigrator.ByObjectConfig{UseCache: false, UseStatusForStorageVersionMigration: true}
+			crdMigratorConfig[&infrav1.VSphereFailureDomain{}] = crdmigrator.ByObjectConfig{UseCache: false}
 		}
 		if isSupervisorCRDLoaded {
-			crdMigratorConfig[&vmwarev1.VSphereCluster{}] = crdmigrator.ByObjectConfig{UseCache: true, UseStatusForStorageVersionMigration: true}
+			crdMigratorConfig[&vmwarev1.VSphereCluster{}] = crdmigrator.ByObjectConfig{UseCache: false, UseStatusForStorageVersionMigration: true}
 			crdMigratorConfig[&vmwarev1.VSphereClusterTemplate{}] = crdmigrator.ByObjectConfig{UseCache: false}
-			crdMigratorConfig[&vmwarev1.VSphereMachine{}] = crdmigrator.ByObjectConfig{UseCache: true, UseStatusForStorageVersionMigration: true}
-			crdMigratorConfig[&vmwarev1.VSphereMachineTemplate{}] = crdmigrator.ByObjectConfig{UseCache: true, UseStatusForStorageVersionMigration: true}
-			crdMigratorConfig[&vmwarev1.ProviderServiceAccount{}] = crdmigrator.ByObjectConfig{UseCache: true}
+			crdMigratorConfig[&vmwarev1.VSphereMachine{}] = crdmigrator.ByObjectConfig{UseCache: false, UseStatusForStorageVersionMigration: true}
+			crdMigratorConfig[&vmwarev1.VSphereMachineTemplate{}] = crdmigrator.ByObjectConfig{UseCache: false, UseStatusForStorageVersionMigration: true}
+			crdMigratorConfig[&vmwarev1.ProviderServiceAccount{}] = crdmigrator.ByObjectConfig{UseCache: false}
 		}
 
 		crdMigratorSkipPhases := []crdmigrator.Phase{}
@@ -553,6 +606,9 @@ func main() {
 	managerOpts.Metrics = *metricsOptions
 	managerOpts.Controller = config.Controller{
 		UsePriorityQueue: ptr.To[bool](feature.Gates.Enabled(feature.PriorityQueue)),
+		// Give the manager more time to sync the caches during startup. This is required
+		// in high scale environments when they are more objects in the system (default is 3m).
+		CacheSyncTimeout: 5 * time.Minute,
 	}
 	managerOpts.Converter = converter
 
@@ -583,10 +639,15 @@ func main() {
 }
 
 func setupVAPIControllers(ctx context.Context, controllerCtx *capvcontext.ControllerManagerContext, mgr ctrlmgr.Manager, clusterCache clustercache.ClusterCache) error {
+	if err := (&webhooks.VSphereCluster{}).SetupWebhookWithManager(mgr); err != nil {
+		return err
+	}
 	if err := (&webhooks.VSphereClusterTemplate{}).SetupWebhookWithManager(mgr); err != nil {
 		return err
 	}
-
+	if err := (&webhooks.VSphereClusterIdentity{}).SetupWebhookWithManager(mgr); err != nil {
+		return err
+	}
 	if err := (&webhooks.VSphereMachine{}).SetupWebhookWithManager(mgr); err != nil {
 		return err
 	}
@@ -630,7 +691,13 @@ func setupSupervisorControllers(ctx context.Context, controllerCtx *capvcontext.
 	if err := (&vmwarewebhooks.VSphereMachine{}).SetupWebhookWithManager(mgr, controllerCtx.NetworkProvider); err != nil {
 		return err
 	}
+	if err := (&vmwarewebhooks.VSphereClusterTemplate{}).SetupWebhookWithManager(mgr, controllerCtx.NetworkProvider); err != nil {
+		return err
+	}
 	if err := (&vmwarewebhooks.VSphereCluster{}).SetupWebhookWithManager(mgr, controllerCtx.NetworkProvider); err != nil {
+		return err
+	}
+	if err := (&vmwarewebhooks.ProviderServiceAccount{}).SetupWebhookWithManager(mgr); err != nil {
 		return err
 	}
 	if err := controllers.AddClusterControllerToManager(ctx, controllerCtx, mgr, true, concurrency(vSphereClusterConcurrency)); err != nil {
@@ -745,7 +812,7 @@ func setupClusterCache(ctx context.Context, mgr ctrlmgr.Manager, secretCachingCl
 		WatchFilterValue: managerOpts.WatchFilterValue,
 	}, concurrency(clusterCacheConcurrency))
 	if err != nil {
-		return nil, perrors.Wrapf(err, "Unable to create ClusterCache")
+		return nil, pkgerrors.Wrapf(err, "Unable to create ClusterCache")
 	}
 
 	return clusterCache, nil

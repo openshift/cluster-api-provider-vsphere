@@ -21,7 +21,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/pkg/errors"
+	pkgerrors "github.com/pkg/errors"
 	"github.com/vmware/govmomi/vim25/mo"
 	"github.com/vmware/govmomi/vim25/types"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -47,7 +47,7 @@ func (vms *VMService) getPowerState(ctx context.Context, virtualMachineCtx *virt
 	case types.VirtualMachinePowerStateSuspended:
 		return infrav1.VirtualMachinePowerStateSuspended, nil
 	default:
-		return "", errors.Errorf("unexpected power state %q for vm %s", powerState, virtualMachineCtx)
+		return "", pkgerrors.Errorf("unexpected power state %q for vm %s", powerState, virtualMachineCtx)
 	}
 }
 
@@ -68,7 +68,7 @@ func (vms *VMService) isSoftPowerOffTimeoutExceeded(vm *infrav1.VSphereVM) bool 
 	if vm.Spec.GuestSoftPowerOffTimeoutSeconds != 0 {
 		timeout = time.Duration(vm.Spec.GuestSoftPowerOffTimeoutSeconds) * time.Second
 	} else {
-		timeout = infrav1.GuestSoftPowerOffDefaultTimeoutSeconds
+		timeout = infrav1.GuestSoftPowerOffDefaultTimeoutSeconds * time.Second
 	}
 	return timeout.Seconds() > 0 && diff.Seconds() >= timeout.Seconds()
 }
