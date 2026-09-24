@@ -18,11 +18,11 @@ require (
 	github.com/vmware-tanzu/vm-operator/external/ncp v0.0.0-20211209213435-0f4ab286f64f
 	github.com/vmware-tanzu/vm-operator/external/tanzu-topology v0.0.0-20211209213435-0f4ab286f64f
 	github.com/vmware/govmomi v0.30.4
-	golang.org/x/crypto v0.24.0
+	golang.org/x/crypto v0.33.0
 	golang.org/x/exp v0.0.0-20221002003631-540bb7301a08
 	golang.org/x/mod v0.17.0
 	golang.org/x/oauth2 v0.8.0
-	golang.org/x/text v0.16.0
+	golang.org/x/text v0.22.0
 	gopkg.in/gcfg.v1 v1.2.3
 	gopkg.in/yaml.v2 v2.4.0
 	k8s.io/api v0.26.1
@@ -57,8 +57,8 @@ require (
 	go.uber.org/multierr v1.8.0 // indirect
 	go.uber.org/zap v1.24.0 // indirect
 	golang.org/x/net v0.25.0 // indirect
-	golang.org/x/sys v0.21.0 // indirect
-	golang.org/x/term v0.21.0 // indirect
+	golang.org/x/sys v0.30.0 // indirect
+	golang.org/x/term v0.29.0 // indirect
 	golang.org/x/tools v0.21.1-0.20240508182429-e35e4ccd0d2d // indirect
 )
 
@@ -143,3 +143,5 @@ require (
 	sigs.k8s.io/json v0.0.0-20220713155537-f223a00ba0e2 // indirect
 	sigs.k8s.io/structured-merge-diff/v4 v4.2.3 // indirect
 )
+
+replace golang.org/x/net => github.com/openshift-sustaining/net v0.35.0-sec.4
