@@ -43,11 +43,17 @@ var (
 
 func init() {
 	baseDir, err := os.UserCacheDir()
-	if err != nil {
-		baseDir = os.TempDir()
+	if err == nil {
+		cacheDir = filepath.Join(baseDir, "kubebuilder-envtest")
+		err = os.MkdirAll(cacheDir, 0o750)
 	}
-	cacheDir = filepath.Join(baseDir, "kubebuilder-envtest")
-	if err := os.MkdirAll(cacheDir, 0750); err != nil {
+	if err != nil {
+		// Either we didn't get a cache directory, or we can't use it
+		baseDir = os.TempDir()
+		cacheDir = filepath.Join(baseDir, "kubebuilder-envtest")
+		err = os.MkdirAll(cacheDir, 0o750)
+	}
+	if err != nil {
 		panic(err)
 	}
 }
@@ -65,10 +71,20 @@ func (c *portCache) add(port int) (bool, error) {
 		}
 		info, err := d.Info()
 		if err != nil {
+			// No-op if file no longer exists; may have been deleted by another
+			// process/thread trying to allocate ports.
+			if errors.Is(err, fs.ErrNotExist) {
+				return nil
+			}
 			return err
 		}
 		if time.Since(info.ModTime()) > portReserveTime {
 			if err := os.Remove(filepath.Join(cacheDir, path)); err != nil {
+				// No-op if file no longer exists; may have been deleted by another
+				// process/thread trying to allocate ports.
+				if os.IsNotExist(err) {
+					return nil
+				}
 				return err
 			}
 		}
@@ -108,14 +124,16 @@ func suggest(listenHost string) (*net.TCPListener, int, string, error) {
 // Suggest suggests an address a process can listen on. It returns
 // a tuple consisting of a free port and the hostname resolved to its IP.
 // It makes sure that new port allocated does not conflict with old ports
-// allocated within 1 minute.
+// allocated within 2 minute.
 func Suggest(listenHost string) (int, string, error) {
-	for i := 0; i < portConflictRetry; i++ {
+	for range portConflictRetry {
 		listener, port, resolvedHost, err := suggest(listenHost)
 		if err != nil {
 			return -1, "", err
 		}
-		defer listener.Close()
+		if err := listener.Close(); err != nil {
+			return -1, "", err
+		}
 		if ok, err := cache.add(port); ok {
 			return port, resolvedHost, nil
 		} else if err != nil {
