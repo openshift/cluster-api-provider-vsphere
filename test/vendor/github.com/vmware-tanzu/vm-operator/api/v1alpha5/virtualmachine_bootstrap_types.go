@@ -5,9 +5,9 @@
 package v1alpha5
 
 import (
-	vmopv1cloudinit "github.com/vmware-tanzu/vm-operator/api/v1alpha5/cloudinit"
-	vmopv1common "github.com/vmware-tanzu/vm-operator/api/v1alpha5/common"
-	vmopv1sysprep "github.com/vmware-tanzu/vm-operator/api/v1alpha5/sysprep"
+	vmopv1a5cloudinit "github.com/vmware-tanzu/vm-operator/api/v1alpha5/cloudinit"
+	vmopv1a5common "github.com/vmware-tanzu/vm-operator/api/v1alpha5/common"
+	vmopv1a5sysprep "github.com/vmware-tanzu/vm-operator/api/v1alpha5/sysprep"
 )
 
 // VirtualMachineBootstrapSpec defines the desired state of a VM's bootstrap
@@ -98,7 +98,7 @@ type VirtualMachineBootstrapCloudInitSpec struct {
 	// bootstrap the VM.
 	//
 	// Please note this field and RawCloudConfig are mutually exclusive.
-	CloudConfig *vmopv1cloudinit.CloudConfig `json:"cloudConfig,omitempty"`
+	CloudConfig *vmopv1a5cloudinit.CloudConfig `json:"cloudConfig,omitempty"`
 
 	// +optional
 
@@ -109,7 +109,7 @@ type VirtualMachineBootstrapCloudInitSpec struct {
 	// base64-encoded, or gzipped and base64-encoded.
 	//
 	// Please note this field and CloudConfig are mutually exclusive.
-	RawCloudConfig *vmopv1common.SecretKeySelector `json:"rawCloudConfig,omitempty"`
+	RawCloudConfig *vmopv1a5common.SecretKeySelector `json:"rawCloudConfig,omitempty"`
 
 	// +optional
 
@@ -190,7 +190,7 @@ type VirtualMachineBootstrapLinuxPrepSpec struct {
 	//
 	// When not explicitly specified, the Key field for the selector defaults to
 	// `password`.
-	Password *vmopv1common.PasswordSecretKeySelector `json:"password,omitempty"`
+	Password *vmopv1a5common.PasswordSecretKeySelector `json:"password,omitempty"`
 
 	// +optional
 
@@ -198,7 +198,7 @@ type VirtualMachineBootstrapLinuxPrepSpec struct {
 	//
 	// Please see https://knowledge.broadcom.com/external/article?legacyId=1026614
 	// for script examples.
-	ScriptText *vmopv1common.ValueOrSecretKeySelector `json:"scriptText,omitempty"`
+	ScriptText *vmopv1a5common.ValueOrSecretKeySelector `json:"scriptText,omitempty"`
 
 	// +optional
 
@@ -229,7 +229,7 @@ type VirtualMachineBootstrapSysprepSpec struct {
 	// https://technet.microsoft.com/en-us/library/cc771830(v=ws.10).aspx.
 	//
 	// Please note this field and RawSysprep are mutually exclusive.
-	Sysprep *vmopv1sysprep.Sysprep `json:"sysprep,omitempty"`
+	Sysprep *vmopv1a5sysprep.Sysprep `json:"sysprep,omitempty"`
 
 	// +optional
 
@@ -240,7 +240,7 @@ type VirtualMachineBootstrapSysprepSpec struct {
 	// or gzipped and base64-encoded.
 	//
 	// Please note this field and Sysprep are mutually exclusive.
-	RawSysprep *vmopv1common.SecretKeySelector `json:"rawSysprep,omitempty"`
+	RawSysprep *vmopv1a5common.SecretKeySelector `json:"rawSysprep,omitempty"`
 
 	// +optional
 
@@ -268,7 +268,7 @@ type VirtualMachineBootstrapVAppConfigSpec struct {
 	// Properties is a list of vApp/OVF property key/value pairs.
 	//
 	// Please note this field and RawProperties are mutually exclusive.
-	Properties []vmopv1common.KeyValueOrSecretKeySelectorPair `json:"properties,omitempty"`
+	Properties []vmopv1a5common.KeyValueOrSecretKeySelectorPair `json:"properties,omitempty"`
 
 	// +optional
 

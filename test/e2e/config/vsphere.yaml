@@ -18,7 +18,7 @@ images:
     loadBehavior: mustLoad
   - name: gcr.io/k8s-staging-capi-vsphere/cluster-api-vsphere-test-extension-{ARCH}:dev
     loadBehavior: mustLoad
-  - name: gcr.io/k8s-staging-capi-vsphere/extra/vm-operator:9.1
+  - name: gcr.io/k8s-staging-capi-vsphere/extra/vm-operator:9.2
     loadBehavior: tryLoad
 
 providers:
@@ -26,6 +26,15 @@ providers:
   - name: cluster-api
     type: CoreProvider
     versions:
+      - name: "v1.14.99"
+        value: "https://storage.googleapis.com/k8s-staging-cluster-api/components/v1.14.1/core-components.yaml"
+        type: "url"
+        contract: v1beta2
+        files:
+          - sourcePath: "../data/shared/capi/v1.14/metadata.yaml"
+        replacements:
+          - old: "imagePullPolicy: Always"
+            new: "imagePullPolicy: IfNotPresent"
       - name: "{go://sigs.k8s.io/cluster-api@v1.13}"
         value: "https://github.com/kubernetes-sigs/cluster-api/releases/download/{go://sigs.k8s.io/cluster-api@v1.13}/core-components.yaml"
         type: "url"
@@ -53,19 +62,19 @@ providers:
         replacements:
           - old: "imagePullPolicy: Always"
             new: "imagePullPolicy: IfNotPresent"
-      - name: "{go://sigs.k8s.io/cluster-api@v1.10}"
-        value: "https://github.com/kubernetes-sigs/cluster-api/releases/download/{go://sigs.k8s.io/cluster-api@v1.10}/core-components.yaml"
-        type: "url"
-        contract: v1beta1
-        files:
-          - sourcePath: "../data/shared/capi/v1.10/metadata.yaml"
-        replacements:
-          - old: "imagePullPolicy: Always"
-            new: "imagePullPolicy: IfNotPresent"
 
   - name: kubeadm
     type: BootstrapProvider
     versions:
+      - name: "v1.14.99"
+        value: "https://storage.googleapis.com/k8s-staging-cluster-api/components/v1.14.1/bootstrap-components.yaml"
+        type: "url"
+        contract: v1beta2
+        files:
+          - sourcePath: "../data/shared/capi/v1.14/metadata.yaml"
+        replacements:
+          - old: "imagePullPolicy: Always"
+            new: "imagePullPolicy: IfNotPresent"
       - name: "{go://sigs.k8s.io/cluster-api@v1.13}"
         value: "https://github.com/kubernetes-sigs/cluster-api/releases/download/{go://sigs.k8s.io/cluster-api@v1.13}/bootstrap-components.yaml"
         type: "url"
@@ -93,19 +102,19 @@ providers:
         replacements:
           - old: "imagePullPolicy: Always"
             new: "imagePullPolicy: IfNotPresent"
-      - name: "{go://sigs.k8s.io/cluster-api@v1.10}"
-        value: "https://github.com/kubernetes-sigs/cluster-api/releases/download/{go://sigs.k8s.io/cluster-api@v1.10}/bootstrap-components.yaml"
-        type: "url"
-        contract: v1beta1
-        files:
-          - sourcePath: "../data/shared/capi/v1.10/metadata.yaml"
-        replacements:
-          - old: "imagePullPolicy: Always"
-            new: "imagePullPolicy: IfNotPresent"
 
   - name: kubeadm
     type: ControlPlaneProvider
     versions:
+      - name: "v1.14.99"
+        value: "https://storage.googleapis.com/k8s-staging-cluster-api/components/v1.14.1/control-plane-components.yaml"
+        type: "url"
+        contract: v1beta2
+        files:
+          - sourcePath: "../data/shared/capi/v1.14/metadata.yaml"
+        replacements:
+          - old: "imagePullPolicy: Always"
+            new: "imagePullPolicy: IfNotPresent"
       - name: "{go://sigs.k8s.io/cluster-api@v1.13}"
         value: "https://github.com/kubernetes-sigs/cluster-api/releases/download/{go://sigs.k8s.io/cluster-api@v1.13}/control-plane-components.yaml"
         type: "url"
@@ -133,15 +142,6 @@ providers:
         replacements:
           - old: "imagePullPolicy: Always"
             new: "imagePullPolicy: IfNotPresent"
-      - name: "{go://sigs.k8s.io/cluster-api@v1.10}"
-        value: "https://github.com/kubernetes-sigs/cluster-api/releases/download/{go://sigs.k8s.io/cluster-api@v1.10}/control-plane-components.yaml"
-        type: "url"
-        contract: v1beta1
-        files:
-          - sourcePath: "../data/shared/capi/v1.10/metadata.yaml"
-        replacements:
-          - old: "imagePullPolicy: Always"
-            new: "imagePullPolicy: IfNotPresent"
 
   - name: in-cluster
     type: IPAMProvider
@@ -159,7 +159,7 @@ providers:
   - name: vsphere
     type: InfrastructureProvider
     versions:
-      - name: v1.16.99 # next release
+      - name: v1.17.99 # next release
         # Use manifest from source files
         value: ../../../../cluster-api-provider-vsphere/config/default
         contract: v1beta2
@@ -179,6 +179,7 @@ providers:
           - sourcePath: "../../../test/e2e/data/infrastructure-vsphere-govmomi/main/cluster-template-storage-policy.yaml"
           - sourcePath: "../../../test/e2e/data/infrastructure-vsphere-govmomi/main/cluster-template-topology.yaml"
           - sourcePath: "../../../test/e2e/data/infrastructure-vsphere-govmomi/main/cluster-template-topology-runtimesdk.yaml"
+          - sourcePath: "../../../test/e2e/data/infrastructure-vsphere-govmomi/main/cluster-template-topology-runtimesdk-in-place.yaml"
           - sourcePath: "../../../test/e2e/data/infrastructure-vsphere-govmomi/main/cluster-template-topology-runtimesdk-v1beta1.yaml"
           - sourcePath: "../../../test/e2e/data/infrastructure-vsphere-govmomi/main/cluster-template-topology-taints.yaml"
           - sourcePath: "../../../test/e2e/data/infrastructure-vsphere-govmomi/main/cluster-template.yaml"
@@ -188,6 +189,8 @@ providers:
           - sourcePath: "../../../test/e2e/data/infrastructure-vsphere-supervisor/main/cluster-template-topology-supervisor.yaml"
           - sourcePath: "../../../test/e2e/data/infrastructure-vsphere-supervisor/main/cluster-template-topology-autoscaler-supervisor.yaml"
           - sourcePath: "../../../test/e2e/data/infrastructure-vsphere-supervisor/main/cluster-template-topology-runtimesdk-supervisor.yaml"
+          - sourcePath: "../../../test/e2e/data/infrastructure-vsphere-supervisor/main/cluster-template-topology-runtimesdk-in-place-supervisor.yaml"
+          - sourcePath: "../../../test/e2e/data/infrastructure-vsphere-supervisor/main/cluster-template-topology-runtimesdk-self-hosted-supervisor.yaml"
           - sourcePath: "../../../test/e2e/data/infrastructure-vsphere-supervisor/main/cluster-template-topology-runtimesdk-v1beta1-supervisor.yaml"
           - sourcePath: "../../../test/e2e/data/infrastructure-vsphere-supervisor/main/cluster-template-topology-scale-supervisor.yaml"
           - sourcePath: "../../../test/e2e/data/infrastructure-vsphere-supervisor/main/cluster-template-topology-taints-supervisor.yaml"
@@ -200,6 +203,16 @@ providers:
           - sourcePath: "../../../test/e2e/data/infrastructure-vsphere-supervisor/main/cluster-template-conformance-supervisor.yaml"
           - sourcePath: "../../../test/e2e/data/infrastructure-vsphere-supervisor/main/cluster-template-ownerrefs-finalizers-supervisor.yaml"
           - sourcePath: "../data/shared/capv/main/metadata.yaml"
+      - name: "{go://sigs.k8s.io/cluster-api-provider-vsphere@v1.16}"
+        value: "https://github.com/kubernetes-sigs/cluster-api-provider-vsphere/releases/download/{go://sigs.k8s.io/cluster-api-provider-vsphere@v1.16}/infrastructure-components.yaml"
+        type: "url"
+        contract: v1beta2
+        files:
+          - sourcePath: "../../../test/e2e/data/infrastructure-vsphere-govmomi/v1.16/cluster-template-workload.yaml"
+          - sourcePath: "../../../test/e2e/data/infrastructure-vsphere-govmomi/v1.16/clusterclass-quick-start.yaml"
+          - sourcePath: "../../../test/e2e/data/infrastructure-vsphere-supervisor/v1.16/cluster-template-workload-supervisor.yaml"
+          - sourcePath: "../../../test/e2e/data/infrastructure-vsphere-supervisor/v1.16/clusterclass-quick-start-supervisor.yaml"
+          - sourcePath: "../data/shared/capv/v1.16/metadata.yaml"
       - name: "{go://sigs.k8s.io/cluster-api-provider-vsphere@v1.15}"
         value: "https://github.com/kubernetes-sigs/cluster-api-provider-vsphere/releases/download/{go://sigs.k8s.io/cluster-api-provider-vsphere@v1.15}/infrastructure-components.yaml"
         type: "url"
@@ -220,25 +233,14 @@ providers:
           - sourcePath: "../../../test/e2e/data/infrastructure-vsphere-supervisor/v1.14/cluster-template-workload-supervisor.yaml"
           - sourcePath: "../../../test/e2e/data/infrastructure-vsphere-supervisor/v1.14/clusterclass-quick-start-supervisor.yaml"
           - sourcePath: "../data/shared/capv/v1.14/metadata.yaml"
-      - name: "{go://sigs.k8s.io/cluster-api-provider-vsphere@v1.13}"
-        value: "https://github.com/kubernetes-sigs/cluster-api-provider-vsphere/releases/download/{go://sigs.k8s.io/cluster-api-provider-vsphere@v1.13}/infrastructure-components.yaml"
-        type: "url"
-        contract: v1beta1
-        files:
-          - sourcePath: "../../../test/e2e/data/infrastructure-vsphere-govmomi/v1.13/cluster-template-workload.yaml"
-          - sourcePath: "../../../test/e2e/data/infrastructure-vsphere-govmomi/v1.13/clusterclass-quick-start.yaml"
-          - sourcePath: "../../../test/e2e/data/infrastructure-vsphere-supervisor/v1.13/cluster-template-workload-supervisor.yaml"
-          - sourcePath: "../../../test/e2e/data/infrastructure-vsphere-supervisor/v1.13/clusterclass-quick-start-supervisor.yaml"
-          - sourcePath: "../data/shared/capv/v1.13/metadata.yaml"
 
   - name: vcsim
     type: RuntimeExtensionProvider # vcsim isn't a provider, but we fake it is so it can be handled by the clusterctl machinery.
     versions:
-      - name: v1.16.99
+      - name: v1.17.99
         # Use manifest from source files
         value: ../../../../cluster-api-provider-vsphere/test/infrastructure/vcsim/config/default
         files:
-          # Note: We have to make this look like a v1beta1 provider for clusterctl upgrade tests, because clusterctl v1.10 can only install v1beta1 providers.
           - sourcePath: "../data/shared/rx/main/metadata.yaml"
 
   - name: vm-operator
@@ -262,15 +264,23 @@ providers:
         replacements:
           - old: "imagePullPolicy: Always"
             new: "imagePullPolicy: IfNotPresent"
+      - name: "v9.2.0" # This value is required to be similar to CAPI/provider versions, so adding the v prefix and the .0 patch version
+        # Use manifest from source files
+        value: "file://../../../../cluster-api-provider-vsphere/test/infrastructure/vm-operator/vm-operator-9.2.yaml"
+        type: "url"
+        files:
+          - sourcePath: "../data/shared/vmoperator/9.2/metadata.yaml"
+        replacements:
+          - old: "imagePullPolicy: Always"
+            new: "imagePullPolicy: IfNotPresent"
 
   - name: net-operator
     type: RuntimeExtensionProvider # net-operator isn't a provider, but we fake it is so it can be handled by the clusterctl machinery.
     versions:
-      - name: v1.16.99
+      - name: v1.17.99
         # Use manifest from source files
         value: ../../../../cluster-api-provider-vsphere/test/infrastructure/net-operator/config/default
         files:
-          # Note: We have to make this look like a v1beta1 provider for clusterctl upgrade tests, because clusterctl v1.10 can only install v1beta1 providers.
           - sourcePath: "../data/shared/rx/main/metadata.yaml"
         replacements:
           - old: "imagePullPolicy: Always"
@@ -279,11 +289,10 @@ providers:
   - name: capv-test-extension
     type: RuntimeExtensionProvider
     versions:
-      - name: v1.16.99
+      - name: v1.17.99
         # Use manifest from source files
         value: ../../../../cluster-api-provider-vsphere/test/extension/config/default
         files:
-          # Note: We have to make this look like a v1beta1 provider for clusterctl upgrade tests, because clusterctl v1.10 can only install v1beta1 providers.
           - sourcePath: "../data/shared/rx/main/metadata.yaml"
         replacements:
           - old: "imagePullPolicy: Always"
@@ -291,13 +300,16 @@ providers:
 
 variables:
   # Ensure all Kubernetes versions used here are covered in patch-vsphere-template.yaml
-  KUBERNETES_VERSION_MANAGEMENT: "v1.36.0"
-  KUBERNETES_VERSION_MANAGEMENT_LATEST_CI: "ci/latest-1.36"
-  KUBERNETES_VERSION: "v1.36.0"
-  KUBERNETES_VERSION_UPGRADE_FROM: "v1.35.0"
-  KUBERNETES_VERSION_UPGRADE_TO: "v1.36.0"
-  KUBERNETES_VERSION_LATEST_CI: "ci/latest-1.37"
-  CPI_IMAGE_K8S_VERSION: "v1.36.0"
+  KUBERNETES_VERSION_MANAGEMENT: "v1.37.0"
+  KUBERNETES_VERSION: "v1.37.0"
+  KUBERNETES_VERSION_UPGRADE_TO: "v1.37.0"
+  KUBERNETES_VERSION_UPGRADE_FROM: "v1.36.0" # Should always be KUBERNETES_VERSION_UPGRADE_TO -1 minor .
+  KUBERNETES_VERSION_CHAINED_UPGRADE_FROM: "v1.33.0" # Should always be KUBERNETES_VERSION_UPGRADE_TO - 4 minor.
+  # CPI_IMAGE_K8S_VERSION should be the latest available CPI version matching KUBERNETES_VERSION.
+  CPI_IMAGE_K8S_VERSION: "v1.37.0"
+  # KUBERNETES_VERSION_*_LATEST_CI should always be the upcoming Kubernetes version, if this branch will support it.
+  KUBERNETES_VERSION_MANAGEMENT_LATEST_CI: "ci/latest-1.38"
+  KUBERNETES_VERSION_LATEST_CI: "ci/latest-1.38"
   CNI: "./data/cni/calico/calico.yaml"
   AUTOSCALER_WORKLOAD: "./data/autoscaler/autoscaler-to-management-workload.yaml"
   CONTROL_PLANE_MACHINE_COUNT: 1
@@ -316,18 +328,21 @@ variables:
   # Changing the value results in VM's getting created but not setting the correct CPU or memory size.
   VSPHERE_MACHINE_CLASS_CPU: "2"
   VSPHERE_MACHINE_CLASS_MEMORY: "2Gi"
-  VSPHERE_MACHINE_CLASS_NAME_CONFORMANCE: "test-machine-class-conformance"
   # CI runs vm-operator v1.8.6 on vCenter 8, setting CPU and Memory does not work and defaults to 2 CPUs / 2Gi memory.
   # Changing the value results in VM's getting created but not setting the correct CPU or memory size.
+  VSPHERE_MACHINE_CLASS_NAME_CONFORMANCE: "test-machine-class-conformance"
   VSPHERE_MACHINE_CLASS_CPU_CONFORMANCE: "2"
   VSPHERE_MACHINE_CLASS_MEMORY_CONFORMANCE: "2Gi"
+  VSPHERE_MACHINE_CLASS_NAME_SELF_HOSTED: "test-machine-self-hosted"
+  VSPHERE_MACHINE_CLASS_CPU_SELF_HOSTED: "4"
+  VSPHERE_MACHINE_CLASS_MEMORY_SELF_HOSTED: "8Gi"
   VSPHERE_CONTENT_LIBRARY: "capv"
-  VSPHERE_CONTENT_LIBRARY_ITEMS: "ubuntu-2204-kube-v1.28.0,ubuntu-2204-kube-v1.29.0,ubuntu-2204-kube-v1.30.0,ubuntu-2404-kube-v1.31.0,ubuntu-2404-kube-v1.32.0,ubuntu-2404-kube-v1.33.0,ubuntu-2404-kube-v1.34.0,ubuntu-2404-kube-v1.35.0,ubuntu-2404-kube-v1.36.0"
-  VSPHERE_IMAGE_NAME: "ubuntu-2404-kube-v1.36.0"
+  VSPHERE_CONTENT_LIBRARY_ITEMS: "ubuntu-2204-kube-v1.30.0,ubuntu-2404-kube-v1.31.0,ubuntu-2404-kube-v1.32.0,ubuntu-2404-kube-v1.33.0,ubuntu-2404-kube-v1.34.0,ubuntu-2404-kube-v1.35.0,ubuntu-2404-kube-v1.36.0,ubuntu-2404-kube-v1.37.0"
+  VSPHERE_IMAGE_NAME: "ubuntu-2404-kube-v1.37.0"
   VSPHERE_NETWORK: "k8s-ci"
   VSPHERE_DISTRIBUTED_PORT_GROUP: "/Datacenter/network/k8s-ci"
-  VSPHERE_TEMPLATE: "ubuntu-2404-kube-v1.36.0"
-  FLATCAR_VSPHERE_TEMPLATE: "flatcar-stable-4459.2.4-kube-v1.36.0"
+  VSPHERE_TEMPLATE: "ubuntu-2404-kube-v1.37.0"
+  FLATCAR_VSPHERE_TEMPLATE: "flatcar-stable-4593.2.5-kube-v1.37.0"
   KUBETEST_CONFIGURATION: "./data/kubetest/conformance.yaml"
   NODE_DRAIN_TIMEOUT_SECONDS: "60"
   # Enabling the feature flags by setting the env variables.
@@ -342,6 +357,7 @@ variables:
   EXP_RECONCILER_RATE_LIMITING: "true"
   EXP_IN_PLACE_UPDATES: "true"
   EXP_MACHINE_TAINT_PROPAGATION: "true"
+  DOCKER_IMAGE_TAR: /tmp/images/image.tar
   # These IDs correspond to Tesla T4s, they are the decimal representation of the hex values.
   DEVICE_ID: 7864
   VENDOR_ID: 4318
@@ -373,6 +389,8 @@ intervals:
   node-drain/wait-machine-deleted: ["10m", "10s"]
   node-drain/wait-statefulset-available: ["3m", "10s"]
   anti-affinity/wait-vm-redistribution: ["5m", "10s"]
+  #  Giving a bit more time during kcp-infra-adoption test.
+  kcp-infra-adoption/wait-control-plane: ["20m", "10s"]
   #  Giving a bit more time during scale tests, we analyze independently if everything works quickly enough.
   scale/wait-cluster: ["5m", "10s"]
   scale/wait-control-plane: ["10m", "10s"]

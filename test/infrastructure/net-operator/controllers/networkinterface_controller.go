@@ -19,7 +19,7 @@ package controllers
 import (
 	"context"
 
-	"github.com/pkg/errors"
+	pkgerrors "github.com/pkg/errors"
 	netopv1alpha1 "github.com/vmware-tanzu/net-operator-api/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -41,6 +41,7 @@ type NetworkInterfaceReconciler struct {
 }
 
 // +kubebuilder:rbac:groups=netoperator.vmware.com,resources=networkinterfaces,verbs=get;list;watch;patch
+// +kubebuilder:rbac:groups=netoperator.vmware.com,resources=networkinterfaces/finalizers,verbs=get;update;patch
 // +kubebuilder:rbac:groups=netoperator.vmware.com,resources=networkinterfaces/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create
@@ -60,7 +61,7 @@ func (r *NetworkInterfaceReconciler) Reconcile(ctx context.Context, req ctrl.Req
 	if networkInterface.Status.NetworkID == "" {
 		s, err := vmoperator.GetVCenterSession(ctx, r.Client)
 		if err != nil {
-			return reconcile.Result{}, errors.Wrapf(err, "failed to get vcenter session")
+			return reconcile.Result{}, pkgerrors.Wrapf(err, "failed to get vcenter session")
 		}
 
 		distributedPortGroupName, err := vmoperator.GetDistributedPortGroup(ctx, r.Client)
@@ -70,7 +71,7 @@ func (r *NetworkInterfaceReconciler) Reconcile(ctx context.Context, req ctrl.Req
 
 		distributedPortGroup, err := s.Finder.Network(ctx, distributedPortGroupName)
 		if err != nil {
-			return ctrl.Result{}, errors.Wrapf(err, "failed to get DistributedPortGroup %s", distributedPortGroupName)
+			return ctrl.Result{}, pkgerrors.Wrapf(err, "failed to get DistributedPortGroup %s", distributedPortGroupName)
 		}
 
 		original := networkInterface.DeepCopy()
@@ -105,10 +106,10 @@ func (r *NetworkInterfaceReconciler) SetupWithManager(ctx context.Context, mgr c
 		For(&netopv1alpha1.NetworkInterface{}).
 		WithOptions(options).
 		WithEventFilter(predicates.ResourceNotPausedAndHasFilterLabel(mgr.GetScheme(), predicateLog, r.WatchFilterValue)).
-		Complete(r)
+		Complete(ctx, r)
 
 	if err != nil {
-		return errors.Wrap(err, "failed setting up with a controller manager")
+		return pkgerrors.Wrap(err, "failed setting up with a controller manager")
 	}
 
 	return nil

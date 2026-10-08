@@ -23,13 +23,12 @@ import (
 	"math/rand"
 	"time"
 
-	"github.com/pkg/errors"
+	pkgerrors "github.com/pkg/errors"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	kerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/klog/v2"
@@ -39,6 +38,7 @@ import (
 	inmemoryserver "sigs.k8s.io/cluster-api/test/infrastructure/inmemory/pkg/server"
 	capiutil "sigs.k8s.io/cluster-api/util"
 	"sigs.k8s.io/cluster-api/util/certs"
+	"sigs.k8s.io/cluster-api/util/conditions"
 	v1beta1conditions "sigs.k8s.io/cluster-api/util/deprecated/v1beta1/conditions"
 	"sigs.k8s.io/cluster-api/util/secret"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -150,7 +150,7 @@ type vmBootstrapReconciler struct {
 	GetProviderID func() string
 }
 
-func (r *vmBootstrapReconciler) reconcileBoostrap(ctx context.Context, cluster *clusterv1beta1.Cluster, machine *clusterv1beta1.Machine, conditionsTracker ConditionsTracker) (ctrl.Result, error) {
+func (r *vmBootstrapReconciler) reconcileBoostrap(ctx context.Context, cluster *clusterv1.Cluster, machine *clusterv1.Machine, conditionsTracker ConditionsTracker) (ctrl.Result, error) {
 	log := ctrl.LoggerFrom(ctx)
 
 	if !v1beta1conditions.Has(conditionsTracker, VMProvisionedCondition) {
@@ -160,7 +160,7 @@ func (r *vmBootstrapReconciler) reconcileBoostrap(ctx context.Context, cluster *
 	// Make sure bootstrap data is available and populated.
 	// NOTE: we are not using bootstrap data, but we wait for it in order to simulate a real machine provisioning workflow.
 	if machine.Spec.Bootstrap.DataSecretName == nil {
-		if !util.IsControlPlaneMachine(machine) && !v1beta1conditions.IsTrue(cluster, clusterv1beta1.ControlPlaneInitializedCondition) {
+		if !util.IsControlPlaneMachine(machine) && !conditions.IsTrue(cluster, clusterv1.ClusterControlPlaneInitializedCondition) {
 			v1beta1conditions.MarkFalse(conditionsTracker, VMProvisionedCondition, WaitingControlPlaneInitializedReason, clusterv1beta1.ConditionSeverityInfo, "")
 			log.Info("Waiting for the control plane to be initialized")
 			return reconcile.Result{RequeueAfter: 5 * time.Second}, nil // keep requeueing since we don't have a watch on machines // TODO: check if we can avoid this
@@ -181,7 +181,7 @@ func (r *vmBootstrapReconciler) reconcileBoostrap(ctx context.Context, cluster *
 	}
 
 	// Call the inner reconciliation methods.
-	phases := []func(ctx context.Context, cluster *clusterv1beta1.Cluster, machine *clusterv1beta1.Machine, conditionsTracker ConditionsTracker) (ctrl.Result, error){
+	phases := []func(ctx context.Context, cluster *clusterv1.Cluster, machine *clusterv1.Machine, conditionsTracker ConditionsTracker) (ctrl.Result, error){
 		r.reconcileBoostrapNode,
 		r.reconcileBoostrapETCD,
 		r.reconcileBoostrapAPIServer,
@@ -215,12 +215,7 @@ func (r *vmBootstrapReconciler) reconcileBoostrap(ctx context.Context, cluster *
 			return res, nil
 		}
 
-		// Try to patch first with v1beta2 and only if that doesn't work with v1beta1.
-		// v1beta1 might be needed for clusterctl upgrade tests that use old versions of CAPI.
-		// We have to try to avoid using v1beta1 as it introduces SSA issues on Machines with taints
-		// which then leads to a failure in the ClusterClass rollout test.
-		machineObj := &unstructured.Unstructured{}
-		machineObj.SetGroupVersionKind(clusterv1.GroupVersion.WithKind("Machine"))
+		machineObj := &clusterv1.Machine{}
 		machineObj.SetNamespace(machine.Namespace)
 		machineObj.SetName(machine.Name)
 		original := machineObj.DeepCopy()
@@ -228,24 +223,14 @@ func (r *vmBootstrapReconciler) reconcileBoostrap(ctx context.Context, cluster *
 			MachineBootstrappedAnnotationName: "",
 		})
 		if err := r.Client.Patch(ctx, machineObj, client.MergeFrom(original)); err != nil {
-			machineObj := &unstructured.Unstructured{}
-			machineObj.SetGroupVersionKind(clusterv1beta1.GroupVersion.WithKind("Machine"))
-			machineObj.SetNamespace(machine.Namespace)
-			machineObj.SetName(machine.Name)
-			original := machineObj.DeepCopy()
-			machineObj.SetAnnotations(map[string]string{
-				MachineBootstrappedAnnotationName: "",
-			})
-			if err := r.Client.Patch(ctx, machineObj, client.MergeFrom(original)); err != nil {
-				return res, err
-			}
+			return res, err
 		}
 	}
 
 	return res, nil
 }
 
-func (r *vmBootstrapReconciler) reconcileBoostrapNode(ctx context.Context, cluster *clusterv1beta1.Cluster, machine *clusterv1beta1.Machine, conditionsTracker ConditionsTracker) (ctrl.Result, error) {
+func (r *vmBootstrapReconciler) reconcileBoostrapNode(ctx context.Context, cluster *clusterv1.Cluster, machine *clusterv1.Machine, conditionsTracker ConditionsTracker) (ctrl.Result, error) {
 	log := ctrl.LoggerFrom(ctx)
 	nodeName := conditionsTracker.GetName()
 
@@ -305,8 +290,8 @@ func (r *vmBootstrapReconciler) reconcileBoostrapNode(ctx context.Context, clust
 			},
 		},
 	}
-	if machine.Spec.Version != nil {
-		node.Status.NodeInfo.KubeletVersion = *machine.Spec.Version
+	if machine.Spec.Version != "" {
+		node.Status.NodeInfo.KubeletVersion = machine.Spec.Version
 	}
 	if util.IsControlPlaneMachine(machine) {
 		if node.Labels == nil {
@@ -323,13 +308,13 @@ func (r *vmBootstrapReconciler) reconcileBoostrapNode(ctx context.Context, clust
 
 	if err := inmemoryClient.Get(ctx, client.ObjectKeyFromObject(node), node); err != nil {
 		if !apierrors.IsNotFound(err) {
-			return ctrl.Result{}, errors.Wrapf(err, "failed to get node")
+			return ctrl.Result{}, pkgerrors.Wrapf(err, "failed to get node")
 		}
 
 		// NOTE: for the first control plane machine we might create the node before etcd and API server pod are running
 		// but this is not an issue, because it won't be visible to CAPI until the API server start serving requests.
 		if err := inmemoryClient.Create(ctx, node); err != nil && !apierrors.IsAlreadyExists(err) {
-			return ctrl.Result{}, errors.Wrapf(err, "failed to create Node")
+			return ctrl.Result{}, pkgerrors.Wrapf(err, "failed to create Node")
 		}
 		log.Info("Node created", "Node", klog.KObj(node))
 	}
@@ -338,7 +323,7 @@ func (r *vmBootstrapReconciler) reconcileBoostrapNode(ctx context.Context, clust
 	return ctrl.Result{}, nil
 }
 
-func (r *vmBootstrapReconciler) reconcileBoostrapETCD(ctx context.Context, cluster *clusterv1beta1.Cluster, machine *clusterv1beta1.Machine, conditionsTracker ConditionsTracker) (ctrl.Result, error) {
+func (r *vmBootstrapReconciler) reconcileBoostrapETCD(ctx context.Context, cluster *clusterv1.Cluster, machine *clusterv1.Machine, conditionsTracker ConditionsTracker) (ctrl.Result, error) {
 	log := ctrl.LoggerFrom(ctx)
 	etcdMember := fmt.Sprintf("etcd-%s", conditionsTracker.GetName())
 
@@ -397,7 +382,7 @@ func (r *vmBootstrapReconciler) reconcileBoostrapETCD(ctx context.Context, clust
 	}
 	if err := inmemoryClient.Get(ctx, client.ObjectKeyFromObject(etcdPod), etcdPod); err != nil {
 		if !apierrors.IsNotFound(err) {
-			return ctrl.Result{}, errors.Wrapf(err, "failed to get etcd Pod")
+			return ctrl.Result{}, pkgerrors.Wrapf(err, "failed to get etcd Pod")
 		}
 
 		// Gets info about the current etcd cluster, if any.
@@ -439,7 +424,7 @@ func (r *vmBootstrapReconciler) reconcileBoostrapETCD(ctx context.Context, clust
 		// NOTE: for the first control plane machine we might create the etcd pod before the API server pod is running
 		// but this is not an issue, because it won't be visible to CAPI until the API server start serving requests.
 		if err := inmemoryClient.Create(ctx, etcdPod); err != nil && !apierrors.IsAlreadyExists(err) {
-			return ctrl.Result{}, errors.Wrapf(err, "failed to create Pod")
+			return ctrl.Result{}, pkgerrors.Wrapf(err, "failed to create Pod")
 		}
 	}
 
@@ -452,30 +437,30 @@ func (r *vmBootstrapReconciler) reconcileBoostrapETCD(ctx context.Context, clust
 		// Getting the etcd CA
 		s, err := secret.Get(ctx, r.Client, client.ObjectKeyFromObject(cluster), secret.EtcdCA)
 		if err != nil {
-			return ctrl.Result{}, errors.Wrapf(err, "failed to get etcd CA")
+			return ctrl.Result{}, pkgerrors.Wrapf(err, "failed to get etcd CA")
 		}
 		certData, exists := s.Data[secret.TLSCrtDataName]
 		if !exists {
-			return ctrl.Result{}, errors.Errorf("invalid etcd CA: missing data for %s", secret.TLSCrtDataName)
+			return ctrl.Result{}, pkgerrors.Errorf("invalid etcd CA: missing data for %s", secret.TLSCrtDataName)
 		}
 
 		cert, err := certs.DecodeCertPEM(certData)
 		if err != nil {
-			return ctrl.Result{}, errors.Wrapf(err, "invalid etcd CA: invalid %s", secret.TLSCrtDataName)
+			return ctrl.Result{}, pkgerrors.Wrapf(err, "invalid etcd CA: invalid %s", secret.TLSCrtDataName)
 		}
 
 		keyData, exists := s.Data[secret.TLSKeyDataName]
 		if !exists {
-			return ctrl.Result{}, errors.Errorf("invalid etcd CA: missing data for %s", secret.TLSKeyDataName)
+			return ctrl.Result{}, pkgerrors.Errorf("invalid etcd CA: missing data for %s", secret.TLSKeyDataName)
 		}
 
 		key, err := certs.DecodePrivateKeyPEM(keyData)
 		if err != nil {
-			return ctrl.Result{}, errors.Wrapf(err, "invalid etcd CA: invalid %s", secret.TLSKeyDataName)
+			return ctrl.Result{}, pkgerrors.Wrapf(err, "invalid etcd CA: invalid %s", secret.TLSKeyDataName)
 		}
 
 		if err := r.APIServerMux.AddEtcdMember(listenerName, etcdMember, cert, key.(*rsa.PrivateKey)); err != nil {
-			return ctrl.Result{}, errors.Wrap(err, "failed to start etcd member")
+			return ctrl.Result{}, pkgerrors.Wrap(err, "failed to start etcd member")
 		}
 		log.Info("etcd Pod started", "Pod", klog.KObj(etcdPod))
 	}
@@ -484,7 +469,7 @@ func (r *vmBootstrapReconciler) reconcileBoostrapETCD(ctx context.Context, clust
 	return ctrl.Result{}, nil
 }
 
-func (r *vmBootstrapReconciler) reconcileBoostrapAPIServer(ctx context.Context, cluster *clusterv1beta1.Cluster, machine *clusterv1beta1.Machine, conditionsTracker ConditionsTracker) (ctrl.Result, error) {
+func (r *vmBootstrapReconciler) reconcileBoostrapAPIServer(ctx context.Context, cluster *clusterv1.Cluster, machine *clusterv1.Machine, conditionsTracker ConditionsTracker) (ctrl.Result, error) {
 	log := ctrl.LoggerFrom(ctx)
 	apiServer := fmt.Sprintf("kube-apiserver-%s", conditionsTracker.GetName())
 
@@ -544,11 +529,11 @@ func (r *vmBootstrapReconciler) reconcileBoostrapAPIServer(ctx context.Context, 
 	}
 	if err := inmemoryClient.Get(ctx, client.ObjectKeyFromObject(apiServerPod), apiServerPod); err != nil {
 		if !apierrors.IsNotFound(err) {
-			return ctrl.Result{}, errors.Wrapf(err, "failed to get apiServer Pod")
+			return ctrl.Result{}, pkgerrors.Wrapf(err, "failed to get apiServer Pod")
 		}
 
 		if err := inmemoryClient.Create(ctx, apiServerPod); err != nil && !apierrors.IsAlreadyExists(err) {
-			return ctrl.Result{}, errors.Wrapf(err, "failed to create apiServer Pod")
+			return ctrl.Result{}, pkgerrors.Wrapf(err, "failed to create apiServer Pod")
 		}
 	}
 
@@ -561,32 +546,32 @@ func (r *vmBootstrapReconciler) reconcileBoostrapAPIServer(ctx context.Context, 
 		// Getting the Kubernetes CA
 		s, err := secret.Get(ctx, r.Client, client.ObjectKeyFromObject(cluster), secret.ClusterCA)
 		if err != nil {
-			return ctrl.Result{}, errors.Wrapf(err, "failed to get cluster CA")
+			return ctrl.Result{}, pkgerrors.Wrapf(err, "failed to get cluster CA")
 		}
 		certData, exists := s.Data[secret.TLSCrtDataName]
 		if !exists {
-			return ctrl.Result{}, errors.Errorf("invalid cluster CA: missing data for %s", secret.TLSCrtDataName)
+			return ctrl.Result{}, pkgerrors.Errorf("invalid cluster CA: missing data for %s", secret.TLSCrtDataName)
 		}
 
 		cert, err := certs.DecodeCertPEM(certData)
 		if err != nil {
-			return ctrl.Result{}, errors.Wrapf(err, "invalid cluster CA: invalid %s", secret.TLSCrtDataName)
+			return ctrl.Result{}, pkgerrors.Wrapf(err, "invalid cluster CA: invalid %s", secret.TLSCrtDataName)
 		}
 
 		keyData, exists := s.Data[secret.TLSKeyDataName]
 		if !exists {
-			return ctrl.Result{}, errors.Errorf("invalid cluster CA: missing data for %s", secret.TLSKeyDataName)
+			return ctrl.Result{}, pkgerrors.Errorf("invalid cluster CA: missing data for %s", secret.TLSKeyDataName)
 		}
 
 		key, err := certs.DecodePrivateKeyPEM(keyData)
 		if err != nil {
-			return ctrl.Result{}, errors.Wrapf(err, "invalid cluster CA: invalid %s", secret.TLSKeyDataName)
+			return ctrl.Result{}, pkgerrors.Wrapf(err, "invalid cluster CA: invalid %s", secret.TLSKeyDataName)
 		}
 
 		// Adding the APIServer.
 		// NOTE: When the first APIServer is added, the workload cluster listener is started.
 		if err := r.APIServerMux.AddAPIServer(listenerName, apiServer, cert, key.(*rsa.PrivateKey)); err != nil {
-			return ctrl.Result{}, errors.Wrap(err, "failed to start API server")
+			return ctrl.Result{}, pkgerrors.Wrap(err, "failed to start API server")
 		}
 		log.Info("API server Pod started", "Pod", klog.KObj(apiServerPod))
 	}
@@ -595,7 +580,7 @@ func (r *vmBootstrapReconciler) reconcileBoostrapAPIServer(ctx context.Context, 
 	return ctrl.Result{}, nil
 }
 
-func (r *vmBootstrapReconciler) reconcileBoostrapScheduler(ctx context.Context, cluster *clusterv1beta1.Cluster, machine *clusterv1beta1.Machine, conditionsTracker ConditionsTracker) (ctrl.Result, error) {
+func (r *vmBootstrapReconciler) reconcileBoostrapScheduler(ctx context.Context, cluster *clusterv1.Cluster, machine *clusterv1.Machine, conditionsTracker ConditionsTracker) (ctrl.Result, error) {
 	// No-op if the machine is not a control plane machine.
 	if !util.IsControlPlaneMachine(machine) {
 		return ctrl.Result{}, nil
@@ -636,13 +621,13 @@ func (r *vmBootstrapReconciler) reconcileBoostrapScheduler(ctx context.Context, 
 		},
 	}
 	if err := inmemoryClient.Create(ctx, schedulerPod); err != nil && !apierrors.IsAlreadyExists(err) {
-		return ctrl.Result{}, errors.Wrapf(err, "failed to create scheduler Pod")
+		return ctrl.Result{}, pkgerrors.Wrapf(err, "failed to create scheduler Pod")
 	}
 
 	return ctrl.Result{}, nil
 }
 
-func (r *vmBootstrapReconciler) reconcileBoostrapControllerManager(ctx context.Context, cluster *clusterv1beta1.Cluster, machine *clusterv1beta1.Machine, conditionsTracker ConditionsTracker) (ctrl.Result, error) {
+func (r *vmBootstrapReconciler) reconcileBoostrapControllerManager(ctx context.Context, cluster *clusterv1.Cluster, machine *clusterv1.Machine, conditionsTracker ConditionsTracker) (ctrl.Result, error) {
 	// No-op if the machine is not a control plane machine.
 	if !util.IsControlPlaneMachine(machine) {
 		return ctrl.Result{}, nil
@@ -683,13 +668,13 @@ func (r *vmBootstrapReconciler) reconcileBoostrapControllerManager(ctx context.C
 		},
 	}
 	if err := inmemoryClient.Create(ctx, controllerManagerPod); err != nil && !apierrors.IsAlreadyExists(err) {
-		return ctrl.Result{}, errors.Wrapf(err, "failed to create controller manager Pod")
+		return ctrl.Result{}, pkgerrors.Wrapf(err, "failed to create controller manager Pod")
 	}
 
 	return ctrl.Result{}, nil
 }
 
-func (r *vmBootstrapReconciler) reconcileBoostrapKubeadmObjects(ctx context.Context, cluster *clusterv1beta1.Cluster, machine *clusterv1beta1.Machine, _ ConditionsTracker) (ctrl.Result, error) {
+func (r *vmBootstrapReconciler) reconcileBoostrapKubeadmObjects(ctx context.Context, cluster *clusterv1.Cluster, machine *clusterv1.Machine, _ ConditionsTracker) (ctrl.Result, error) {
 	// No-op if the machine is not a control plane machine.
 	if !util.IsControlPlaneMachine(machine) {
 		return ctrl.Result{}, nil
@@ -716,7 +701,7 @@ func (r *vmBootstrapReconciler) reconcileBoostrapKubeadmObjects(ctx context.Cont
 		},
 	}
 	if err := inmemoryClient.Create(ctx, role); err != nil && !apierrors.IsAlreadyExists(err) {
-		return ctrl.Result{}, errors.Wrapf(err, "failed to create kubeadm:get-nodes ClusterRole")
+		return ctrl.Result{}, pkgerrors.Wrapf(err, "failed to create kubeadm:get-nodes ClusterRole")
 	}
 
 	roleBinding := &rbacv1.ClusterRoleBinding{
@@ -736,7 +721,7 @@ func (r *vmBootstrapReconciler) reconcileBoostrapKubeadmObjects(ctx context.Cont
 		},
 	}
 	if err := inmemoryClient.Create(ctx, roleBinding); err != nil && !apierrors.IsAlreadyExists(err) {
-		return ctrl.Result{}, errors.Wrapf(err, "failed to create kubeadm:get-nodes ClusterRoleBinding")
+		return ctrl.Result{}, pkgerrors.Wrapf(err, "failed to create kubeadm:get-nodes ClusterRoleBinding")
 	}
 
 	// create kubeadm config map
@@ -750,13 +735,13 @@ func (r *vmBootstrapReconciler) reconcileBoostrapKubeadmObjects(ctx context.Cont
 		},
 	}
 	if err := inmemoryClient.Create(ctx, cm); err != nil && !apierrors.IsAlreadyExists(err) {
-		return ctrl.Result{}, errors.Wrapf(err, "failed to create kubeadm-config ConfigMap")
+		return ctrl.Result{}, pkgerrors.Wrapf(err, "failed to create kubeadm-config ConfigMap")
 	}
 
 	return ctrl.Result{}, nil
 }
 
-func (r *vmBootstrapReconciler) reconcileBoostrapKubeProxy(ctx context.Context, cluster *clusterv1beta1.Cluster, machine *clusterv1beta1.Machine, _ ConditionsTracker) (ctrl.Result, error) {
+func (r *vmBootstrapReconciler) reconcileBoostrapKubeProxy(ctx context.Context, cluster *clusterv1.Cluster, machine *clusterv1.Machine, _ ConditionsTracker) (ctrl.Result, error) {
 	// No-op if the machine is not a control plane machine.
 	if !util.IsControlPlaneMachine(machine) {
 		return ctrl.Result{}, nil
@@ -783,7 +768,7 @@ func (r *vmBootstrapReconciler) reconcileBoostrapKubeProxy(ctx context.Context, 
 					Containers: []corev1.Container{
 						{
 							Name:  "kube-proxy",
-							Image: fmt.Sprintf("registry.k8s.io/kube-proxy:%s", *machine.Spec.Version),
+							Image: fmt.Sprintf("registry.k8s.io/kube-proxy:%s", machine.Spec.Version),
 						},
 					},
 				},
@@ -792,17 +777,17 @@ func (r *vmBootstrapReconciler) reconcileBoostrapKubeProxy(ctx context.Context, 
 	}
 	if err := inmemoryClient.Get(ctx, client.ObjectKeyFromObject(kubeProxyDaemonSet), kubeProxyDaemonSet); err != nil {
 		if !apierrors.IsNotFound(err) {
-			return ctrl.Result{}, errors.Wrapf(err, "failed to get kube-proxy DaemonSet")
+			return ctrl.Result{}, pkgerrors.Wrapf(err, "failed to get kube-proxy DaemonSet")
 		}
 
 		if err := inmemoryClient.Create(ctx, kubeProxyDaemonSet); err != nil && !apierrors.IsAlreadyExists(err) {
-			return ctrl.Result{}, errors.Wrapf(err, "failed to create kube-proxy DaemonSet")
+			return ctrl.Result{}, pkgerrors.Wrapf(err, "failed to create kube-proxy DaemonSet")
 		}
 	}
 	return ctrl.Result{}, nil
 }
 
-func (r *vmBootstrapReconciler) reconcileBoostrapCoredns(ctx context.Context, cluster *clusterv1beta1.Cluster, machine *clusterv1beta1.Machine, _ ConditionsTracker) (ctrl.Result, error) {
+func (r *vmBootstrapReconciler) reconcileBoostrapCoredns(ctx context.Context, cluster *clusterv1.Cluster, machine *clusterv1.Machine, _ ConditionsTracker) (ctrl.Result, error) {
 	// No-op if the machine is not a control plane machine.
 	if !util.IsControlPlaneMachine(machine) {
 		return ctrl.Result{}, nil
@@ -826,11 +811,11 @@ func (r *vmBootstrapReconciler) reconcileBoostrapCoredns(ctx context.Context, cl
 	}
 	if err := inmemoryClient.Get(ctx, client.ObjectKeyFromObject(corednsConfigMap), corednsConfigMap); err != nil {
 		if !apierrors.IsNotFound(err) {
-			return ctrl.Result{}, errors.Wrapf(err, "failed to get coreDNS configMap")
+			return ctrl.Result{}, pkgerrors.Wrapf(err, "failed to get coreDNS configMap")
 		}
 
 		if err := inmemoryClient.Create(ctx, corednsConfigMap); err != nil && !apierrors.IsAlreadyExists(err) {
-			return ctrl.Result{}, errors.Wrapf(err, "failed to create coreDNS configMap")
+			return ctrl.Result{}, pkgerrors.Wrapf(err, "failed to create coreDNS configMap")
 		}
 	}
 	// Create the coredns deployment.
@@ -855,19 +840,19 @@ func (r *vmBootstrapReconciler) reconcileBoostrapCoredns(ctx context.Context, cl
 
 	if err := inmemoryClient.Get(ctx, client.ObjectKeyFromObject(corednsDeployment), corednsDeployment); err != nil {
 		if !apierrors.IsNotFound(err) {
-			return ctrl.Result{}, errors.Wrapf(err, "failed to get coreDNS deployment")
+			return ctrl.Result{}, pkgerrors.Wrapf(err, "failed to get coreDNS deployment")
 		}
 
 		if err := inmemoryClient.Create(ctx, corednsDeployment); err != nil && !apierrors.IsAlreadyExists(err) {
-			return ctrl.Result{}, errors.Wrapf(err, "failed to create coreDNS deployment")
+			return ctrl.Result{}, pkgerrors.Wrapf(err, "failed to create coreDNS deployment")
 		}
 	}
 	return ctrl.Result{}, nil
 }
 
-func (r *vmBootstrapReconciler) reconcileDelete(ctx context.Context, cluster *clusterv1beta1.Cluster, machine *clusterv1beta1.Machine, conditionsTracker ConditionsTracker) (ctrl.Result, error) {
+func (r *vmBootstrapReconciler) reconcileDelete(ctx context.Context, cluster *clusterv1.Cluster, machine *clusterv1.Machine, conditionsTracker ConditionsTracker) (ctrl.Result, error) {
 	// Call the inner reconciliation methods.
-	phases := []func(ctx context.Context, cluster *clusterv1beta1.Cluster, machine *clusterv1beta1.Machine, conditionsTracker ConditionsTracker) (ctrl.Result, error){
+	phases := []func(ctx context.Context, cluster *clusterv1.Cluster, machine *clusterv1.Machine, conditionsTracker ConditionsTracker) (ctrl.Result, error){
 		r.reconcileDeleteNode,
 		r.reconcileDeleteETCD,
 		r.reconcileDeleteAPIServer,
@@ -894,7 +879,7 @@ func (r *vmBootstrapReconciler) reconcileDelete(ctx context.Context, cluster *cl
 	return res, kerrors.NewAggregate(errs)
 }
 
-func (r *vmBootstrapReconciler) reconcileDeleteNode(ctx context.Context, cluster *clusterv1beta1.Cluster, _ *clusterv1beta1.Machine, conditionsTracker ConditionsTracker) (ctrl.Result, error) {
+func (r *vmBootstrapReconciler) reconcileDeleteNode(ctx context.Context, cluster *clusterv1.Cluster, _ *clusterv1.Machine, conditionsTracker ConditionsTracker) (ctrl.Result, error) {
 	// Compute the resource group unique name.
 	resourceGroup := klog.KObj(cluster).String()
 	inmemoryClient := r.InMemoryManager.GetResourceGroup(resourceGroup).GetClient()
@@ -908,13 +893,13 @@ func (r *vmBootstrapReconciler) reconcileDeleteNode(ctx context.Context, cluster
 
 	// TODO(killianmuldoon): check if we can drop this given that the MachineController is already draining pods and deleting nodes.
 	if err := inmemoryClient.Delete(ctx, node); err != nil && !apierrors.IsNotFound(err) {
-		return ctrl.Result{}, errors.Wrapf(err, "failed to delete Node")
+		return ctrl.Result{}, pkgerrors.Wrapf(err, "failed to delete Node")
 	}
 
 	return ctrl.Result{}, nil
 }
 
-func (r *vmBootstrapReconciler) reconcileDeleteETCD(ctx context.Context, cluster *clusterv1beta1.Cluster, machine *clusterv1beta1.Machine, conditionsTracker ConditionsTracker) (ctrl.Result, error) {
+func (r *vmBootstrapReconciler) reconcileDeleteETCD(ctx context.Context, cluster *clusterv1.Cluster, machine *clusterv1.Machine, conditionsTracker ConditionsTracker) (ctrl.Result, error) {
 	// No-op if the machine is not a control plane machine.
 	if !util.IsControlPlaneMachine(machine) {
 		return ctrl.Result{}, nil
@@ -932,7 +917,7 @@ func (r *vmBootstrapReconciler) reconcileDeleteETCD(ctx context.Context, cluster
 		},
 	}
 	if err := inmemoryClient.Delete(ctx, etcdPod); err != nil && !apierrors.IsNotFound(err) {
-		return ctrl.Result{}, errors.Wrapf(err, "failed to delete etcd Pod")
+		return ctrl.Result{}, pkgerrors.Wrapf(err, "failed to delete etcd Pod")
 	}
 
 	listenerName, err := r.APIServerMux.WorkloadClusterByResourceGroup(resourceGroup)
@@ -951,7 +936,7 @@ func (r *vmBootstrapReconciler) reconcileDeleteETCD(ctx context.Context, cluster
 	return ctrl.Result{}, nil
 }
 
-func (r *vmBootstrapReconciler) reconcileDeleteAPIServer(ctx context.Context, cluster *clusterv1beta1.Cluster, machine *clusterv1beta1.Machine, conditionsTracker ConditionsTracker) (ctrl.Result, error) {
+func (r *vmBootstrapReconciler) reconcileDeleteAPIServer(ctx context.Context, cluster *clusterv1.Cluster, machine *clusterv1.Machine, conditionsTracker ConditionsTracker) (ctrl.Result, error) {
 	// No-op if the machine is not a control plane machine.
 	if !util.IsControlPlaneMachine(machine) {
 		return ctrl.Result{}, nil
@@ -969,7 +954,7 @@ func (r *vmBootstrapReconciler) reconcileDeleteAPIServer(ctx context.Context, cl
 		},
 	}
 	if err := inmemoryClient.Delete(ctx, apiServerPod); err != nil && !apierrors.IsNotFound(err) {
-		return ctrl.Result{}, errors.Wrapf(err, "failed to delete apiServer Pod")
+		return ctrl.Result{}, pkgerrors.Wrapf(err, "failed to delete apiServer Pod")
 	}
 
 	listenerName, err := r.APIServerMux.WorkloadClusterByResourceGroup(resourceGroup)
@@ -983,7 +968,7 @@ func (r *vmBootstrapReconciler) reconcileDeleteAPIServer(ctx context.Context, cl
 	return ctrl.Result{}, nil
 }
 
-func (r *vmBootstrapReconciler) reconcileDeleteScheduler(ctx context.Context, cluster *clusterv1beta1.Cluster, machine *clusterv1beta1.Machine, conditionsTracker ConditionsTracker) (ctrl.Result, error) {
+func (r *vmBootstrapReconciler) reconcileDeleteScheduler(ctx context.Context, cluster *clusterv1.Cluster, machine *clusterv1.Machine, conditionsTracker ConditionsTracker) (ctrl.Result, error) {
 	// No-op if the machine is not a control plane machine.
 	if !util.IsControlPlaneMachine(machine) {
 		return ctrl.Result{}, nil
@@ -1000,13 +985,13 @@ func (r *vmBootstrapReconciler) reconcileDeleteScheduler(ctx context.Context, cl
 		},
 	}
 	if err := inmemoryClient.Delete(ctx, schedulerPod); err != nil && !apierrors.IsNotFound(err) {
-		return ctrl.Result{}, errors.Wrapf(err, "failed to scheduler Pod")
+		return ctrl.Result{}, pkgerrors.Wrapf(err, "failed to scheduler Pod")
 	}
 
 	return ctrl.Result{}, nil
 }
 
-func (r *vmBootstrapReconciler) reconcileDeleteControllerManager(ctx context.Context, cluster *clusterv1beta1.Cluster, machine *clusterv1beta1.Machine, conditionsTracker ConditionsTracker) (ctrl.Result, error) {
+func (r *vmBootstrapReconciler) reconcileDeleteControllerManager(ctx context.Context, cluster *clusterv1.Cluster, machine *clusterv1.Machine, conditionsTracker ConditionsTracker) (ctrl.Result, error) {
 	// No-op if the machine is not a control plane machine.
 	if !util.IsControlPlaneMachine(machine) {
 		return ctrl.Result{}, nil
@@ -1023,7 +1008,7 @@ func (r *vmBootstrapReconciler) reconcileDeleteControllerManager(ctx context.Con
 		},
 	}
 	if err := inmemoryClient.Delete(ctx, controllerManagerPod); err != nil && !apierrors.IsNotFound(err) {
-		return ctrl.Result{}, errors.Wrapf(err, "failed to controller manager Pod")
+		return ctrl.Result{}, pkgerrors.Wrapf(err, "failed to controller manager Pod")
 	}
 
 	return ctrl.Result{}, nil
@@ -1043,7 +1028,7 @@ func (r *vmBootstrapReconciler) getEtcdInfo(ctx context.Context, inmemoryClient 
 			"component": "etcd",
 			"tier":      "control-plane"},
 	); err != nil {
-		return etcdInfo{}, errors.Wrap(err, "failed to list etcd members")
+		return etcdInfo{}, pkgerrors.Wrap(err, "failed to list etcd members")
 	}
 
 	if len(etcdPods.Items) == 0 {
@@ -1061,7 +1046,7 @@ func (r *vmBootstrapReconciler) getEtcdInfo(ctx context.Context, inmemoryClient 
 		if info.clusterID == "" {
 			info.clusterID = pod.Annotations[EtcdClusterIDAnnotationName]
 		} else if pod.Annotations[EtcdClusterIDAnnotationName] != info.clusterID {
-			return etcdInfo{}, errors.New("invalid etcd cluster, members have different cluster ID")
+			return etcdInfo{}, pkgerrors.New("invalid etcd cluster, members have different cluster ID")
 		}
 		memberID := pod.Annotations[EtcdMemberIDAnnotationName]
 		info.members.Insert(memberID)
@@ -1078,13 +1063,13 @@ func (r *vmBootstrapReconciler) getEtcdInfo(ctx context.Context, inmemoryClient 
 		// TODO: consider if and how to automatically recover from this case
 		//  note: this can happen also when reading etcd members in the server, might be it is something we have to take case before deletion...
 		//  for now it should not be an issue because KCP forward etcd leadership before deletion.
-		return etcdInfo{}, errors.New("invalid etcd cluster, no leader found")
+		return etcdInfo{}, pkgerrors.New("invalid etcd cluster, no leader found")
 	}
 
 	return info, nil
 }
 
-func hasBootstrappedAnnotation(machine *clusterv1beta1.Machine) bool {
+func hasBootstrappedAnnotation(machine *clusterv1.Machine) bool {
 	_, ok := machine.Annotations[MachineBootstrappedAnnotationName]
 	return ok
 }

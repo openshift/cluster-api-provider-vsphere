@@ -5,10 +5,10 @@
 package v1alpha5
 
 import (
-	vmopv1common "github.com/vmware-tanzu/vm-operator/api/v1alpha5/common"
+	vmopv1a5common "github.com/vmware-tanzu/vm-operator/api/v1alpha5/common"
 )
 
-type PolicySpec vmopv1common.LocalObjectRef
+type PolicySpec vmopv1a5common.LocalObjectRef
 
 type PolicyStatus struct {
 	PolicySpec `json:",inline"`

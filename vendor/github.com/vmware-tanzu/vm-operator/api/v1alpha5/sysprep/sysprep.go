@@ -6,7 +6,7 @@
 
 package sysprep
 
-import vmopv1common "github.com/vmware-tanzu/vm-operator/api/v1alpha5/common"
+import vmopv1a5common "github.com/vmware-tanzu/vm-operator/api/v1alpha5/common"
 
 // Sysprep describes the object representation of a Windows sysprep.xml answer
 // file.
@@ -58,7 +58,7 @@ type Sysprep struct {
 	//
 	// Please see https://knowledge.broadcom.com/external/article?legacyId=1026614
 	// for script examples.
-	ScriptText *vmopv1common.ValueOrSecretKeySelector `json:"scriptText,omitempty"`
+	ScriptText *vmopv1a5common.ValueOrSecretKeySelector `json:"scriptText,omitempty"`
 }
 
 // GUIRunOnce maps to the GuiRunOnce key in the sysprep.xml answer file.
@@ -223,8 +223,14 @@ type LicenseFilePrintData struct {
 // personal data pertaining to the owner of the virtual machine.
 type UserData struct {
 
+	// +required
+	// +kubebuilder:validation:MinLength=1
+
 	// FullName is the user's full name.
 	FullName string `json:"fullName"`
+
+	// +required
+	// +kubebuilder:validation:MinLength=1
 
 	// OrgName is the name of the user's organization.
 	OrgName string `json:"orgName"`

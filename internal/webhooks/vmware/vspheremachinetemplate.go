@@ -29,6 +29,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
 	vmwarev1 "sigs.k8s.io/cluster-api-provider-vsphere/api/supervisor/v1beta2"
+	"sigs.k8s.io/cluster-api-provider-vsphere/internal/webhooks/vmware/conversion"
 	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/services/vmoperator"
 	"sigs.k8s.io/cluster-api-provider-vsphere/pkg/util"
 )
@@ -49,6 +50,7 @@ func (webhook *VSphereMachineTemplate) SetupWebhookWithManager(mgr ctrl.Manager)
 	return ctrl.NewWebhookManagedBy(mgr, &vmwarev1.VSphereMachineTemplate{}).
 		WithDefaulter(webhook).
 		WithValidator(webhook).
+		WithConverter(conversion.VSphereMachineTemplate).
 		Complete()
 }
 
@@ -62,12 +64,16 @@ func (webhook *VSphereMachineTemplate) Default(ctx context.Context, c *vmwarev1.
 	if topology.IsDryRunRequest(req, c) {
 		// In case of dry-run requests from the topology controller, apply defaults from older versions of CAPV
 		// so we do not trigger rollouts when dealing with objects created before dropping those defaults.
-		if c.Spec.Template.Spec.PowerOffMode == "" {
-			c.Spec.Template.Spec.PowerOffMode = vmwarev1.VirtualMachinePowerOpModeHard
-		}
+		applyPreviousVSphereMachineTemplateDefaults(c)
 	}
 
 	return nil
+}
+
+func applyPreviousVSphereMachineTemplateDefaults(c *vmwarev1.VSphereMachineTemplate) {
+	if c.Spec.Template.Spec.PowerOffMode == "" {
+		c.Spec.Template.Spec.PowerOffMode = vmwarev1.VirtualMachinePowerOpModeHard
+	}
 }
 
 // ValidateCreate implements webhook.Validator so a webhook will be registered for the type.
@@ -82,6 +88,11 @@ func (webhook *VSphereMachineTemplate) ValidateUpdate(ctx context.Context, oldOb
 		return nil, apierrors.NewBadRequest(fmt.Sprintf("expected a admission.Request inside context: %v", err))
 	}
 	if !topology.IsDryRunRequest(req, newObj) {
+		// Apply defaults from older versions of CAPV so the following checks do not report differences when
+		// dealing with objects created before dropping those defaults.
+		applyPreviousVSphereMachineTemplateDefaults(oldObj)
+		applyPreviousVSphereMachineTemplateDefaults(newObj)
+
 		equal, diff, err := util.Diff(oldObj.Spec.Template.Spec, newObj.Spec.Template.Spec)
 		if err != nil {
 			return nil, apierrors.NewBadRequest(fmt.Sprintf("failed to compare old and new VSphereMachineTemplate: %v", err))
@@ -98,6 +109,7 @@ func (webhook *VSphereMachineTemplate) ValidateUpdate(ctx context.Context, oldOb
 
 func (webhook *VSphereMachineTemplate) validate(_ context.Context, _, newVSphereMachineTemplate *vmwarev1.VSphereMachineTemplate) (admission.Warnings, error) {
 	allErrs := validateNetwork(webhook.NetworkProvider, newVSphereMachineTemplate.Spec.Template.Spec.Network, field.NewPath("spec", "template", "spec", "network"))
+	allErrs = append(allErrs, validatePolicies(newVSphereMachineTemplate.Spec.Template.Spec.Policies, field.NewPath("spec", "template", "spec", "policies"))...)
 
 	// Validate namingStrategy
 	namingStrategy := newVSphereMachineTemplate.Spec.Template.Spec.Naming
