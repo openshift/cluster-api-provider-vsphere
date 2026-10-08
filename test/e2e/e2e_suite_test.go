@@ -29,7 +29,10 @@ import (
 	. "github.com/onsi/gomega"
 	vmoprv1alpha2 "github.com/vmware-tanzu/vm-operator/api/v1alpha2"
 	vmoprv1alpha5 "github.com/vmware-tanzu/vm-operator/api/v1alpha5"
+	vmoprv1alpha6 "github.com/vmware-tanzu/vm-operator/api/v1alpha6"
+	vmopinfrav1 "github.com/vmware-tanzu/vm-operator/external/infra/api/v1alpha1"
 	spqv1 "github.com/vmware-tanzu/vm-operator/external/storage-policy-quota/api/v1alpha2"
+	topologyv1 "github.com/vmware-tanzu/vm-operator/external/tanzu-topology/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 	storagev1 "k8s.io/api/storage/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -44,7 +47,6 @@ import (
 
 	infrav1 "sigs.k8s.io/cluster-api-provider-vsphere/api/govmomi/v1beta2"
 	vmwarev1 "sigs.k8s.io/cluster-api-provider-vsphere/api/supervisor/v1beta2"
-	topologyv1 "sigs.k8s.io/cluster-api-provider-vsphere/internal/apis/topology/v1alpha1"
 	vmoprvhub "sigs.k8s.io/cluster-api-provider-vsphere/pkg/conversion/api/vmoperator/hub"
 	vsphereframework "sigs.k8s.io/cluster-api-provider-vsphere/test/framework"
 	vsphereip "sigs.k8s.io/cluster-api-provider-vsphere/test/framework/ip"
@@ -217,7 +219,7 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 
 	By("Getting AddressClaim labels")
 	ipClaimLabels := vsphereip.GetIPAddressClaimLabels()
-	var ipClaimLabelsRaw []string
+	ipClaimLabelsRaw := make([]string, 0, len(ipClaimLabels))
 	for k, v := range ipClaimLabels {
 		ipClaimLabelsRaw = append(ipClaimLabelsRaw, fmt.Sprintf("%s=%s", k, v))
 	}
@@ -314,10 +316,12 @@ var _ = SynchronizedAfterSuite(func() {
 		switch testTarget {
 		case VCenterTestTarget:
 			// Cleanup the in cluster address manager
-			vSphereFolderName := e2eConfig.MustGetVariable("VSPHERE_FOLDER")
-			err := inClusterAddressManager.Teardown(ctx, vsphereip.MachineFolder(vSphereFolderName), vsphereip.VSphereClient(vsphereClient))
-			if err != nil {
-				Byf("Ignoring Teardown error: %v", err)
+			if inClusterAddressManager != nil {
+				vSphereFolderName := e2eConfig.MustGetVariable("VSPHERE_FOLDER")
+				err := inClusterAddressManager.Teardown(ctx, vsphereip.MachineFolder(vSphereFolderName), vsphereip.VSphereClient(vsphereClient))
+				if err != nil {
+					Byf("Ignoring Teardown error: %v", err)
+				}
 			}
 
 		case VCSimTestTarget:
@@ -360,8 +364,10 @@ func initScheme() *runtime.Scheme {
 		utilruntime.Must(vmoprvhub.AddToScheme(sc))
 		utilruntime.Must(vmoprv1alpha2.AddToScheme(sc))
 		utilruntime.Must(vmoprv1alpha5.AddToScheme(sc))
+		utilruntime.Must(vmoprv1alpha6.AddToScheme(sc))
 		utilruntime.Must(vmwarev1.AddToScheme(sc))
 		utilruntime.Must(spqv1.AddToScheme(sc))
+		utilruntime.Must(vmopinfrav1.AddToScheme(sc))
 	}
 	return sc
 }

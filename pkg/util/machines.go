@@ -24,7 +24,7 @@ import (
 	"regexp"
 	"text/template"
 
-	"github.com/pkg/errors"
+	pkgerrors "github.com/pkg/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	apitypes "k8s.io/apimachinery/pkg/types"
@@ -53,7 +53,7 @@ func GetVSphereMachine(
 }
 
 // ErrNoMachineIPAddr indicates that no valid IP addresses were found in a machine context.
-var ErrNoMachineIPAddr = errors.New("no IP addresses found for machine")
+var ErrNoMachineIPAddr = pkgerrors.New("no IP addresses found for machine")
 
 // GetMachinePreferredIPAddress returns the preferred IP address for a
 // VSphereMachine resource.
@@ -85,6 +85,16 @@ func GetMachineMetadata(hostname string, vsphereVM infrav1.VSphereVM, ipamState 
 	var waitForIPv4, waitForIPv6 bool
 	for i := range vsphereVM.Spec.Network.Devices {
 		vsphereVM.Spec.Network.Devices[i].DeepCopyInto(&devices[i])
+
+		// netplan (used by cloud-init) only supports static routes per-device,
+		// not as a top-level network property, so apply the VM-wide routes to
+		// every device instead of rendering them as an invalid top-level key.
+		devices[i].Routes = append(devices[i].Routes, vsphereVM.Spec.Network.Routes...)
+		if i == len(vsphereVM.Spec.Network.Devices)-1 {
+			for j := len(vsphereVM.Spec.Network.Devices); j < len(devices); j++ {
+				devices[j].Routes = append(devices[j].Routes, vsphereVM.Spec.Network.Routes...)
+			}
+		}
 
 		// Add the MAC Address to the network device
 		if len(networkStatuses) > i {
@@ -140,17 +150,15 @@ func GetMachineMetadata(hostname string, vsphereVM infrav1.VSphereVM, ipamState 
 	if err := tpl.Execute(buf, struct {
 		Hostname    string
 		Devices     []infrav1.NetworkDeviceSpec
-		Routes      []infrav1.NetworkRouteSpec
 		WaitForIPv4 bool
 		WaitForIPv6 bool
 	}{
 		Hostname:    hostname, // note that hostname determines the Kubernetes node name
 		Devices:     devices,
-		Routes:      vsphereVM.Spec.Network.Routes,
 		WaitForIPv4: waitForIPv4,
 		WaitForIPv6: waitForIPv6,
 	}); err != nil {
-		return nil, errors.Wrapf(
+		return nil, pkgerrors.Wrapf(
 			err,
 			"error getting cloud init metadata for vsphereVM %s/%s",
 			vsphereVM.Namespace, vsphereVM.Name)

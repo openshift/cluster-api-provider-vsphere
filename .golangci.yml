@@ -1,7 +1,7 @@
 version: "2"
 run:
   timeout: 10m
-  go: "1.25"
+  go: "1.26"
   allow-parallel-runners: true
 linters:
   default: none
@@ -19,7 +19,6 @@ linters:
     - errchkjson # invalid types passed to json encoder
     - forbidigo # allows to block usage of funcs
     - ginkgolinter # ginkgo and gomega
-    - goconst
     - gocritic # bugs, performance, style (we could add custom ones to this one)
     - godot # checks that comments end in a period
     - godox # block FIXMEs
@@ -52,6 +51,21 @@ linters:
   settings:
     depguard:
       rules:
+        api:
+          list-mode: strict
+          files:
+            - "**/cluster-api-provider-vsphere/api/**/*.go"
+          allow:
+            - $gostd
+            - k8s.io/api/core/v1$
+            - k8s.io/api/rbac/v1$ # drop after ProviderServiceAccountSpec has been removed
+            - k8s.io/apimachinery/pkg/api/resource$
+            - k8s.io/apimachinery/pkg/apis/meta/v1$
+            - k8s.io/apimachinery/pkg/conversion$
+            - k8s.io/apimachinery/pkg/runtime$
+            - k8s.io/apimachinery/pkg/runtime/schema$
+            - sigs.k8s.io/cluster-api-provider-vsphere/api
+            - sigs.k8s.io/cluster-api/api
         vm-operator:
           deny:
             - pkg: "github.com/vmware-tanzu/vm-operator/api"
@@ -117,6 +131,11 @@ linters:
         # Controller Runtime
         - pkg: sigs.k8s.io/controller-runtime
           alias: ctrl
+        # Misc
+        - pkg: github.com/pkg/errors
+          alias: pkgerrors
+        - pkg: errors
+          alias: ""
         # CAPV
         - pkg: sigs.k8s.io/cluster-api-provider-vsphere/api/govmomi/v1beta1
           alias: infrav1beta1
@@ -139,6 +158,8 @@ linters:
           alias: vmoprv1alpha2conversion
         - pkg: sigs.k8s.io/cluster-api-provider-vsphere/pkg/conversion/api/vmoperator/v1alpha5
           alias: vmoprv1alpha5conversion
+        - pkg: sigs.k8s.io/cluster-api-provider-vsphere/pkg/conversion/api/vmoperator/v1alpha6
+          alias: vmoprv1alpha6conversion
         # VM Operator
         - pkg: github.com/vmware-tanzu/vm-operator/api/v1alpha2
           alias: vmoprv1alpha2
@@ -148,6 +169,10 @@ linters:
           alias: vmoprv1alpha5
         - pkg: github.com/vmware-tanzu/vm-operator/api/v1alpha5/common
           alias: vmoprv1alpha5common
+        - pkg: github.com/vmware-tanzu/vm-operator/api/v1alpha6
+          alias: vmoprv1alpha6
+        - pkg: github.com/vmware-tanzu/vm-operator/api/v1alpha6/common
+          alias: vmoprv1alpha6common
         # NSX Operator
         - pkg: github.com/vmware-tanzu/nsx-operator/pkg/apis/vpc/v1alpha1
           alias: nsxvpcv1
@@ -179,7 +204,7 @@ linters:
         # CAPI addons
         - pkg: sigs.k8s.io/cluster-api/api/addons/v1beta2
           alias: addonsv1
-        # CAPI IPAM 
+        # CAPI IPAM
         - pkg: sigs.k8s.io/cluster-api/api/ipam/v1beta2
           alias: ipamv1
         - pkg: sigs.k8s.io/cluster-api/api/ipam/v1beta1
@@ -225,7 +250,6 @@ linters:
       - zz_generated.*\.go$
       - _conversion\.go$
       - vendored_cluster_api\.go$
-      - ^internal/apis/topology/v1alpha1
     # Specific exclude rules for deprecated fields that are still part of the codebase. These
     # should be removed as the referenced deprecated item is removed from the project.
     rules:
@@ -249,14 +273,15 @@ linters:
       - linters:
           - staticcheck
         text: 'SA1019: mgr.GetEventRecorderFor is deprecated'
-        # Deprecations for FailureReason
-      - linters:
-          - staticcheck
-        text: 'SA1019: "sigs.k8s.io/cluster-api/errors" is deprecated:'
         # Deprecations for old api groups
       - linters:
           - staticcheck
         text: 'SA1019: "sigs.k8s.io/cluster-api/api/core/v1beta1" is deprecated: This package is deprecated and is going to be removed when support for v1beta1 will be dropped.'
+        # Deprecations for old fields for conversion tests
+      - linters:
+          - staticcheck
+        path: '.*/conversion_test.go'
+        text: 'SA1019: .*'
         # Exclude for hub types
       - linters:
           - revive
@@ -269,7 +294,7 @@ linters:
         # Allow direct usage of vm-operator APIs in a few places like e.g. tests and main.go
       - linters:
           - depguard
-        path: main.go|pkg/manager/manager.go|.*_test.go|internal/test/helpers/.*|pkg/context/fake/fake_controller_manager_context.go|pkg/conversion/.*|pkg/util/testutil.go
+        path: main.go|feature/feature.go|feature/gates.go|pkg/manager/manager.go|.*_test.go|internal/test/helpers/.*|pkg/context/fake/fake_controller_manager_context.go|pkg/conversion/.*|pkg/util/testutil.go
         text: 'Use vmoprvhub in prod code instead'
       - linters:
           - staticcheck
@@ -370,7 +395,7 @@ linters:
       - linters:
           - goconst
         path: (.+)_test\.go
-        # It's clearer to see that a field gets accessed or func gets called on the embedded objects 
+        # It's clearer to see that a field gets accessed or func gets called on the embedded objects
       - linters:
           - staticcheck
         path: (.+)\.go$
@@ -409,5 +434,3 @@ formatters:
       - zz_generated.*\.go$
       - _conversion\.go$
       - vendored_cluster_api\.go$
-      # We don't want to invest time to fix new linter findings in old API types.
-      - ^internal/apis/topology/v1alpha1

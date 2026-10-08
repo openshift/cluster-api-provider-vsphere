@@ -22,7 +22,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onsi/gomega"
-	"github.com/pkg/errors"
+	pkgerrors "github.com/pkg/errors"
 	"github.com/stretchr/testify/mock"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"
@@ -42,7 +42,7 @@ func TestReconciler_Reconcile(t *testing.T) {
 	kcpUUID, mdUUID := uuid.New().String(), uuid.New().String()
 	kcp := controlPlane("kcp", metav1.NamespaceDefault, fake.Clusterv1a2Name)
 	md := machineDeployment("md", metav1.NamespaceDefault, fake.Clusterv1a2Name)
-	vCenter500err := errors.New("500 Internal Server Error")
+	vCenter500err := pkgerrors.New("500 Internal Server Error")
 
 	tests := []struct {
 		name           string
@@ -83,9 +83,8 @@ func TestReconciler_Reconcile(t *testing.T) {
 			},
 			customAssert: func(g *gomega.WithT, clusterCtx *capvcontext.ClusterContext) {
 				g.Expect(clusterCtx.VSphereCluster.Spec.ClusterModules).To(gomega.HaveLen(2))
-				var (
-					names, moduleUUIDs []string
-				)
+				names := make([]string, 0, len(clusterCtx.VSphereCluster.Spec.ClusterModules))
+				moduleUUIDs := make([]string, 0, len(clusterCtx.VSphereCluster.Spec.ClusterModules))
 				for _, mod := range clusterCtx.VSphereCluster.Spec.ClusterModules {
 					names = append(names, mod.TargetObjectName)
 					moduleUUIDs = append(moduleUUIDs, mod.ModuleUUID)
@@ -109,9 +108,8 @@ func TestReconciler_Reconcile(t *testing.T) {
 			},
 			customAssert: func(g *gomega.WithT, clusterCtx *capvcontext.ClusterContext) {
 				g.Expect(clusterCtx.VSphereCluster.Spec.ClusterModules).To(gomega.HaveLen(2))
-				var (
-					names, moduleUUIDs []string
-				)
+				names := make([]string, 0, len(clusterCtx.VSphereCluster.Spec.ClusterModules))
+				moduleUUIDs := make([]string, 0, len(clusterCtx.VSphereCluster.Spec.ClusterModules))
 				for _, mod := range clusterCtx.VSphereCluster.Spec.ClusterModules {
 					names = append(names, mod.TargetObjectName)
 					moduleUUIDs = append(moduleUUIDs, mod.ModuleUUID)
@@ -259,7 +257,7 @@ func TestReconciler_Reconcile(t *testing.T) {
 			clusterModules: []infrav1.ClusterModule{},
 			setupMocks: func(svc *cmodfake.CMService) {
 				svc.On("Create", mock.Anything, mock.Anything, clustermodule.NewWrapper(kcp)).Return(kcpUUID, nil)
-				svc.On("Create", mock.Anything, mock.Anything, clustermodule.NewWrapper(md)).Return("", errors.New("failed to reach API"))
+				svc.On("Create", mock.Anything, mock.Anything, clustermodule.NewWrapper(md)).Return("", pkgerrors.New("failed to reach API"))
 			},
 			// if cluster module creation fails for any reason apart from incompatibility, error should be returned
 			haveError: true,
