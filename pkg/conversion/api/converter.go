@@ -15,10 +15,10 @@ limitations under the License.
 */
 
 // Package api defines the hub version of supervisor types and conversion to the corresponding spoke types.
-package api //nolint:revive
+package api
 
 import (
-	"github.com/pkg/errors"
+	pkgerrors "github.com/pkg/errors"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 
@@ -26,6 +26,7 @@ import (
 	vmoprvhub "sigs.k8s.io/cluster-api-provider-vsphere/pkg/conversion/api/vmoperator/hub"
 	vmoprv1alpha2conversion "sigs.k8s.io/cluster-api-provider-vsphere/pkg/conversion/api/vmoperator/v1alpha2"
 	vmoprv1alpha5conversion "sigs.k8s.io/cluster-api-provider-vsphere/pkg/conversion/api/vmoperator/v1alpha5"
+	vmoprv1alpha6conversion "sigs.k8s.io/cluster-api-provider-vsphere/pkg/conversion/api/vmoperator/v1alpha6"
 )
 
 // DefaultConverterFor is a converter aware of the API types and the conversions defined in sigs.k8s.io/cluster-api-provider-vsphere/pkg/conversion/api.
@@ -37,11 +38,12 @@ func DefaultConverterFor(targetVersions ...schema.GroupVersion) *conversion.Conv
 				return gv.Version, nil
 			}
 		}
-		return "", errors.Errorf("target version for %s is not configured", gk.Group)
+		return "", pkgerrors.Errorf("target version for %s is not configured", gk.Group)
 	})
 
 	utilruntime.Must(vmoprvhub.AddToConverter(converter))
 	utilruntime.Must(vmoprv1alpha2conversion.AddToConverter(converter))
 	utilruntime.Must(vmoprv1alpha5conversion.AddToConverter(converter))
+	utilruntime.Must(vmoprv1alpha6conversion.AddToConverter(converter))
 	return converter
 }

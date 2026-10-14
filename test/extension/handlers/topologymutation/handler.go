@@ -27,11 +27,12 @@ import (
 	"regexp"
 	"strconv"
 
-	"github.com/pkg/errors"
+	pkgerrors "github.com/pkg/errors"
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/serializer"
+	intstrutil "k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/utils/ptr"
 	bootstrapv1 "sigs.k8s.io/cluster-api/api/bootstrap/kubeadm/v1beta2"
 	controlplanev1 "sigs.k8s.io/cluster-api/api/controlplane/kubeadm/v1beta2"
@@ -101,32 +102,32 @@ func (h *ExtensionHandlers) GeneratePatches(ctx context.Context, req *runtimehoo
 			case *controlplanev1.KubeadmControlPlaneTemplate:
 				if err := patchKubeadmControlPlaneTemplate(ctx, obj, variables); err != nil {
 					log.Error(err, "Error patching KubeadmControlPlaneTemplate")
-					return errors.Wrap(err, "error patching KubeadmControlPlaneTemplate")
+					return pkgerrors.Wrap(err, "error patching KubeadmControlPlaneTemplate")
 				}
 			case *bootstrapv1.KubeadmConfigTemplate:
 				if err := patchKubeadmConfigTemplate(ctx, obj, variables); err != nil {
 					log.Error(err, "Error patching KubeadmConfigTemplate")
-					return errors.Wrap(err, "error patching KubeadmConfigTemplate")
+					return pkgerrors.Wrap(err, "error patching KubeadmConfigTemplate")
 				}
 			case *infrav1beta1.VSphereClusterTemplate, *infrav1.VSphereClusterTemplate:
 				if err := patchGovmomiClusterTemplate(ctx, obj, variables); err != nil {
 					log.Error(err, "Error patching VSphereClusterTemplate")
-					return errors.Wrap(err, "error patching VSphereClusterTemplate")
+					return pkgerrors.Wrap(err, "error patching VSphereClusterTemplate")
 				}
 			case *infrav1beta1.VSphereMachineTemplate, *infrav1.VSphereMachineTemplate:
 				if err := patchGovmomiMachineTemplate(ctx, obj, variables, isControlPlane); err != nil {
 					log.Error(err, "Error patching VSphereMachineTemplate")
-					return errors.Wrap(err, "error patching VSphereMachineTemplate")
+					return pkgerrors.Wrap(err, "error patching VSphereMachineTemplate")
 				}
 			case *vmwarev1beta1.VSphereClusterTemplate, *vmwarev1.VSphereClusterTemplate:
 				if err := patchSupervisorClusterTemplate(ctx, obj, variables); err != nil {
 					log.Error(err, "Error patching VSphereClusterTemplate")
-					return errors.Wrap(err, "error patching VSphereClusterTemplate")
+					return pkgerrors.Wrap(err, "error patching VSphereClusterTemplate")
 				}
 			case *vmwarev1beta1.VSphereMachineTemplate, *vmwarev1.VSphereMachineTemplate:
 				if err := patchSupervisorMachineTemplate(ctx, obj, variables, isControlPlane); err != nil {
 					log.Error(err, "Error patching VSphereMachineTemplate")
-					return errors.Wrap(err, "error patching VSphereMachineTemplate")
+					return pkgerrors.Wrap(err, "error patching VSphereMachineTemplate")
 				}
 			}
 			return nil
@@ -211,6 +212,30 @@ func patchKubeadmControlPlaneTemplate(_ context.Context, tpl *controlplanev1.Kub
 		)
 	}
 
+	// 2) Patch RolloutStrategy RollingUpdate MaxSurge with the value from the Cluster Topology variable.
+	//    If this is unset continue as this variable is not required.
+	kcpControlPlaneMaxSurge, err := topologymutation.GetStringVariable(templateVariables, "kubeadmControlPlaneMaxSurge")
+	if err != nil && !topologymutation.IsNotFoundError(err) {
+		return pkgerrors.Wrap(err, "could not set KubeadmControlPlaneTemplate MaxSurge")
+	}
+	if kcpControlPlaneMaxSurge != "" {
+		// This has to be converted to IntOrString type.
+		kubeadmControlPlaneMaxSurgeIntOrString := intstrutil.Parse(kcpControlPlaneMaxSurge)
+
+		tpl.Spec.Template.Spec.Rollout.Strategy.Type = controlplanev1.RollingUpdateStrategyType
+		tpl.Spec.Template.Spec.Rollout.Strategy.RollingUpdate.MaxSurge = &kubeadmControlPlaneMaxSurgeIntOrString
+	}
+
+	files := []fileVariable{}
+	err = topologymutation.GetObjectVariableInto(templateVariables, "files", &files)
+	if err != nil && !topologymutation.IsNotFoundError(err) {
+		return pkgerrors.Wrap(err, "could not set KubeadmControlPlaneTemplate files")
+	}
+	if len(files) > 0 {
+		tpl.Spec.Template.Spec.KubeadmConfigSpec.Files = append(tpl.Spec.Template.Spec.KubeadmConfigSpec.Files,
+			convertToKubeadmConfigFiles(files)...)
+	}
+
 	return nil
 }
 
@@ -254,7 +279,37 @@ func patchKubeadmConfigTemplate(_ context.Context, tpl *bootstrapv1.KubeadmConfi
 		)
 	}
 
+	files := []fileVariable{}
+	err = topologymutation.GetObjectVariableInto(templateVariables, "files", &files)
+	if err != nil && !topologymutation.IsNotFoundError(err) {
+		return pkgerrors.Wrap(err, "could not set KubeadmConfigTemplate files")
+	}
+	if len(files) > 0 {
+		tpl.Spec.Template.Spec.Files = append(tpl.Spec.Template.Spec.Files,
+			convertToKubeadmConfigFiles(files)...)
+	}
+
 	return nil
+}
+
+type fileVariable struct {
+	Path    string `json:"path,omitempty"`
+	Content string `json:"content,omitempty"`
+}
+
+func convertToKubeadmConfigFiles(files []fileVariable) []bootstrapv1.File {
+	kubeadmConfigFiles := make([]bootstrapv1.File, 0, len(files))
+	for _, f := range files {
+		kubeadmConfigFiles = append(kubeadmConfigFiles,
+			bootstrapv1.File{
+				Path:        f.Path,
+				Content:     f.Content,
+				Owner:       "root:root",
+				Permissions: "0600",
+			},
+		)
+	}
+	return kubeadmConfigFiles
 }
 
 func patchUsers(kubeadmConfigSpec *bootstrapv1.KubeadmConfigSpec, templateVariables map[string]apiextensionsv1.JSON) error {
@@ -363,39 +418,39 @@ func patchGovmomiMachineTemplate(_ context.Context, vsphereMachineTemplate runti
 	var customVMXKeys map[string]string
 	numCPUsJSON, err := topologymutation.GetVariable(templateVariables, "numCPUs")
 	if err != nil && !topologymutation.IsNotFoundError(err) {
-		return errors.Wrap(err, "could not set numCPUs")
+		return pkgerrors.Wrap(err, "could not set numCPUs")
 	}
 	if numCPUsJSON != nil {
 		i, err := strconv.ParseInt(string(numCPUsJSON.Raw), 10, 32)
 		if err != nil {
-			return errors.Wrap(err, "could not set numCPUs")
+			return pkgerrors.Wrap(err, "could not set numCPUs")
 		}
 		numCPUs = ptr.To(int32(i))
 	}
 	memoryMiBJSON, err := topologymutation.GetVariable(templateVariables, "memoryMiB")
 	if err != nil && !topologymutation.IsNotFoundError(err) {
-		return errors.Wrap(err, "could not set memoryMiB")
+		return pkgerrors.Wrap(err, "could not set memoryMiB")
 	}
 	if memoryMiBJSON != nil {
 		i, err := strconv.ParseInt(string(memoryMiBJSON.Raw), 10, 64)
 		if err != nil {
-			return errors.Wrap(err, "could not set memoryMiB")
+			return pkgerrors.Wrap(err, "could not set memoryMiB")
 		}
 		memoryMiB = ptr.To(i)
 	}
 	diskGiBJSON, err := topologymutation.GetVariable(templateVariables, "diskGiB")
 	if err != nil && !topologymutation.IsNotFoundError(err) {
-		return errors.Wrap(err, "could not set diskGiB")
+		return pkgerrors.Wrap(err, "could not set diskGiB")
 	}
 	if diskGiBJSON != nil {
 		i, err := strconv.ParseInt(string(diskGiBJSON.Raw), 10, 32)
 		if err != nil {
-			return errors.Wrap(err, "could not set diskGiB")
+			return pkgerrors.Wrap(err, "could not set diskGiB")
 		}
 		diskGiB = ptr.To(int32(i))
 	}
 	if err := topologymutation.GetObjectVariableInto(templateVariables, "customVMXKeys", &customVMXKeys); err != nil {
-		return errors.Wrap(err, "could not set customVMXKeys")
+		return pkgerrors.Wrap(err, "could not set customVMXKeys")
 	}
 
 	switch vsphereMachineTemplate := vsphereMachineTemplate.(type) {
@@ -443,7 +498,22 @@ func patchSupervisorMachineTemplate(_ context.Context, vsphereMachineTemplate ru
 		vsphereMachineTemplate.Spec.Template.Spec.ImageName = imageName
 	}
 
-	return err
+	className, err := topologymutation.GetStringVariable(templateVariables, "virtualMachineClass")
+	if err != nil && !topologymutation.IsNotFoundError(err) {
+		return pkgerrors.Wrap(err, "could not set virtualMachineClass")
+	}
+	if className == "" {
+		return nil
+	}
+
+	switch vsphereMachineTemplate := vsphereMachineTemplate.(type) {
+	case *vmwarev1beta1.VSphereMachineTemplate:
+		vsphereMachineTemplate.Spec.Template.Spec.ClassName = className
+	case *vmwarev1.VSphereMachineTemplate:
+		vsphereMachineTemplate.Spec.Template.Spec.ClassName = className
+	}
+
+	return nil
 }
 
 func calculateImageName(templateVariables map[string]apiextensionsv1.JSON, isControlPlane bool) (string, error) {
@@ -459,17 +529,17 @@ func calculateImageName(templateVariables map[string]apiextensionsv1.JSON, isCon
 	}
 
 	// Use known ubuntu-2204 image.
-	if version == "v1.28.0" || version == "v1.29.0" || version == "v1.30.0" {
+	if version == "v1.30.0" {
 		return fmt.Sprintf("ubuntu-2204-kube-%s", version), nil
 	}
 
 	// Use known ubuntu-2404 image.
-	if version == "v1.31.0" || version == "v1.32.0" || version == "v1.33.0" || version == "v1.34.0" || version == "v1.35.0" {
+	if version == "v1.31.0" || version == "v1.32.0" || version == "v1.33.0" || version == "v1.34.0" || version == "v1.35.0" || version == "v1.36.0" || version == "v1.37.0" {
 		return fmt.Sprintf("ubuntu-2404-kube-%s", version), nil
 	}
 
 	// Fallback otherwise
-	return "ubuntu-2404-kube-v1.36.0", nil
+	return "ubuntu-2404-kube-v1.37.0", nil
 }
 
 // ValidateTopology implements the HandlerFunc for the ValidateTopology hook.
@@ -497,7 +567,46 @@ func (h *ExtensionHandlers) DiscoverVariables(ctx context.Context, req *runtimeh
 		}
 	}
 
-	// Append
+	resp.Variables = append(resp.Variables,
+		clusterv1.ClusterClassVariable{
+			Name:     "kubeadmControlPlaneMaxSurge",
+			Required: ptr.To(false),
+			Schema: clusterv1.VariableSchema{
+				OpenAPIV3Schema: clusterv1.JSONSchemaProps{
+					Type:        "string",
+					Default:     &apiextensionsv1.JSON{Raw: []byte(`""`)},
+					Example:     &apiextensionsv1.JSON{Raw: []byte(`"0"`)},
+					Description: "kubeadmControlPlaneMaxSurge is the maximum number of control planes that can be scheduled above or under the desired number of control plane machines.",
+					XValidations: []clusterv1.ValidationRule{
+						{
+							Rule:              "self == \"\" || self != \"\"",
+							MessageExpression: "'just a test expression, got %s'.format([self])",
+						},
+					},
+				},
+			},
+		}, clusterv1.ClusterClassVariable{
+			Name:     "files",
+			Required: ptr.To(false),
+			Schema: clusterv1.VariableSchema{
+				OpenAPIV3Schema: clusterv1.JSONSchemaProps{
+					Type: "array",
+					Items: &clusterv1.JSONSchemaProps{
+						Type: "object",
+						Properties: map[string]clusterv1.JSONSchemaProps{
+							"path": {
+								Type: "string",
+							},
+							"content": {
+								Type: "string",
+							},
+						},
+					},
+				},
+			},
+		})
+
+	// Append for govmomi.
 	if req.Settings["testMode"] == "govmomi" {
 		resp.Variables = append(resp.Variables, clusterv1.ClusterClassVariable{
 			Name:     "numCPUs",
@@ -539,6 +648,20 @@ func (h *ExtensionHandlers) DiscoverVariables(ctx context.Context, req *runtimeh
 					AdditionalProperties: &clusterv1.JSONSchemaProps{
 						Type: "string",
 					},
+				},
+			},
+		})
+	}
+
+	// Append for supervisor.
+	if req.Settings["testMode"] == "supervisor" {
+		resp.Variables = append(resp.Variables, clusterv1.ClusterClassVariable{
+			Name:     "virtualMachineClass",
+			Required: ptr.To(false),
+			Schema: clusterv1.VariableSchema{
+				OpenAPIV3Schema: clusterv1.JSONSchemaProps{
+					Type:        "string",
+					Description: "The VirtualMachineClass that will be used.",
 				},
 			},
 		})

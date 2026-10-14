@@ -217,7 +217,6 @@ type VirtualMachineSnapshotStorageStatusRequested struct {
 
 // +kubebuilder:object:root=true
 // +kubebuilder:resource:scope=Namespaced,shortName=vmsnapshot
-// +kubebuilder:storageversion
 // +kubebuilder:subresource:status
 
 // VirtualMachineSnapshot is the schema for the virtualmachinesnapshot API.

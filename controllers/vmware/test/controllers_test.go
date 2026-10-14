@@ -31,6 +31,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
+	featuregatetesting "k8s.io/component-base/featuregate/testing"
 	"k8s.io/klog/v2"
 	"k8s.io/utils/ptr"
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
@@ -275,6 +276,12 @@ func getManager(cfg *rest.Config, networkProvider string, withWebhooks bool) man
 				return err
 			}
 			if err := (&vmwarewebhooks.VSphereCluster{}).SetupWebhookWithManager(mgr); err != nil {
+				return err
+			}
+			if err := (&vmwarewebhooks.VSphereClusterTemplate{}).SetupWebhookWithManager(mgr); err != nil {
+				return err
+			}
+			if err := (&vmwarewebhooks.ProviderServiceAccount{}).SetupWebhookWithManager(mgr); err != nil {
 				return err
 			}
 		}
@@ -536,6 +543,97 @@ var _ = Describe("Reconciliation tests", func() {
 
 			By("Delete the InfraMachine and wait for it to be removed")
 			deleteAndWait(infraMachineKey, infraMachine, false)
+		},
+		Entry("With no load balancer", dontUseLoadBalancer),
+		Entry("With load balancer", useLoadBalancer),
+	)
+
+	DescribeTable("VSphereMachine API validation rules",
+		func(isLB bool) {
+			k8sClient, managerCancel = prepareClient(isLB)
+			defer managerCancel()
+			featuregatetesting.SetFeatureGateDuringTest(GinkgoTB(), feature.Gates, feature.InfrastructurePolicies, true)
+
+			By("Create target namespace")
+			ns := deployNamespace(k8sClient)
+			defer dropNamespace(ns, k8sClient)
+
+			By("Create the CAPI Machine and wait for it to exist")
+			_, cluster, infraCluster := deployCluster(ns.Name, k8sClient)
+			updateClusterInfraRef(cluster, infraCluster, k8sClient)
+			machineKey, machine := deployCAPIMachine(ns.Name, cluster, k8sClient)
+			Eventually(func() error {
+				return k8sClient.Get(ctx, machineKey, machine)
+			}, time.Second*30).Should(Succeed())
+
+			By("Accept VSphereMachine creation with valid policies")
+			infraMachine := newInfraMachine(ns.Name, machine).(*vmwarev1.VSphereMachine)
+			infraMachine.SetOwnerReferences([]metav1.OwnerReference{
+				{
+					APIVersion: clusterv1.GroupVersion.String(),
+					Kind:       "Machine",
+					Name:       machine.Name,
+					UID:        machine.UID,
+				},
+			})
+			infraMachine.Spec.Policies = []vmwarev1.PolicyRef{
+				{
+					Name: "policy-1",
+					Kind: "ComputePolicy",
+				},
+			}
+			Expect(k8sClient.Create(ctx, infraMachine)).To(Succeed())
+
+			By("Reject updating policies on existing VSphereMachine")
+			infraMachineKey := client.ObjectKey{Namespace: infraMachine.GetNamespace(), Name: infraMachine.GetName()}
+			Eventually(func() error {
+				return k8sClient.Get(ctx, infraMachineKey, infraMachine)
+			}, time.Second*30).Should(Succeed())
+
+			infraMachine.Spec.Policies = append(infraMachine.Spec.Policies, vmwarev1.PolicyRef{
+				Name: "policy-2",
+				Kind: "ComputePolicy",
+			})
+			err := k8sClient.Update(ctx, infraMachine)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("policies are immutable after creation"))
+
+			By("Accept VSphereMachineTemplate creation with valid policies")
+			machineTemplate := &vmwarev1.VSphereMachineTemplate{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-template-" + util.RandomString(5),
+					Namespace: ns.Name,
+				},
+				Spec: vmwarev1.VSphereMachineTemplateSpec{
+					Template: vmwarev1.VSphereMachineTemplateResource{
+						Spec: vmwarev1.VSphereMachineSpec{
+							ImageName: "test-image",
+							ClassName: "test-class",
+							Policies: []vmwarev1.PolicyRef{
+								{
+									Name: "policy-1",
+									Kind: "ComputePolicy",
+								},
+							},
+						},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, machineTemplate)).To(Succeed())
+
+			By("Reject updating policies on existing VSphereMachineTemplate")
+			templateKey := client.ObjectKey{Namespace: machineTemplate.GetNamespace(), Name: machineTemplate.GetName()}
+			Eventually(func() error {
+				return k8sClient.Get(ctx, templateKey, machineTemplate)
+			}, time.Second*30).Should(Succeed())
+
+			machineTemplate.Spec.Template.Spec.Policies = append(machineTemplate.Spec.Template.Spec.Policies, vmwarev1.PolicyRef{
+				Name: "policy-2",
+				Kind: "ComputePolicy",
+			})
+			err = k8sClient.Update(ctx, machineTemplate)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("VSphereMachineTemplate spec.template.spec field is immutable"))
 		},
 		Entry("With no load balancer", dontUseLoadBalancer),
 		Entry("With load balancer", useLoadBalancer),

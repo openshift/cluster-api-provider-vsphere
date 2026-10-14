@@ -10,7 +10,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	vmopv1common "github.com/vmware-tanzu/vm-operator/api/v1alpha5/common"
+	vmopv1a5common "github.com/vmware-tanzu/vm-operator/api/v1alpha5/common"
 )
 
 const (
@@ -810,7 +810,7 @@ type VirtualMachineSpec struct {
 	// If a VM class has been modified and thus, the newly available
 	// VirtualMachineClassInstance can be specified in spec.class to
 	// trigger a resize operation.
-	Class *vmopv1common.LocalObjectRef `json:"class,omitempty"`
+	Class *vmopv1a5common.LocalObjectRef `json:"class,omitempty"`
 
 	// +optional
 
@@ -1220,13 +1220,26 @@ type VirtualMachineGuestStatus struct {
 	GuestFullName string `json:"guestFullName,omitempty"`
 }
 
+// VirtualMachineProviderStatus describes the observed state of the
+// VirtualMachine from the underlying infrastructure provider (vSphere/vCenter).
+type VirtualMachineProviderStatus struct {
+	// +optional
+
+	// CreationTimestamp describes the timestamp the underlying
+	// hypervisor reports when the VM is successfully created.
+	//
+	// This value should be immutable, but ultimately it is up to the
+	// provider as to whether or not the value ever changes.
+	CreationTimestamp *metav1.Time `json:"creationTimestamp,omitempty"`
+}
+
 // VirtualMachineStatus defines the observed state of a VirtualMachine instance.
 type VirtualMachineStatus struct {
 	// +optional
 
 	// Class is a reference to the VirtualMachineClass resource used to deploy
 	// this VM.
-	Class *vmopv1common.LocalObjectRef `json:"class,omitempty"`
+	Class *vmopv1a5common.LocalObjectRef `json:"class,omitempty"`
 
 	// +optional
 
@@ -1320,6 +1333,12 @@ type VirtualMachineStatus struct {
 
 	// +optional
 
+	// Provider describes the observed state of the VirtualMachine from
+	// the underlying infrastructure provider (vSphere/vCenter).
+	Provider *VirtualMachineProviderStatus `json:"provider,omitempty"`
+
+	// +optional
+
 	// CurrentSnapshot describes the observed working snapshot of the VirtualMachine.
 	// This field contains the name of the current snapshot.
 	CurrentSnapshot *VirtualMachineSnapshotReference `json:"currentSnapshot,omitempty"`
@@ -1347,7 +1366,6 @@ type VirtualMachineStatus struct {
 
 // +kubebuilder:object:root=true
 // +kubebuilder:resource:scope=Namespaced,shortName=vm
-// +kubebuilder:storageversion
 // +kubebuilder:subresource:status
 // +kubebuilder:printcolumn:name="Power-State",type="string",JSONPath=".status.powerState"
 // +kubebuilder:printcolumn:name="Class",type="string",priority=1,JSONPath=".spec.className"

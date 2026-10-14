@@ -24,18 +24,21 @@ import (
 	"os"
 	"reflect"
 	goruntime "runtime"
+	"strings"
 	"time"
 
-	"github.com/pkg/errors"
+	pkgerrors "github.com/pkg/errors"
 	"github.com/spf13/pflag"
 	netopv1alpha1 "github.com/vmware-tanzu/net-operator-api/api/v1alpha1"
 	vmoprv1alpha2 "github.com/vmware-tanzu/vm-operator/api/v1alpha2"
 	vmoprv1alpha5 "github.com/vmware-tanzu/vm-operator/api/v1alpha5"
+	vmoprv1alpha6 "github.com/vmware-tanzu/vm-operator/api/v1alpha6"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/tools/leaderelection/resourcelock"
 	cliflag "k8s.io/component-base/cli/flag"
 	"k8s.io/component-base/logs"
@@ -44,7 +47,6 @@ import (
 	"k8s.io/klog/v2"
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/cluster-api/controllers/remote"
-	"sigs.k8s.io/cluster-api/feature"
 	"sigs.k8s.io/cluster-api/util/apiwarnings"
 	"sigs.k8s.io/cluster-api/util/flags"
 	"sigs.k8s.io/cluster-api/version"
@@ -55,6 +57,7 @@ import (
 	ctrlmgr "sigs.k8s.io/controller-runtime/pkg/manager"
 
 	vmwarev1beta1 "sigs.k8s.io/cluster-api-provider-vsphere/api/supervisor/v1beta1"
+	"sigs.k8s.io/cluster-api-provider-vsphere/feature"
 	conversionapi "sigs.k8s.io/cluster-api-provider-vsphere/pkg/conversion/api"
 	vmoprvhub "sigs.k8s.io/cluster-api-provider-vsphere/pkg/conversion/api/vmoperator/hub"
 	conversionclient "sigs.k8s.io/cluster-api-provider-vsphere/pkg/conversion/client"
@@ -84,7 +87,10 @@ var (
 	// net operator specific flags.
 	networkInterfaceConcurrency int
 	virtualMachineConcurrency   int
-	apiVersionVMOperator        string
+	vmOperatorAPIVersion        string
+	featureGates                string
+
+	supportedVMOperatorAPIVersions = []string{vmoprv1alpha2.GroupVersion.Version, vmoprv1alpha5.GroupVersion.Version, vmoprv1alpha6.GroupVersion.Version}
 )
 
 func init() {
@@ -93,6 +99,7 @@ func init() {
 	utilruntime.Must(vmoprvhub.AddToScheme(scheme))
 	utilruntime.Must(vmoprv1alpha2.AddToScheme(scheme))
 	utilruntime.Must(vmoprv1alpha5.AddToScheme(scheme))
+	utilruntime.Must(vmoprv1alpha6.AddToScheme(scheme))
 	utilruntime.Must(netopv1alpha1.AddToScheme(scheme))
 }
 
@@ -101,10 +108,10 @@ func InitFlags(fs *pflag.FlagSet) {
 	logsv1.AddFlags(logOptions, fs)
 
 	fs.StringVar(
-		&apiVersionVMOperator,
+		&vmOperatorAPIVersion,
 		"vm-operator-api-version",
 		vmoprv1alpha5.GroupVersion.Version,
-		fmt.Sprintf("the API version to use when reading and writing VM Operator resources in supervisor mode. Valid values are: %s, %s", vmoprv1alpha2.GroupVersion.Version, vmoprv1alpha5.GroupVersion.Version),
+		fmt.Sprintf("the API version to use when reading and writing VM Operator resources in supervisor mode. Valid values are: %s", strings.Join(supportedVMOperatorAPIVersions, ", ")),
 	)
 
 	fs.BoolVar(&enableLeaderElection, "leader-elect", false,
@@ -151,7 +158,7 @@ func InitFlags(fs *pflag.FlagSet) {
 
 	flags.AddManagerOptions(fs, &managerOptions)
 
-	feature.MutableGates.AddFlag(fs)
+	feature.AddFlag(fs, &featureGates, supportedVMOperatorAPIVersions)
 }
 
 // Add RBAC for the authorized diagnostics endpoint.
@@ -178,8 +185,13 @@ func main() {
 		klog.V(1).Infof("FLAG: --%s=%q", flag.Name, flag.Value)
 	})
 
-	if apiVersionVMOperator != vmoprv1alpha2.GroupVersion.Version && apiVersionVMOperator != vmoprv1alpha5.GroupVersion.Version {
-		fmt.Printf("Invalid argument: --vm-operator-api-version must be one of : %s, %s\n", vmoprv1alpha2.GroupVersion.Version, vmoprv1alpha5.GroupVersion.Version)
+	if !sets.New(supportedVMOperatorAPIVersions...).Has(vmOperatorAPIVersion) {
+		fmt.Printf("Invalid argument: --vm-operator-api-version must be one of : %s\n", strings.Join(supportedVMOperatorAPIVersions, ", "))
+		os.Exit(1)
+	}
+
+	if err := feature.SetSupervisorGates(vmOperatorAPIVersion, featureGates); err != nil {
+		setupLog.Error(err, "invalid argument: --feature-gates")
 		os.Exit(1)
 	}
 
@@ -188,7 +200,7 @@ func main() {
 
 	// Note: setupLog can only be used after ctrl.SetLogger was called
 	setupLog.Info(fmt.Sprintf("Version: %s (git commit: %s)", version.Get().String(), version.Get().GitCommit))
-	setupLog.Info(fmt.Sprintf("Target API Version for group %s: %s", vmoprvhub.GroupVersion.Group, apiVersionVMOperator))
+	setupLog.Info(fmt.Sprintf("Target API Version for group %s: %s", vmoprvhub.GroupVersion.Group, vmOperatorAPIVersion))
 
 	restConfig := ctrl.GetConfigOrDie()
 	restConfig.QPS = restConfigQPS
@@ -257,7 +269,7 @@ func main() {
 
 	// Continuing startup does not make sense without having managers added.
 	if !supervisorMode {
-		err := errors.New("supervisor CRDs not detected")
+		err := pkgerrors.New("supervisor CRDs not detected")
 		setupLog.Error(err, "CAPV CRDs are not deployed yet, restarting")
 		os.Exit(1)
 	}
@@ -299,7 +311,7 @@ func setupReconcilers(ctx context.Context, mgr ctrl.Manager, _ bool) {
 	}
 
 	converter := conversionapi.DefaultConverterFor(
-		schema.GroupVersion{Group: vmoprvhub.GroupVersion.Group, Version: apiVersionVMOperator},
+		schema.GroupVersion{Group: vmoprvhub.GroupVersion.Group, Version: vmOperatorAPIVersion},
 	)
 
 	cc, err := conversionclient.NewWithConverter(mgr.GetClient(), converter)
