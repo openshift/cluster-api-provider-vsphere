@@ -206,7 +206,7 @@ func (v *VmopMachineService) ReconcileNormal(ctx context.Context, machineCtx cap
 	// Reconcile the VM Operator VirtualMachine.
 	if err := v.reconcileVMOperatorVM(ctx, supervisorMachineCtx, vmOperatorVM); err != nil {
 		conditions.MarkFalse(supervisorMachineCtx.VSphereMachine, infrav1.VMProvisionedCondition, vmwarev1.VMCreationFailedReason, clusterv1.ConditionSeverityWarning,
-			fmt.Sprintf("failed to create or update VirtualMachine: %v", err))
+			"failed to create or update VirtualMachine: %v", err)
 		v1beta2conditions.Set(supervisorMachineCtx.VSphereMachine, metav1.Condition{
 			Type:    infrav1.VSphereMachineVirtualMachineProvisionedV1Beta2Condition,
 			Status:  metav1.ConditionFalse,
@@ -246,7 +246,7 @@ func (v *VmopMachineService) ReconcileNormal(ctx context.Context, machineCtx cap
 			if c == nil || c.Status != metav1.ConditionFalse {
 				continue
 			}
-			conditions.MarkFalse(supervisorMachineCtx.VSphereMachine, infrav1.VMProvisionedCondition, c.Reason, clusterv1.ConditionSeverityError, c.Message)
+			conditions.MarkFalse(supervisorMachineCtx.VSphereMachine, infrav1.VMProvisionedCondition, c.Reason, clusterv1.ConditionSeverityError, "%s", c.Message)
 			v1beta2conditions.Set(supervisorMachineCtx.VSphereMachine, metav1.Condition{
 				Type:    infrav1.VSphereMachineVirtualMachineProvisionedV1Beta2Condition,
 				Status:  metav1.ConditionFalse,

@@ -80,7 +80,7 @@ func (s *CPService) ReconcileControlPlaneEndpointService(ctx context.Context, cl
 	if err != nil {
 		if !apierrors.IsNotFound(err) {
 			err = errors.Wrapf(err, "failed to check if VirtualMachineService exists")
-			conditions.MarkFalse(clusterCtx.VSphereCluster, vmwarev1.LoadBalancerReadyCondition, vmwarev1.LoadBalancerCreationFailedReason, clusterv1.ConditionSeverityWarning, err.Error())
+			conditions.MarkFalse(clusterCtx.VSphereCluster, vmwarev1.LoadBalancerReadyCondition, vmwarev1.LoadBalancerCreationFailedReason, clusterv1.ConditionSeverityWarning, "%s", err.Error())
 			v1beta2conditions.Set(clusterCtx.VSphereCluster, metav1.Condition{
 				Type:    vmwarev1.VSphereClusterLoadBalancerReadyV1Beta2Condition,
 				Status:  metav1.ConditionFalse,
@@ -94,7 +94,7 @@ func (s *CPService) ReconcileControlPlaneEndpointService(ctx context.Context, cl
 		annotations, err := netProvider.GetVMServiceAnnotations(ctx, clusterCtx)
 		if err != nil {
 			err = errors.Wrapf(err, "failed to get provider VirtualMachineService annotations")
-			conditions.MarkFalse(clusterCtx.VSphereCluster, vmwarev1.LoadBalancerReadyCondition, vmwarev1.LoadBalancerCreationFailedReason, clusterv1.ConditionSeverityWarning, err.Error())
+			conditions.MarkFalse(clusterCtx.VSphereCluster, vmwarev1.LoadBalancerReadyCondition, vmwarev1.LoadBalancerCreationFailedReason, clusterv1.ConditionSeverityWarning, "%s", err.Error())
 			v1beta2conditions.Set(clusterCtx.VSphereCluster, metav1.Condition{
 				Type:    vmwarev1.VSphereClusterLoadBalancerReadyV1Beta2Condition,
 				Status:  metav1.ConditionFalse,
@@ -107,7 +107,7 @@ func (s *CPService) ReconcileControlPlaneEndpointService(ctx context.Context, cl
 		vmService, err = s.createVMControlPlaneService(ctx, clusterCtx, annotations)
 		if err != nil {
 			err = errors.Wrapf(err, "failed to create VirtualMachineService")
-			conditions.MarkFalse(clusterCtx.VSphereCluster, vmwarev1.LoadBalancerReadyCondition, vmwarev1.LoadBalancerCreationFailedReason, clusterv1.ConditionSeverityWarning, err.Error())
+			conditions.MarkFalse(clusterCtx.VSphereCluster, vmwarev1.LoadBalancerReadyCondition, vmwarev1.LoadBalancerCreationFailedReason, clusterv1.ConditionSeverityWarning, "%s", err.Error())
 			v1beta2conditions.Set(clusterCtx.VSphereCluster, metav1.Condition{
 				Type:    vmwarev1.VSphereClusterLoadBalancerReadyV1Beta2Condition,
 				Status:  metav1.ConditionFalse,
@@ -122,7 +122,7 @@ func (s *CPService) ReconcileControlPlaneEndpointService(ctx context.Context, cl
 	vip, err := getVMServiceVIP(vmService)
 	if err != nil {
 		err = errors.Wrapf(err, "VirtualMachineService LB does not yet have VIP assigned")
-		conditions.MarkFalse(clusterCtx.VSphereCluster, vmwarev1.LoadBalancerReadyCondition, vmwarev1.WaitingForLoadBalancerIPReason, clusterv1.ConditionSeverityInfo, err.Error())
+		conditions.MarkFalse(clusterCtx.VSphereCluster, vmwarev1.LoadBalancerReadyCondition, vmwarev1.WaitingForLoadBalancerIPReason, clusterv1.ConditionSeverityInfo, "%s", err.Error())
 		v1beta2conditions.Set(clusterCtx.VSphereCluster, metav1.Condition{
 			Type:    vmwarev1.VSphereClusterLoadBalancerReadyV1Beta2Condition,
 			Status:  metav1.ConditionFalse,
@@ -135,7 +135,7 @@ func (s *CPService) ReconcileControlPlaneEndpointService(ctx context.Context, cl
 	cpEndpoint, err := getAPIEndpointFromVIP(vmService, vip)
 	if err != nil {
 		err = errors.Wrapf(err, "VirtualMachineService LB does not have an apiserver endpoint")
-		conditions.MarkFalse(clusterCtx.VSphereCluster, vmwarev1.LoadBalancerReadyCondition, vmwarev1.WaitingForLoadBalancerIPReason, clusterv1.ConditionSeverityWarning, err.Error())
+		conditions.MarkFalse(clusterCtx.VSphereCluster, vmwarev1.LoadBalancerReadyCondition, vmwarev1.WaitingForLoadBalancerIPReason, clusterv1.ConditionSeverityWarning, "%s", err.Error())
 		v1beta2conditions.Set(clusterCtx.VSphereCluster, metav1.Condition{
 			Type:    vmwarev1.VSphereClusterLoadBalancerReadyV1Beta2Condition,
 			Status:  metav1.ConditionFalse,
