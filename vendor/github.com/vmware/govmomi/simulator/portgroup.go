@@ -1,18 +1,6 @@
-/*
-Copyright (c) 2017 VMware, Inc. All Rights Reserved.
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-*/
+// © Broadcom. All Rights Reserved.
+// The term "Broadcom" refers to Broadcom Inc. and/or its subsidiaries.
+// SPDX-License-Identifier: Apache-2.0
 
 package simulator
 
@@ -25,6 +13,23 @@ import (
 
 type DistributedVirtualPortgroup struct {
 	mo.DistributedVirtualPortgroup
+}
+
+func (p *DistributedVirtualPortgroup) event(ctx *Context) types.DVPortgroupEvent {
+	dvs := ctx.Map.Get(*p.Config.DistributedVirtualSwitch).(*DistributedVirtualSwitch)
+
+	return types.DVPortgroupEvent{
+		Event: types.Event{
+			Datacenter: datacenterEventArgument(ctx, p),
+			Net: &types.NetworkEventArgument{
+				EntityEventArgument: types.EntityEventArgument{
+					Name: p.Name,
+				},
+				Network: p.Self,
+			},
+			Dvs: dvs.eventArgument(),
+		},
+	}
 }
 
 func (s *DistributedVirtualPortgroup) RenameTask(ctx *Context, req *types.Rename_Task) soap.HasFault {
@@ -46,6 +51,7 @@ func (s *DistributedVirtualPortgroup) ReconfigureDVPortgroupTask(ctx *Context, r
 		s.Config.PortNameFormat = req.Spec.PortNameFormat
 		s.Config.VmVnicNetworkResourcePoolKey = req.Spec.VmVnicNetworkResourcePoolKey
 		s.Config.LogicalSwitchUuid = req.Spec.LogicalSwitchUuid
+		s.Config.SubnetId = req.Spec.SubnetId
 		s.Config.BackingType = req.Spec.BackingType
 
 		return nil, nil
@@ -60,12 +66,13 @@ func (s *DistributedVirtualPortgroup) ReconfigureDVPortgroupTask(ctx *Context, r
 
 func (s *DistributedVirtualPortgroup) DestroyTask(ctx *Context, req *types.Destroy_Task) soap.HasFault {
 	task := CreateTask(s, "destroy", func(t *Task) (types.AnyType, types.BaseMethodFault) {
-		vswitch := Map.Get(*s.Config.DistributedVirtualSwitch).(*DistributedVirtualSwitch)
-		Map.RemoveReference(ctx, vswitch, &vswitch.Portgroup, s.Reference())
-		Map.removeString(ctx, vswitch, &vswitch.Summary.PortgroupName, s.Name)
+		vswitch := ctx.Map.Get(*s.Config.DistributedVirtualSwitch).(*DistributedVirtualSwitch)
+		ctx.Map.RemoveReference(ctx, vswitch, &vswitch.Portgroup, s.Reference())
+		ctx.Map.removeString(ctx, vswitch, &vswitch.Summary.PortgroupName, s.Name)
 
-		f := Map.getEntityParent(vswitch, "Folder").(*Folder)
+		f := ctx.Map.getEntityParent(vswitch, "Folder").(*Folder)
 		folderRemoveChild(ctx, &f.Folder, s.Reference())
+		ctx.postEvent(&types.DVPortgroupDestroyedEvent{DVPortgroupEvent: s.event(ctx)})
 
 		return nil, nil
 	})

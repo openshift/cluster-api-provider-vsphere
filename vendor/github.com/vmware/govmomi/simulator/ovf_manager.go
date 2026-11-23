@@ -1,18 +1,6 @@
-/*
-Copyright (c) 2019 VMware, Inc. All Rights Reserved.
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-*/
+// © Broadcom. All Rights Reserved.
+// The term "Broadcom" refers to Broadcom Inc. and/or its subsidiaries.
+// SPDX-License-Identifier: Apache-2.0
 
 package simulator
 
@@ -53,7 +41,9 @@ func ovfNetwork(ctx *Context, req *types.CreateImportSpec, item ovf.ResourceAllo
 	ref := ctx.Map.getEntityDatacenter(pool).defaultNetwork()[0] // Default to VM Network
 	c := item.Connection[0]
 
-	for _, net := range req.Cisp.NetworkMapping {
+	cisp := req.Cisp.GetOvfCreateImportSpecParams()
+
+	for _, net := range cisp.NetworkMapping {
 		if net.Name == c {
 			ref = net.Network
 			break
@@ -109,34 +99,86 @@ func (m *OvfManager) CreateImportSpec(ctx *Context, req *types.CreateImportSpec)
 		return body
 	}
 
+	cisp := req.Cisp.GetOvfCreateImportSpecParams()
+
 	ds := ctx.Map.Get(req.Datastore).(*Datastore)
 	path := object.DatastorePath{Datastore: ds.Name}
+	vapp := &types.VAppConfigSpec{}
 	spec := &types.VirtualMachineImportSpec{
 		ConfigSpec: types.VirtualMachineConfigSpec{
-			Name:    req.Cisp.EntityName,
+			Name:    cisp.EntityName,
 			Version: esx.HardwareVersion,
 			GuestId: string(types.VirtualMachineGuestOsIdentifierOtherGuest),
 			Files: &types.VirtualMachineFileInfo{
 				VmPathName: path.String(),
 			},
 			NumCPUs:           1,
-			NumCoresPerSocket: 1,
+			NumCoresPerSocket: types.NewInt32(1),
 			MemoryMB:          32,
+			VAppConfig:        vapp,
 		},
 		ResPoolEntity: &req.ResourcePool,
 	}
 
-	if req.Cisp.DeploymentOption == "" && env.DeploymentOption != nil {
+	index := 0
+	for i, product := range env.VirtualSystem.Product {
+		vapp.Product = append(vapp.Product, types.VAppProductSpec{
+			ArrayUpdateSpec: types.ArrayUpdateSpec{
+				Operation: types.ArrayUpdateOperationAdd,
+			},
+			Info: &types.VAppProductInfo{
+				Key:        int32(i),
+				ClassId:    toString(product.Class),
+				InstanceId: toString(product.Instance),
+				Name:       product.Product,
+				Vendor:     product.Vendor,
+				Version:    product.Version,
+			},
+		})
+
+		for _, p := range product.Property {
+			key := product.Key(p)
+			val := ""
+
+			for _, m := range cisp.PropertyMapping {
+				if m.Key == key {
+					val = m.Value
+				}
+			}
+
+			vapp.Property = append(vapp.Property, types.VAppPropertySpec{
+				ArrayUpdateSpec: types.ArrayUpdateSpec{
+					Operation: types.ArrayUpdateOperationAdd,
+				},
+				Info: &types.VAppPropertyInfo{
+					Key:              int32(index),
+					ClassId:          toString(product.Class),
+					InstanceId:       toString(product.Instance),
+					Id:               p.Key,
+					Category:         product.Category,
+					Label:            toString(p.Label),
+					Type:             p.Type,
+					UserConfigurable: p.UserConfigurable,
+					DefaultValue:     toString(p.Default),
+					Value:            val,
+					Description:      toString(p.Description),
+				},
+			})
+			index++
+		}
+	}
+
+	if cisp.DeploymentOption == "" && env.DeploymentOption != nil {
 		for _, c := range env.DeploymentOption.Configuration {
 			if isTrue(c.Default) {
-				req.Cisp.DeploymentOption = c.ID
+				cisp.DeploymentOption = c.ID
 				break
 			}
 		}
 	}
 
-	if os := env.VirtualSystem.OperatingSystem; len(os) != 0 {
-		if id := os[0].OSType; id != nil {
+	if os := env.VirtualSystem.OperatingSystem; os != nil {
+		if id := os.OSType; id != nil {
 			spec.ConfigSpec.GuestId = *id
 		}
 	}
@@ -148,7 +190,8 @@ func (m *OvfManager) CreateImportSpec(ctx *Context, req *types.CreateImportSpec)
 
 	hw := env.VirtualSystem.VirtualHardware[0]
 	if vmx := hw.System.VirtualSystemType; vmx != nil {
-		spec.ConfigSpec.Version = *vmx
+		version := strings.Split(*vmx, ",")[0]
+		spec.ConfigSpec.Version = strings.TrimSpace(version)
 	}
 
 	ndisk := 0
@@ -156,8 +199,8 @@ func (m *OvfManager) CreateImportSpec(ctx *Context, req *types.CreateImportSpec)
 	resources := make(map[string]types.BaseVirtualDevice)
 
 	for _, item := range hw.Item {
-		if req.Cisp.DeploymentOption != "" && item.Configuration != nil {
-			if req.Cisp.DeploymentOption != *item.Configuration {
+		if cisp.DeploymentOption != "" && item.Configuration != nil {
+			if cisp.DeploymentOption != *item.Configuration {
 				continue
 			}
 		}
@@ -182,7 +225,7 @@ func (m *OvfManager) CreateImportSpec(ctx *Context, req *types.CreateImportSpec)
 
 		upload := func(file ovf.File, c types.BaseVirtualDevice, n int) {
 			result.FileItem = append(result.FileItem, types.OvfFileItem{
-				DeviceId: fmt.Sprintf("/%s/%s:%d", req.Cisp.EntityName, device.Type(c), n),
+				DeviceId: fmt.Sprintf("/%s/%s:%d", cisp.EntityName, device.Type(c), n),
 				Path:     file.Href,
 				Size:     int64(file.Size),
 				CimType:  int32(*item.ResourceType),
@@ -239,7 +282,7 @@ func (m *OvfManager) CreateImportSpec(ctx *Context, req *types.CreateImportSpec)
 			if len(item.HostResource) != 0 {
 				for _, file := range env.References {
 					if strings.HasSuffix(item.HostResource[0], file.ID) {
-						path.Path = fmt.Sprintf("%s/_deviceImage%d.iso", req.Cisp.EntityName, ndev)
+						path.Path = fmt.Sprintf("%s/_deviceImage%d.iso", cisp.EntityName, ndev)
 						device.InsertIso(d, path.String())
 						upload(file, d, ndev)
 						break
@@ -253,8 +296,30 @@ func (m *OvfManager) CreateImportSpec(ctx *Context, req *types.CreateImportSpec)
 			if !ok {
 				continue // Parent is unsupported()
 			}
-			path.Path = fmt.Sprintf("%s/disk-%d.vmdk", req.Cisp.EntityName, ndisk)
+			path.Path = fmt.Sprintf("%s/disk-%d.vmdk", cisp.EntityName, ndisk)
 			d := device.CreateDisk(c.(types.BaseVirtualController), ds.Reference(), path.String())
+
+			switch types.OvfCreateImportSpecParamsDiskProvisioningType(cisp.DiskProvisioning) {
+			case "",
+				types.OvfCreateImportSpecParamsDiskProvisioningTypeMonolithicFlat,
+				types.OvfCreateImportSpecParamsDiskProvisioningTypeFlat,
+				types.OvfCreateImportSpecParamsDiskProvisioningTypeEagerZeroedThick,
+				types.OvfCreateImportSpecParamsDiskProvisioningTypeThin,
+				types.OvfCreateImportSpecParamsDiskProvisioningTypeThick,
+				types.OvfCreateImportSpecParamsDiskProvisioningTypeSeSparse:
+				// OK
+			case types.OvfCreateImportSpecParamsDiskProvisioningTypeMonolithicSparse:
+				// results in DeviceUnsupportedForVmPlatform during import
+				d.VirtualDevice.Backing = new(types.VirtualDiskSparseVer2BackingInfo)
+			default:
+				result.Error = append(result.Error, types.LocalizedMethodFault{
+					Fault: &types.OvfUnsupportedDiskProvisioning{
+						DiskProvisioning: cisp.DiskProvisioning,
+					},
+					LocalizedMessage: "Disk provisioning type not supported: " + cisp.DiskProvisioning,
+				})
+			}
+
 			d.VirtualDevice.DeviceInfo = &types.Description{
 				Label: item.ElementName,
 			}
@@ -277,7 +342,7 @@ func (m *OvfManager) CreateImportSpec(ctx *Context, req *types.CreateImportSpec)
 
 	spec.ConfigSpec.DeviceChange, _ = device.ConfigSpec(types.VirtualDeviceConfigSpecOperationAdd)
 
-	for _, p := range req.Cisp.PropertyMapping {
+	for _, p := range cisp.PropertyMapping {
 		spec.ConfigSpec.ExtraConfig = append(spec.ConfigSpec.ExtraConfig, &types.OptionValue{
 			Key:   p.Key,
 			Value: p.Value,

@@ -1,26 +1,19 @@
-/*
-Copyright (c) 2017 VMware, Inc. All Rights Reserved.
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-*/
+// © Broadcom. All Rights Reserved.
+// The term "Broadcom" refers to Broadcom Inc. and/or its subsidiaries.
+// SPDX-License-Identifier: Apache-2.0
 
 package vpx
 
-import "github.com/vmware/govmomi/vim25/types"
+import (
+	"github.com/google/uuid"
+
+	"github.com/vmware/govmomi/internal"
+	"github.com/vmware/govmomi/vim25/types"
+)
 
 // ServiceContent is the default template for the ServiceInstance content property.
 // Capture method:
-//   govc object.collect -s -dump - content
+// govc object.collect -s -dump - content
 var ServiceContent = types.ServiceContent{
 	RootFolder:        types.ManagedObjectReference{Type: "Folder", Value: "group-d1"},
 	PropertyCollector: types.ManagedObjectReference{Type: "PropertyCollector", Value: "propertyCollector"},
@@ -37,7 +30,7 @@ var ServiceContent = types.ServiceContent{
 		ProductLineId:         "vpx",
 		ApiType:               "VirtualCenter",
 		ApiVersion:            "6.5",
-		InstanceUuid:          "dbed6e0c-bd88-4ef6-b594-21283e1c677f",
+		InstanceUuid:          internal.OID(string(uuid.NodeID())).String(),
 		LicenseProductName:    "VMware VirtualCenter Server",
 		LicenseProductVersion: "6.0",
 	},
@@ -83,4 +76,5 @@ var ServiceContent = types.ServiceContent{
 	HealthUpdateManager:         &types.ManagedObjectReference{Type: "HealthUpdateManager", Value: "HealthUpdateManager"},
 	FailoverClusterConfigurator: &types.ManagedObjectReference{Type: "FailoverClusterConfigurator", Value: "FailoverClusterConfigurator"},
 	FailoverClusterManager:      &types.ManagedObjectReference{Type: "FailoverClusterManager", Value: "FailoverClusterManager"},
+	TenantManager:               &types.ManagedObjectReference{Type: "TenantTenantManager", Value: "TenantManager"},
 }

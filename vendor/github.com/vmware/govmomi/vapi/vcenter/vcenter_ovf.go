@@ -1,18 +1,6 @@
-/*
-Copyright (c) 2018 VMware, Inc. All Rights Reserved.
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-*/
+// © Broadcom. All Rights Reserved.
+// The term "Broadcom" refers to Broadcom Inc. and/or its subsidiaries.
+// SPDX-License-Identifier: Apache-2.0
 
 package vcenter
 
@@ -123,6 +111,12 @@ type StorageMapping struct {
 	Value StorageGroupMapping `json:"value"`
 }
 
+// VmConfigSpec defines the optional virtual machine configuration settings used when deploying an OVF template
+type VmConfigSpec struct {
+	Provider string `json:"provider"`
+	XML      string `json:"xml"`
+}
+
 // DeploymentSpec is the deployment specification for the deployment
 type DeploymentSpec struct {
 	Name                string             `json:"name,omitempty"`
@@ -136,6 +130,7 @@ type DeploymentSpec struct {
 	Flags               []string           `json:"flags,omitempty"`
 	AdditionalParams    []AdditionalParams `json:"additional_parameters,omitempty"`
 	DefaultDatastoreID  string             `json:"default_datastore_id,omitempty"`
+	VmConfigSpec        *VmConfigSpec      `json:"vm_config_spec,omitempty"`
 }
 
 // Target is the target for the deployment
@@ -290,8 +285,10 @@ func (c *Manager) DeployLibraryItem(ctx context.Context, libraryItemID string, d
 		return nil, err
 	}
 	if res.Succeeded {
-		ref := types.ManagedObjectReference(*res.ResourceID)
-		return &ref, nil
+		return &types.ManagedObjectReference{
+			Type:  res.ResourceID.Type,
+			Value: res.ResourceID.Value,
+		}, nil
 	}
 	return nil, res.Error
 }

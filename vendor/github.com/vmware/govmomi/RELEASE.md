@@ -1,11 +1,16 @@
-# How to create a new `govmomi` Release on Github
+# How to create a `govmomi` Release on Github
 
-On every new tag matching `v*` pushed to the repository a Github Action Release
-Workflow is executed. 
+> **Note**
+>
+> The steps outlined in this document can only be performed by maintainers or
+> administrators of this project.
+
+The release automation is based on Github
+[Actions](https://github.com/features/actions) and has been improved over time
+to simplify the experience for creating `govmomi` releases.
 
 The Github Actions release [workflow](.github/workflows/govmomi-release.yaml)
-uses [`goreleaser`](http://goreleaser.com/) ([configuration
-file](.goreleaser.yml)) and automatically creates/pushes:
+uses [`goreleaser`](http://goreleaser.com/) and automatically creates/pushes:
 
 - Release artifacts for `govc` and `vcsim` to the
   [release](https://github.com/vmware/govmomi/releases) page, including
@@ -13,71 +18,92 @@ file](.goreleaser.yml)) and automatically creates/pushes:
 - Docker images for `vmware/govc` and `vmware/vcsim` to Docker Hub
 - Source code
 
-⚠️ **Note:** These steps can only be performed by maintainers or administrators
-of this project.
+Releases are not tagged on the `main` branch, but a dedicated release branch, for example `release-0.35`.
 
-## Verify `master` branch is up to date with the remote
+### Verify `main` branch is up to date with the remote
 
 ```console
-git checkout master
+git checkout main
 git fetch -avp
-git diff master origin/master
+git diff main origin/main
 
 # if your local and remote branches diverge run
-git pull origin/master
+git pull origin/main
 ```
 
-⚠️ **Note:** These steps assume `origin` to point to the remote
-`https://github.com/vmware/govmomi`, respectively
-`git@github.com:vmware/govmomi`.
+> **Warning**
+>
+> These steps assume `origin` to point to the remote
+> `https://github.com/vmware/govmomi`, respectively
+> `git@github.com:vmware/govmomi`.
 
-## Verify `make docs` and `CONTRIBUTORS` are up to date
+### Create a release branch
 
-⚠️ Run the following commands and commit (PR) any changes before proceeding with
-the release.
+For new releases, create a release branch from the most recent commit in
+`main`, e.g. `release-0.35`.
+
+```console
+export RELEASE_BRANCH=release-0.35
+git checkout -b ${RELEASE_BRANCH}
+```
+
+For maintenance/patch releases on **existing** release branches, simply checkout the existing
+release branch and add commits to the existing release branch.
+
+### Verify `make docs` and `CONTRIBUTORS` are up to date
+
+> **Warning**
+>
+> Run the following commands and commit any changes to the release branch before
+> proceeding with the release.
 
 ```console
 make doc
 ./scripts/contributors.sh
-if [ -z "$(git status --porcelain)" ]; then 
+if [ -z "$(git status --porcelain)" ]; then
   echo "working directory clean: proceed with release"
-else 
+else
   echo "working directory dirty: please commit changes"
 fi
+
+# perform git add && git commit ... in case there were changes
 ```
 
+### Push the release branch
 
-## Set `RELEASE_VERSION` variable
+> **Warning**
+>
+> Do not create a tag as this will be done by the release automation.
 
-This variable is used and referenced in the subsequent commands. Set it to the
-**upcoming** release version, adhering to the [semantic
-versioning](https://semver.org/) scheme:
+The final step is pushing the new/updated release branch.
 
 ```console
-export RELEASE_VERSION=v0.27.0
+git push origin ${RELEASE_BRANCH}
 ```
 
-## Create the Git Tag
+### Create a release in the Github UI
 
-```console
-git tag -a ${RELEASE_VERSION} -m "Release ${RELEASE_VERSION}"
-```
+Open the `govmomi` Github [repository](https://github.com/vmware/govmomi) and
+navigate to `Actions -> Workflows -> Release`.
 
-## Push the new Tag
+Click `Run Workflow` which opens a dropdown list.
 
-```console
-# Will trigger Github Actions Release Workflow
-git push origin refs/tags/${RELEASE_VERSION}
-```
+Select the new/updated branch, e.g. `release-0.35`, i.e. **not** the `main`
+branch.
 
-## Verify Github Action Release Workflow
+Specify a semantic `tag` to associate with the release, e.g. `v0.35.0`.
 
-After pushing a new release tag, the status of the workflow can be inspected
-[here](https://github.com/vmware/govmomi/actions/workflows/govmomi-release.yaml).
+> **Warning**
+>
+> This tag **must not** exist or the release will fail during the validation
+> phase.
 
-![Release](static/release-workflow.png "Successful Release Run")
+By default, a dry-run is performed to rule out most (but not all) errors during
+a release. If you do not want to perform a dry-run, e.g. to finally create a
+release, deselect the `Verify release workflow ...` checkbox.
 
-After a successful release, a pull request is automatically created by the
-Github Actions bot to update the [CHANGELOG](CHANGELOG.md). This `CHANGELOG.md`
-is also generated with `git-chglog` but uses a slightly different template
-(`.chglog/CHANGELOG.tpl.md`) for rendering (issue/PR refs are excluded).
+Click `Run Workflow` to kick off the workflow.
+
+After successful completion and if the newly created `tag` is the **latest**
+(semantic version sorted) tag in the repository, a PR is automatically opened
+against the `main` branch to update the `CHANGELOG`.

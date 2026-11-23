@@ -1,18 +1,6 @@
-/*
-Copyright (c) 2017 VMware, Inc. All Rights Reserved.
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-*/
+// © Broadcom. All Rights Reserved.
+// The term "Broadcom" refers to Broadcom Inc. and/or its subsidiaries.
+// SPDX-License-Identifier: Apache-2.0
 
 package pbm
 
@@ -49,6 +37,7 @@ type Client struct {
 
 func NewClient(ctx context.Context, c *vim25.Client) (*Client, error) {
 	sc := c.Client.NewServiceClient(Path, Namespace)
+	sc.Cookie = c.SessionCookie // vcSessionCookie soap.Header, value must be from vim25.Client
 
 	req := types.PbmRetrieveServiceContent{
 		This: ServiceInstance,
@@ -80,6 +69,20 @@ func (c *Client) QueryProfile(ctx context.Context, rtype types.PbmProfileResourc
 	}
 
 	return res.Returnval, nil
+}
+
+func (c *Client) QueryProfileDetails(ctx context.Context, category string, fetchAllFields bool) (*types.PbmQueryProfileDetailsResponse, error) {
+	req := types.PbmQueryProfileDetails{
+		This:            c.ServiceContent.ProfileManager,
+		ProfileCategory: category,
+		FetchAllFields:  fetchAllFields,
+	}
+
+	res, err := methods.PbmQueryProfileDetails(ctx, c, &req)
+	if err != nil {
+		return nil, err
+	}
+	return res, nil
 }
 
 func (c *Client) RetrieveContent(ctx context.Context, ids []types.PbmProfileId) ([]types.BasePbmProfile, error) {
@@ -284,4 +287,95 @@ func (c *Client) GetProfileNameByID(ctx context.Context, profileID string) (stri
 		}
 	}
 	return "", fmt.Errorf("no pbm profile found with id: %q", profileID)
+}
+
+func (c *Client) QueryAssociatedProfile(ctx context.Context, entity types.PbmServerObjectRef) ([]types.PbmProfileId, error) {
+	req := types.PbmQueryAssociatedProfile{
+		This:   c.ServiceContent.ProfileManager,
+		Entity: entity,
+	}
+
+	res, err := methods.PbmQueryAssociatedProfile(ctx, c, &req)
+	if err != nil {
+		return nil, err
+	}
+
+	return res.Returnval, nil
+}
+
+func (c *Client) QueryAssociatedProfiles(ctx context.Context, entities []types.PbmServerObjectRef) ([]types.PbmQueryProfileResult, error) {
+	req := types.PbmQueryAssociatedProfiles{
+		This:     c.ServiceContent.ProfileManager,
+		Entities: entities,
+	}
+
+	res, err := methods.PbmQueryAssociatedProfiles(ctx, c, &req)
+	if err != nil {
+		return nil, err
+	}
+
+	return res.Returnval, nil
+}
+
+func (c *Client) QueryIOFiltersFromProfileId(
+	ctx context.Context, profileID string) ([]types.PbmProfileToIofilterMap, error) {
+
+	req := types.PbmQueryIOFiltersFromProfileId{
+		This:       c.ServiceContent.ProfileManager,
+		ProfileIds: []types.PbmProfileId{{UniqueId: profileID}},
+	}
+	res, err := methods.PbmQueryIOFiltersFromProfileId(ctx, c, &req)
+	if err != nil {
+		return nil, err
+	}
+	return res.Returnval, nil
+}
+
+func (c *Client) SupportsEncryption(
+	ctx context.Context, profileID string) (bool, error) {
+
+	list, err := c.QueryIOFiltersFromProfileId(ctx, profileID)
+	if err != nil {
+		return false, err
+	}
+	for i := range list {
+		for j := range list[i].Iofilters {
+			f := list[i].Iofilters[j]
+			if f.FilterType == string(types.PbmIofilterInfoFilterTypeENCRYPTION) {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
+}
+func (c *Client) ResolveK8sCompliantNames(ctx context.Context) error {
+	req := types.PbmResolveK8sCompliantNames{
+		This: c.ServiceContent.ProfileManager,
+	}
+
+	_, err := methods.PbmResolveK8sCompliantNames(ctx, c, &req)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (c *Client) UpdateK8sCompliantNames(ctx context.Context, profileID string,
+	k8sCompliantName string, otherK8sCompliantNames []string) error {
+	req := types.PbmUpdateK8sCompliantNames{
+		This: c.ServiceContent.ProfileManager,
+		K8sCompliantNameSpec: types.PbmProfileK8sCompliantNameSpec{
+			ProfileId:              profileID,
+			K8sCompliantName:       k8sCompliantName,
+			OtherK8sCompliantNames: otherK8sCompliantNames,
+		},
+	}
+
+	_, err := methods.PbmUpdateK8sCompliantNames(ctx, c, &req)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }

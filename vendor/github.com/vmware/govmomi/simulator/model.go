@@ -1,18 +1,6 @@
-/*
-Copyright (c) 2017 VMware, Inc. All Rights Reserved.
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-*/
+// © Broadcom. All Rights Reserved.
+// The term "Broadcom" refers to Broadcom Inc. and/or its subsidiaries.
+// SPDX-License-Identifier: Apache-2.0
 
 package simulator
 
@@ -20,7 +8,6 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
-	"io/ioutil"
 	"log"
 	"math/rand"
 	"os"
@@ -75,65 +62,71 @@ type Model struct {
 
 	// Datacenter specifies the number of Datacenter entities to create
 	// Name prefix: DC, vcsim flag: -dc
-	Datacenter int
+	Datacenter int `json:"datacenter"`
 
 	// Portgroup specifies the number of DistributedVirtualPortgroup entities to create per Datacenter
 	// Name prefix: DVPG, vcsim flag: -pg
-	Portgroup int
+	Portgroup int `json:"portgroup"`
 
 	// PortgroupNSX specifies the number NSX backed DistributedVirtualPortgroup entities to create per Datacenter
 	// Name prefix: NSXPG, vcsim flag: -nsx-pg
-	PortgroupNSX int
+	PortgroupNSX int `json:"portgroupNSX"`
 
 	// OpaqueNetwork specifies the number of OpaqueNetwork entities to create per Datacenter,
 	// with Summary.OpaqueNetworkType set to nsx.LogicalSwitch and Summary.OpaqueNetworkId to a random uuid.
 	// Name prefix: NSX, vcsim flag: -nsx
-	OpaqueNetwork int
+	OpaqueNetwork int `json:"opaqueNetwork"`
 
 	// Host specifies the number of standalone HostSystems entities to create per Datacenter
 	// Name prefix: H, vcsim flag: -standalone-host
-	Host int `json:",omitempty"`
+	Host int `json:"host,omitempty"`
 
 	// Cluster specifies the number of ClusterComputeResource entities to create per Datacenter
 	// Name prefix: C, vcsim flag: -cluster
-	Cluster int
+	Cluster int `json:"cluster"`
 
 	// ClusterHost specifies the number of HostSystems entities to create within a Cluster
 	// Name prefix: H, vcsim flag: -host
-	ClusterHost int `json:",omitempty"`
+	ClusterHost int `json:"clusterHost,omitempty"`
 
 	// Pool specifies the number of ResourcePool entities to create per Cluster
 	// Note that every cluster has a root ResourcePool named "Resources", as real vCenter does.
 	// For example: /DC0/host/DC0_C0/Resources
 	// The root ResourcePool is named "RP0" within other object names.
 	// When Model.Pool is set to 1 or higher, this creates child ResourcePools under the root pool.
+	// Note that this flag is not effective on standalone hosts.
 	// For example: /DC0/host/DC0_C0/Resources/DC0_C0_RP1
 	// Name prefix: RP, vcsim flag: -pool
-	Pool int
+	Pool int `json:"pool"`
 
 	// Datastore specifies the number of Datastore entities to create
 	// Each Datastore will have temporary local file storage and will be mounted
 	// on every HostSystem created by the ModelConfig
 	// Name prefix: LocalDS, vcsim flag: -ds
-	Datastore int
+	Datastore int `json:"datastore"`
 
-	// Machine specifies the number of VirtualMachine entities to create per ResourcePool
+	// Machine specifies the number of VirtualMachine entities to create per
+	// ResourcePool. If the pool flag is specified, the specified number of virtual
+	// machines will be deployed to each child pool and prefixed with the child
+	// resource pool name. Otherwise they are deployed into the root resource pool,
+	// prefixed with RP0. On standalone hosts, machines are always deployed into the
+	// root resource pool without any prefix.
 	// Name prefix: VM, vcsim flag: -vm
-	Machine int
+	Machine int `json:"machine"`
 
 	// Folder specifies the number of Datacenter to place within a Folder.
 	// This includes a folder for the Datacenter itself and its host, vm, network and datastore folders.
 	// All resources for the Datacenter are placed within these folders, rather than the top-level folders.
 	// Name prefix: F, vcsim flag: -folder
-	Folder int
+	Folder int `json:"folder"`
 
 	// App specifies the number of VirtualApp to create per Cluster
 	// Name prefix: APP, vcsim flag: -app
-	App int
+	App int `json:"app"`
 
 	// Pod specifies the number of StoragePod to create per Cluster
 	// Name prefix: POD, vcsim flag: -pod
-	Pod int
+	Pod int `json:"pod"`
 
 	// Delay configurations
 	DelayConfig DelayConfig `json:"-"`
@@ -141,7 +134,7 @@ type Model struct {
 	// total number of inventory objects, set by Count()
 	total int
 
-	dirs []string
+	dir string
 }
 
 // ESX is the default Model for a standalone ESX instance
@@ -181,11 +174,16 @@ func VPX() *Model {
 	}
 }
 
+// Map returns the Model.Service.Context.Map
+func (m *Model) Map() *Registry {
+	return m.Service.Context.Map
+}
+
 // Count returns a Model with total number of each existing type
 func (m *Model) Count() Model {
 	count := Model{}
 
-	for ref, obj := range Map.objects {
+	for ref, obj := range m.Map().objects {
 		if _, ok := obj.(mo.Entity); !ok {
 			continue
 		}
@@ -227,46 +225,56 @@ func (*Model) fmtName(prefix string, num int) string {
 
 // kinds maps managed object types to their vcsim wrapper types
 var kinds = map[string]reflect.Type{
-	"AuthorizationManager":            reflect.TypeOf((*AuthorizationManager)(nil)).Elem(),
-	"ClusterComputeResource":          reflect.TypeOf((*ClusterComputeResource)(nil)).Elem(),
-	"CustomFieldsManager":             reflect.TypeOf((*CustomFieldsManager)(nil)).Elem(),
-	"CustomizationSpecManager":        reflect.TypeOf((*CustomizationSpecManager)(nil)).Elem(),
-	"Datacenter":                      reflect.TypeOf((*Datacenter)(nil)).Elem(),
-	"Datastore":                       reflect.TypeOf((*Datastore)(nil)).Elem(),
-	"DistributedVirtualPortgroup":     reflect.TypeOf((*DistributedVirtualPortgroup)(nil)).Elem(),
-	"DistributedVirtualSwitch":        reflect.TypeOf((*DistributedVirtualSwitch)(nil)).Elem(),
-	"DistributedVirtualSwitchManager": reflect.TypeOf((*DistributedVirtualSwitchManager)(nil)).Elem(),
-	"EnvironmentBrowser":              reflect.TypeOf((*EnvironmentBrowser)(nil)).Elem(),
-	"EventManager":                    reflect.TypeOf((*EventManager)(nil)).Elem(),
-	"FileManager":                     reflect.TypeOf((*FileManager)(nil)).Elem(),
-	"Folder":                          reflect.TypeOf((*Folder)(nil)).Elem(),
-	"GuestOperationsManager":          reflect.TypeOf((*GuestOperationsManager)(nil)).Elem(),
-	"HostDatastoreBrowser":            reflect.TypeOf((*HostDatastoreBrowser)(nil)).Elem(),
-	"HostLocalAccountManager":         reflect.TypeOf((*HostLocalAccountManager)(nil)).Elem(),
-	"HostNetworkSystem":               reflect.TypeOf((*HostNetworkSystem)(nil)).Elem(),
-	"HostSystem":                      reflect.TypeOf((*HostSystem)(nil)).Elem(),
-	"IpPoolManager":                   reflect.TypeOf((*IpPoolManager)(nil)).Elem(),
-	"LicenseManager":                  reflect.TypeOf((*LicenseManager)(nil)).Elem(),
-	"OptionManager":                   reflect.TypeOf((*OptionManager)(nil)).Elem(),
-	"OvfManager":                      reflect.TypeOf((*OvfManager)(nil)).Elem(),
-	"PerformanceManager":              reflect.TypeOf((*PerformanceManager)(nil)).Elem(),
-	"PropertyCollector":               reflect.TypeOf((*PropertyCollector)(nil)).Elem(),
-	"ResourcePool":                    reflect.TypeOf((*ResourcePool)(nil)).Elem(),
-	"SearchIndex":                     reflect.TypeOf((*SearchIndex)(nil)).Elem(),
-	"SessionManager":                  reflect.TypeOf((*SessionManager)(nil)).Elem(),
-	"StoragePod":                      reflect.TypeOf((*StoragePod)(nil)).Elem(),
-	"StorageResourceManager":          reflect.TypeOf((*StorageResourceManager)(nil)).Elem(),
-	"TaskManager":                     reflect.TypeOf((*TaskManager)(nil)).Elem(),
-	"UserDirectory":                   reflect.TypeOf((*UserDirectory)(nil)).Elem(),
-	"VcenterVStorageObjectManager":    reflect.TypeOf((*VcenterVStorageObjectManager)(nil)).Elem(),
-	"ViewManager":                     reflect.TypeOf((*ViewManager)(nil)).Elem(),
-	"VirtualApp":                      reflect.TypeOf((*VirtualApp)(nil)).Elem(),
-	"VirtualDiskManager":              reflect.TypeOf((*VirtualDiskManager)(nil)).Elem(),
-	"VirtualMachine":                  reflect.TypeOf((*VirtualMachine)(nil)).Elem(),
-	"VmwareDistributedVirtualSwitch":  reflect.TypeOf((*DistributedVirtualSwitch)(nil)).Elem(),
+	"Alarm":                              reflect.TypeOf((*Alarm)(nil)).Elem(),
+	"AlarmManager":                       reflect.TypeOf((*AlarmManager)(nil)).Elem(),
+	"AuthorizationManager":               reflect.TypeOf((*AuthorizationManager)(nil)).Elem(),
+	"ClusterComputeResource":             reflect.TypeOf((*ClusterComputeResource)(nil)).Elem(),
+	"CustomFieldsManager":                reflect.TypeOf((*CustomFieldsManager)(nil)).Elem(),
+	"CustomizationSpecManager":           reflect.TypeOf((*CustomizationSpecManager)(nil)).Elem(),
+	"CryptoManagerKmip":                  reflect.TypeOf((*CryptoManagerKmip)(nil)).Elem(),
+	"Datacenter":                         reflect.TypeOf((*Datacenter)(nil)).Elem(),
+	"Datastore":                          reflect.TypeOf((*Datastore)(nil)).Elem(),
+	"DatastoreNamespaceManager":          reflect.TypeOf((*DatastoreNamespaceManager)(nil)).Elem(),
+	"DistributedVirtualPortgroup":        reflect.TypeOf((*DistributedVirtualPortgroup)(nil)).Elem(),
+	"DistributedVirtualSwitch":           reflect.TypeOf((*DistributedVirtualSwitch)(nil)).Elem(),
+	"DistributedVirtualSwitchManager":    reflect.TypeOf((*DistributedVirtualSwitchManager)(nil)).Elem(),
+	"EnvironmentBrowser":                 reflect.TypeOf((*EnvironmentBrowser)(nil)).Elem(),
+	"EventManager":                       reflect.TypeOf((*EventManager)(nil)).Elem(),
+	"ExtensionManager":                   reflect.TypeOf((*ExtensionManager)(nil)).Elem(),
+	"FileManager":                        reflect.TypeOf((*FileManager)(nil)).Elem(),
+	"Folder":                             reflect.TypeOf((*Folder)(nil)).Elem(),
+	"GuestOperationsManager":             reflect.TypeOf((*GuestOperationsManager)(nil)).Elem(),
+	"HostDatastoreBrowser":               reflect.TypeOf((*HostDatastoreBrowser)(nil)).Elem(),
+	"HostLocalAccountManager":            reflect.TypeOf((*HostLocalAccountManager)(nil)).Elem(),
+	"HostNetworkSystem":                  reflect.TypeOf((*HostNetworkSystem)(nil)).Elem(),
+	"HostCertificateManager":             reflect.TypeOf((*HostCertificateManager)(nil)).Elem(),
+	"HostSystem":                         reflect.TypeOf((*HostSystem)(nil)).Elem(),
+	"IpPoolManager":                      reflect.TypeOf((*IpPoolManager)(nil)).Elem(),
+	"LicenseManager":                     reflect.TypeOf((*LicenseManager)(nil)).Elem(),
+	"LicenseAssignmentManager":           reflect.TypeOf((*LicenseAssignmentManager)(nil)).Elem(),
+	"OptionManager":                      reflect.TypeOf((*OptionManager)(nil)).Elem(),
+	"OvfManager":                         reflect.TypeOf((*OvfManager)(nil)).Elem(),
+	"PerformanceManager":                 reflect.TypeOf((*PerformanceManager)(nil)).Elem(),
+	"PropertyCollector":                  reflect.TypeOf((*PropertyCollector)(nil)).Elem(),
+	"ResourcePool":                       reflect.TypeOf((*ResourcePool)(nil)).Elem(),
+	"SearchIndex":                        reflect.TypeOf((*SearchIndex)(nil)).Elem(),
+	"SessionManager":                     reflect.TypeOf((*SessionManager)(nil)).Elem(),
+	"StoragePod":                         reflect.TypeOf((*StoragePod)(nil)).Elem(),
+	"StorageResourceManager":             reflect.TypeOf((*StorageResourceManager)(nil)).Elem(),
+	"TaskManager":                        reflect.TypeOf((*TaskManager)(nil)).Elem(),
+	"TenantTenantManager":                reflect.TypeOf((*TenantManager)(nil)).Elem(),
+	"UserDirectory":                      reflect.TypeOf((*UserDirectory)(nil)).Elem(),
+	"VcenterVStorageObjectManager":       reflect.TypeOf((*VcenterVStorageObjectManager)(nil)).Elem(),
+	"ViewManager":                        reflect.TypeOf((*ViewManager)(nil)).Elem(),
+	"VirtualApp":                         reflect.TypeOf((*VirtualApp)(nil)).Elem(),
+	"VirtualDiskManager":                 reflect.TypeOf((*VirtualDiskManager)(nil)).Elem(),
+	"VirtualMachine":                     reflect.TypeOf((*VirtualMachine)(nil)).Elem(),
+	"VirtualMachineCompatibilityChecker": reflect.TypeOf((*VmCompatibilityChecker)(nil)).Elem(),
+	"VirtualMachineProvisioningChecker":  reflect.TypeOf((*VmProvisioningChecker)(nil)).Elem(),
+	"VmwareDistributedVirtualSwitch":     reflect.TypeOf((*DistributedVirtualSwitch)(nil)).Elem(),
 }
 
-func loadObject(content types.ObjectContent) (mo.Reference, error) {
+func loadObject(ctx *Context, content types.ObjectContent) (mo.Reference, error) {
 	var obj mo.Reference
 	id := content.Obj
 
@@ -285,7 +293,7 @@ func loadObject(content types.ObjectContent) (mo.Reference, error) {
 	} else {
 		if len(content.PropSet) == 0 {
 			// via NewServiceInstance()
-			Map.setReference(obj, id)
+			ctx.Map.setReference(obj, id)
 		} else {
 			// via Model.Load()
 			dst := getManagedObject(obj).Addr().Interface().(mo.Reference)
@@ -296,7 +304,7 @@ func loadObject(content types.ObjectContent) (mo.Reference, error) {
 		}
 
 		if x, ok := obj.(interface{ init(*Registry) }); ok {
-			x.init(Map)
+			x.init(ctx.Map)
 		}
 	}
 
@@ -307,18 +315,18 @@ func loadObject(content types.ObjectContent) (mo.Reference, error) {
 // example: Load's dir only contains a single OpaqueNetwork, we need to create a Datacenter and
 // place the OpaqueNetwork in the Datacenter's network folder.
 func (m *Model) resolveReferences(ctx *Context) error {
-	dc, ok := Map.Any("Datacenter").(*Datacenter)
+	dc, ok := ctx.Map.Any("Datacenter").(*Datacenter)
 	if !ok {
 		// Need to have at least 1 Datacenter
-		root := Map.Get(Map.content().RootFolder).(*Folder)
+		root := ctx.Map.Get(ctx.Map.content().RootFolder).(*Folder)
 		ref := root.CreateDatacenter(ctx, &types.CreateDatacenter{
 			This: root.Self,
 			Name: "DC0",
 		}).(*methods.CreateDatacenterBody).Res.Returnval
-		dc = Map.Get(ref).(*Datacenter)
+		dc = ctx.Map.Get(ref).(*Datacenter)
 	}
 
-	for ref, val := range Map.objects {
+	for ref, val := range ctx.Map.objects {
 		me, ok := val.(mo.Entity)
 		if !ok {
 			continue
@@ -327,11 +335,11 @@ func (m *Model) resolveReferences(ctx *Context) error {
 		if e.Parent == nil || ref.Type == "Folder" {
 			continue
 		}
-		if Map.Get(*e.Parent) == nil {
+		if ctx.Map.Get(*e.Parent) == nil {
 			// object was loaded without its parent, attempt to foster with another parent
 			switch e.Parent.Type {
 			case "Folder":
-				folder := dc.folder(me)
+				folder := dc.folder(ctx, me)
 				e.Parent = &folder.Self
 				log.Printf("%s adopted %s", e.Parent, ref)
 				folderPutChild(ctx, folder, me)
@@ -345,7 +353,7 @@ func (m *Model) resolveReferences(ctx *Context) error {
 	return nil
 }
 
-func (m *Model) decode(path string, data interface{}) error {
+func (m *Model) decode(path string, data any) error {
 	f, err := os.Open(path)
 	if err != nil {
 		return err
@@ -361,7 +369,7 @@ func (m *Model) decode(path string, data interface{}) error {
 func (m *Model) loadMethod(obj mo.Reference, dir string) error {
 	dir = filepath.Join(dir, obj.Reference().Encode())
 
-	info, err := ioutil.ReadDir(dir)
+	info, err := os.ReadDir(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil
@@ -385,12 +393,10 @@ func (m *Model) loadMethod(obj mo.Reference, dir string) error {
 	return nil
 }
 
-// When simulator code needs to call other simulator code, it typically passes whatever
-// context is associated with the request it's servicing.
-// Model code isn't servicing a request, but still needs a context, so we spoof
-// one for the purposes of calling simulator code.
-// Test code also tends to do this.
-func SpoofContext() *Context {
+// NewContext initializes a Context with a NewRegistry
+func NewContext() *Context {
+	r := NewRegistry()
+
 	return &Context{
 		Context: context.Background(),
 		Session: &Session{
@@ -398,14 +404,15 @@ func SpoofContext() *Context {
 				Key: uuid.New().String(),
 			},
 			Registry: NewRegistry(),
+			Map:      r,
 		},
-		Map: Map,
+		Map: r,
 	}
 }
 
 // Load Model from the given directory, as created by the 'govc object.save' command.
 func (m *Model) Load(dir string) error {
-	ctx := SpoofContext()
+	ctx := NewContext()
 	var s *ServiceInstance
 
 	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
@@ -431,16 +438,15 @@ func (m *Model) Load(dir string) error {
 		if content.Obj == vim25.ServiceInstance {
 			s = new(ServiceInstance)
 			s.Self = content.Obj
-			Map = NewRegistry()
-			Map.Put(s)
+			ctx.Map.Put(s)
 			return mo.LoadObjectContent([]types.ObjectContent{content}, &s.ServiceInstance)
 		}
 
 		if s == nil {
-			s = NewServiceInstance(ctx, m.ServiceContent, m.RootFolder)
+			ctx, s = NewServiceInstance(ctx, m.ServiceContent, m.RootFolder)
 		}
 
-		obj, err := loadObject(content)
+		obj, err := loadObject(ctx, content)
 		if err != nil {
 			return err
 		}
@@ -451,24 +457,34 @@ func (m *Model) Load(dir string) error {
 			}
 		}
 
-		return m.loadMethod(Map.Put(obj), dir)
+		return m.loadMethod(ctx.Map.Put(obj), dir)
 	})
 
 	if err != nil {
 		return err
 	}
 
-	m.Service = New(s)
+	m.Service = New(ctx, s)
+
+	if err = ctx.Map.AlignCounter(); err != nil {
+		return err
+	}
 
 	return m.resolveReferences(ctx)
 }
 
 // Create populates the Model with the given ModelConfig
 func (m *Model) Create() error {
-	ctx := SpoofContext()
+	ctx := NewContext()
 	m.Service = New(NewServiceInstance(ctx, m.ServiceContent, m.RootFolder))
+	if err := m.createRootTempDir(ctx.Map.OptionManager()); err != nil {
+		return err
+	}
+	return m.CreateInfrastructure(ctx)
+}
 
-	client := m.Service.client
+func (m *Model) CreateInfrastructure(ctx *Context) error {
+	client := m.Service.client()
 	root := object.NewRootFolder(client)
 
 	// After all hosts are created, this var is used to mount the host datastores.
@@ -482,7 +498,7 @@ func (m *Model) Create() error {
 	// 1 NIC per VM, backed by a DVPG if Model.Portgroup > 0
 	vmnet := esx.EthernetCard.Backing
 
-	// addHost adds a cluster host or a stanalone host.
+	// addHost adds a cluster host or a standalone host.
 	addHost := func(name string, f func(types.HostConnectSpec) (*object.Task, error)) (*object.HostSystem, error) {
 		spec := types.HostConnectSpec{
 			HostName: name,
@@ -546,6 +562,7 @@ func (m *Model) Create() error {
 				disk := devices.CreateDisk(scsi.(types.BaseVirtualController), ds,
 					config.Files.VmPathName+" "+path.Join(name, "disk1.vmdk"))
 				disk.CapacityInKB = int64(units.GB*10) / units.KB
+				disk.StorageIOAllocation = &types.StorageIOAllocationInfo{Limit: types.NewInt64(-1)}
 
 				devices = append(devices, scsi, cdrom, disk, &nic)
 
@@ -644,8 +661,9 @@ func (m *Model) Create() error {
 		for npg := 0; npg < m.Portgroup; npg++ {
 			name := m.fmtName(dcName+"_DVPG", npg)
 			spec := types.DVPortgroupConfigSpec{
-				Name: name,
-				Type: string(types.DistributedVirtualPortgroupPortgroupTypeEarlyBinding),
+				Name:     name,
+				Type:     string(types.DistributedVirtualPortgroupPortgroupTypeEarlyBinding),
+				NumPorts: 1,
 			}
 
 			task, err := dvs.AddPortgroup(ctx, []types.DVPortgroupConfigSpec{spec})
@@ -659,19 +677,26 @@ func (m *Model) Create() error {
 			// Use the 1st DVPG for the VMs eth0 backing
 			if npg == 0 {
 				// AddPortgroup_Task does not return the moid, so we look it up by name
-				net := Map.Get(folders.NetworkFolder.Reference()).(*Folder)
-				pg := Map.FindByName(name, net.ChildEntity)
+				net := ctx.Map.Get(folders.NetworkFolder.Reference()).(*Folder)
+				pg := ctx.Map.FindByName(name, net.ChildEntity)
 
 				vmnet, _ = object.NewDistributedVirtualPortgroup(client, pg.Reference()).EthernetCardBackingInfo(ctx)
 			}
 		}
 
-		for npg := 0; npg < m.PortgroupNSX; npg++ {
+		opaqueNetworkIDs := make([]string, m.OpaqueNetwork)
+		for npg := 0; npg < m.PortgroupNSX+m.OpaqueNetwork; npg++ {
 			name := m.fmtName(dcName+"_NSXPG", npg)
 			spec := types.DVPortgroupConfigSpec{
 				Name:        name,
 				Type:        string(types.DistributedVirtualPortgroupPortgroupTypeEarlyBinding),
 				BackingType: string(types.DistributedVirtualPortgroupBackingTypeNsx),
+			}
+
+			if npg >= m.PortgroupNSX {
+				// Save the LogicalSwitchUuid so we can create the matching opaque network later.
+				spec.LogicalSwitchUuid = uuid.New().String()
+				opaqueNetworkIDs[npg-m.PortgroupNSX] = spec.LogicalSwitchUuid
 			}
 
 			task, err := dvs.AddPortgroup(ctx, []types.DVPortgroupConfigSpec{spec})
@@ -683,15 +708,18 @@ func (m *Model) Create() error {
 			}
 		}
 
-		// Must use simulator methods directly for OpaqueNetwork
-		networkFolder := Map.Get(folders.NetworkFolder.Reference()).(*Folder)
+		if len(opaqueNetworkIDs) > 0 {
+			// Must use simulator methods directly for OpaqueNetwork
+			networkFolder := ctx.Map.Get(folders.NetworkFolder.Reference()).(*Folder)
 
-		for i := 0; i < m.OpaqueNetwork; i++ {
-			var summary types.OpaqueNetworkSummary
-			summary.Name = m.fmtName(dcName+"_NSX", i)
-			err := networkFolder.AddOpaqueNetwork(ctx, summary)
-			if err != nil {
-				return err
+			for i, networkID := range opaqueNetworkIDs {
+				var summary types.OpaqueNetworkSummary
+				summary.Name = m.fmtName(dcName+"_NSX", i)
+				summary.OpaqueNetworkId = networkID
+				err := networkFolder.AddOpaqueNetwork(ctx, summary)
+				if err != nil {
+					return err
+				}
 			}
 		}
 
@@ -727,19 +755,24 @@ func (m *Model) Create() error {
 				}
 			}
 
-			pool, err := cluster.ResourcePool(ctx)
+			rootRP, err := cluster.ResourcePool(ctx)
 			if err != nil {
 				return err
 			}
 
 			prefix := clusterName + "_RP"
 
-			addMachine(prefix+"0", nil, pool, folders)
+			// put VMs in cluster RP if no child RP(s) configured
+			if m.Pool == 0 {
+				addMachine(prefix+"0", nil, rootRP, folders)
+			}
 
-			for npool := 1; npool <= m.Pool; npool++ {
+			// create child RP(s) with VMs
+			for childRP := 1; childRP <= m.Pool; childRP++ {
 				spec := types.DefaultResourceConfigSpec()
 
-				_, err = pool.Create(ctx, m.fmtName(prefix, npool), spec)
+				p, err := rootRP.Create(ctx, m.fmtName(prefix, childRP), spec)
+				addMachine(m.fmtName(prefix, childRP), nil, p, folders)
 				if err != nil {
 					return err
 				}
@@ -752,7 +785,7 @@ func (m *Model) Create() error {
 				vspec := NewVAppConfigSpec()
 				name := m.fmtName(prefix, napp)
 
-				vapp, err := pool.CreateVApp(ctx, name, rspec, vspec, nil)
+				vapp, err := rootRP.CreateVApp(ctx, name, rspec, vspec, nil)
 				if err != nil {
 					return err
 				}
@@ -802,12 +835,25 @@ func (m *Model) Create() error {
 	return nil
 }
 
-func (m *Model) createTempDir(dc string, name string) (string, error) {
-	dir, err := ioutil.TempDir("", fmt.Sprintf("govcsim-%s-%s-", dc, name))
-	if err == nil {
-		m.dirs = append(m.dirs, dir)
+func (m *Model) createRootTempDir(opt *OptionManager) error {
+	var err error
+
+	m.dir, err = os.MkdirTemp("", "govcsim-")
+	if err != nil {
+		return err
 	}
-	return dir, err
+
+	opt.Setting = append(opt.Setting, &types.OptionValue{
+		Key:   "vcsim.home",
+		Value: m.dir,
+	})
+
+	return nil
+}
+
+func (m *Model) createTempDir(name ...string) (string, error) {
+	p := path.Join(m.dir, strings.Join(name, "-"))
+	return p, os.Mkdir(p, 0700)
 }
 
 func (m *Model) createLocalDatastore(dc string, name string, hosts []*object.HostSystem) error {
@@ -834,24 +880,21 @@ func (m *Model) createLocalDatastore(dc string, name string, hosts []*object.Hos
 
 // Remove cleans up items created by the Model, such as local datastore directories
 func (m *Model) Remove() {
+	ctx := m.Service.Context
 	// Remove associated vm containers, if any
-	Map.m.Lock()
-	for _, obj := range Map.objects {
+	ctx.Map.m.Lock()
+	for _, obj := range ctx.Map.objects {
 		if vm, ok := obj.(*VirtualMachine); ok {
-			vm.run.remove(vm)
+			vm.svm.remove(ctx)
 		}
 	}
-	Map.m.Unlock()
+	ctx.Map.m.Unlock()
 
-	for _, dir := range m.dirs {
-		_ = os.RemoveAll(dir)
-	}
+	_ = os.RemoveAll(m.dir)
 }
 
 // Run calls f with a Client connected to a simulator server instance, which is stopped after f returns.
 func (m *Model) Run(f func(context.Context, *vim25.Client) error) error {
-	ctx := context.Background()
-
 	defer m.Remove()
 
 	if m.Service == nil {
@@ -859,14 +902,16 @@ func (m *Model) Run(f func(context.Context, *vim25.Client) error) error {
 		if err != nil {
 			return err
 		}
+		// Only force TLS if the provided model didn't have any Service.
+		m.Service.TLS = new(tls.Config)
 	}
 
-	m.Service.TLS = new(tls.Config)
 	m.Service.RegisterEndpoints = true
 
 	s := m.Service.NewServer()
 	defer s.Close()
 
+	ctx := m.Service.Context
 	c, err := govmomi.NewClient(ctx, s.URL, true)
 	if err != nil {
 		return err

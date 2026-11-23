@@ -1,5 +1,6 @@
-// Copyright (c) 2020 VMware, Inc. All Rights Reserved.
-// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2020-2024 Broadcom. All Rights Reserved.
+// Broadcom Confidential. The term "Broadcom" refers to Broadcom Inc.
+// and/or its subsidiaries.
 
 package v1alpha1
 
@@ -13,6 +14,31 @@ import (
 // The value does not need to be truthy; the presence of the key is what
 // disables net-operator's IPAM for that GatewayClass.
 const IPAMDisabledAnnotationKeyName = "netoperator.vmware.com/ipam-disabled"
+
+type IPPoolUsageLabelValue string
+
+const (
+	// IPPoolUsageLabelKeyName is the name of a label used to indicate how IP pools
+	// should be used. To create an affinity, you must create a NetworkInterface with a
+	// label matching the intended use. For example, if you create a NetworkInterface with
+	// a label matching netoperator.vmware.com/ipam-usage=vip, then net operator
+	// will only provision from IPPools matching that label falling back to the general
+	// pool if needed unless IPPoolUsageAnnotationStrictKeyName is set.
+	IPPoolUsageLabelKeyName = "netoperator.vmware.com/ipam-usage"
+
+	// IPPoolUsageAnnotationStrictKeyName indicates that an interface should not attempt
+	// to retrieve IPPools meant for general purpose consumption. For example, if "vip" is set,
+	// only IPPools matching the "vip" label will be used and "general" will not be used as a pool.
+	IPPoolUsageAnnotationStrictKeyName = "netoperator.vmware.com/ipam-strict-usage"
+
+	// IPPoolUsageLabelGeneralValue indicates an IP pool can be used for any purpose.
+	// If a usage label is omitted from an IPPool, this value is implied.
+	IPPoolUsageLabelGeneralValue IPPoolUsageLabelValue = "general"
+
+	// IPPoolUsageLabelVIPValue indicates an IP pool is reserved for a NetworkInterface
+	// which provisions virtual IP addresses.
+	IPPoolUsageLabelVIPValue IPPoolUsageLabelValue = "vip"
+)
 
 type IPPoolConditionType string
 
@@ -38,7 +64,7 @@ type IPPoolCondition struct {
 	Message string `json:"message,omitempty"`
 }
 
-// IPPoolSpec defines the desired state of IPPool
+// IPPoolSpec defines the desired state of IPPool.
 type IPPoolSpec struct {
 	// StartingAddress represents the starting IP address of the pool.
 	StartingAddress string `json:"startingAddress"`
@@ -48,6 +74,8 @@ type IPPoolSpec struct {
 
 // IPPoolStatus defines the current state of IPPool.
 type IPPoolStatus struct {
+	// Allocated represents the number of IP addresses currently allocated to services.
+	Allocated int64 `json:"allocated,omitempty"`
 	// Conditions is an array of current observed IPPool conditions.
 	Conditions []IPPoolCondition `json:"conditions,omitempty"`
 }
@@ -67,6 +95,13 @@ type IPPool struct {
 
 	Spec   IPPoolSpec   `json:"spec,omitempty"`
 	Status IPPoolStatus `json:"status,omitempty"`
+}
+
+type IPPoolReference struct {
+	// Name of the IPPool resource being referenced.
+	Name string `json:"name"`
+	// API version of the referent.
+	APIVersion string `json:"apiVersion,omitempty"`
 }
 
 // +kubebuilder:object:root=true

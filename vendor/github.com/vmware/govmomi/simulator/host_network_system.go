@@ -1,18 +1,6 @@
-/*
-Copyright (c) 2017 VMware, Inc. All Rights Reserved.
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-*/
+// © Broadcom. All Rights Reserved.
+// The term "Broadcom" refers to Broadcom Inc. and/or its subsidiaries.
+// SPDX-License-Identifier: Apache-2.0
 
 package simulator
 
@@ -27,6 +15,8 @@ type HostNetworkSystem struct {
 	mo.HostNetworkSystem
 
 	Host *mo.HostSystem
+
+	types.QueryNetworkHintResponse
 }
 
 func NewHostNetworkSystem(host *mo.HostSystem) *HostNetworkSystem {
@@ -56,9 +46,9 @@ func (s *HostNetworkSystem) init(r *Registry) {
 	}
 }
 
-func (s *HostNetworkSystem) folder() *Folder {
-	f := Map.getEntityDatacenter(s.Host).NetworkFolder
-	return Map.Get(f).(*Folder)
+func (s *HostNetworkSystem) folder(ctx *Context) *Folder {
+	f := ctx.Map.getEntityDatacenter(s.Host).NetworkFolder
+	return ctx.Map.Get(f).(*Folder)
 }
 
 func (s *HostNetworkSystem) AddVirtualSwitch(c *types.AddVirtualSwitch) soap.HasFault {
@@ -124,9 +114,9 @@ func (s *HostNetworkSystem) AddPortGroup(ctx *Context, c *types.AddPortGroup) so
 	network.Name = c.Portgrp.Name
 	network.Entity().Name = network.Name
 
-	folder := s.folder()
+	folder := s.folder(ctx)
 
-	if obj := Map.FindByName(c.Portgrp.Name, folder.ChildEntity); obj != nil {
+	if obj := ctx.Map.FindByName(c.Portgrp.Name, folder.ChildEntity); obj != nil {
 		r.Fault_ = Fault("", &types.DuplicateName{
 			Name:   c.Portgrp.Name,
 			Object: obj.Reference(),
@@ -169,8 +159,8 @@ func (s *HostNetworkSystem) RemovePortGroup(ctx *Context, c *types.RemovePortGro
 		return r
 	}
 
-	folder := s.folder()
-	e := Map.FindByName(c.PgName, folder.ChildEntity)
+	folder := s.folder(ctx)
+	e := ctx.Map.FindByName(c.PgName, folder.ChildEntity)
 	folderRemoveChild(ctx, &folder.Folder, e.Reference())
 
 	for i, pg := range s.NetworkInfo.Portgroup {
@@ -196,17 +186,15 @@ func (s *HostNetworkSystem) UpdateNetworkConfig(req *types.UpdateNetworkConfig) 
 }
 
 func (s *HostNetworkSystem) QueryNetworkHint(req *types.QueryNetworkHint) soap.HasFault {
-	var info []types.PhysicalNicHintInfo
-
-	for _, nic := range s.Host.Config.Network.Pnic {
-		info = append(info, types.PhysicalNicHintInfo{
-			Device: nic.Device,
-		})
+	if s.Host.Runtime.ConnectionState != types.HostSystemConnectionStateConnected {
+		return &methods.QueryNetworkHintBody{
+			Fault_: Fault("", &types.HostNotConnected{}),
+		}
 	}
 
 	return &methods.QueryNetworkHintBody{
 		Res: &types.QueryNetworkHintResponse{
-			Returnval: info,
+			Returnval: s.QueryNetworkHintResponse.Returnval,
 		},
 	}
 }

@@ -1,18 +1,6 @@
-/*
-Copyright (c) 2015 VMware, Inc. All Rights Reserved.
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-*/
+// © Broadcom. All Rights Reserved.
+// The term "Broadcom" refers to Broadcom Inc. and/or its subsidiaries.
+// SPDX-License-Identifier: Apache-2.0
 
 package task
 
@@ -38,12 +26,15 @@ func newHistoryCollector(c *vim25.Client, ref types.ManagedObjectReference) *His
 	}
 }
 
-// RecentTasks returns a list of task managed objects that completed recently,
-// that are currently running, or that are queued to run.
-func (h HistoryCollector) RecentTasks(ctx context.Context) ([]types.TaskInfo, error) {
+// LatestPage returns items in the 'viewable latest page' of the task history collector.
+// As new tasks that match the collector's TaskFilterSpec are created,
+// they are added to this page, and the oldest tasks are removed from the collector to keep
+// the size of the page to that allowed by SetCollectorPageSize.
+// The "oldest task" is the one with the oldest creation time. The tasks in the returned page are unordered.
+func (h HistoryCollector) LatestPage(ctx context.Context) ([]types.TaskInfo, error) {
 	var o mo.TaskHistoryCollector
 
-	err := h.Properties(ctx, h.Reference(), []string{"recentTask"}, &o)
+	err := h.Properties(ctx, h.Reference(), []string{"latestPage"}, &o)
 	if err != nil {
 		return nil, err
 	}

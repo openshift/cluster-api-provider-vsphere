@@ -1,18 +1,6 @@
-/*
-Copyright (c) 2018 VMware, Inc. All Rights Reserved.
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-*/
+// © Broadcom. All Rights Reserved.
+// The term "Broadcom" refers to Broadcom Inc. and/or its subsidiaries.
+// SPDX-License-Identifier: Apache-2.0
 
 package simulator
 
@@ -20,7 +8,6 @@ import (
 	"log"
 	"net/url"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -36,6 +23,7 @@ import (
 type VStorageObject struct {
 	types.VStorageObject
 	types.VStorageObjectSnapshotInfo
+	Metadata []types.KeyValue
 }
 
 type VcenterVStorageObjectManager struct {
@@ -53,6 +41,10 @@ func (m *VcenterVStorageObjectManager) object(ds types.ManagedObjectReference, i
 		return objects[id]
 	}
 	return nil
+}
+
+func (m *VcenterVStorageObjectManager) Catalog() map[types.ManagedObjectReference]map[types.ID]*VStorageObject {
+	return m.objects
 }
 
 func (m *VcenterVStorageObjectManager) ListVStorageObject(req *types.ListVStorageObject) soap.HasFault {
@@ -105,7 +97,7 @@ func (m *VcenterVStorageObjectManager) statDatastoreBacking(ctx *Context, ref ty
 
 	for _, obj := range objs {
 		backing := obj.Config.Backing.(*types.BaseConfigInfoDiskFileBackingInfo)
-		file, _ := fm.resolve(&dc.Self, backing.FilePath)
+		file, _ := fm.resolve(ctx, &dc.Self, backing.FilePath)
 		_, res[obj.Config.Id] = os.Stat(file)
 	}
 
@@ -153,10 +145,9 @@ func (m *VcenterVStorageObjectManager) RegisterDisk(ctx *Context, req *types.Reg
 		return invalid()
 	}
 
-	st, err := os.Stat(filepath.Join(ds.Info.GetDatastoreInfo().Url, u.Path))
+	st, err := os.Stat(ds.resolve(ctx, u.Path))
 	if err != nil {
 		return invalid()
-
 	}
 	if st.IsDir() {
 		return invalid()
@@ -183,7 +174,7 @@ func (m *VcenterVStorageObjectManager) RegisterDisk(ctx *Context, req *types.Reg
 		},
 	}
 
-	obj, fault := m.createObject(creq, true)
+	obj, fault := m.createObject(ctx, creq, true)
 	if fault != nil {
 		body.Fault_ = Fault("", fault)
 		return body
@@ -196,17 +187,17 @@ func (m *VcenterVStorageObjectManager) RegisterDisk(ctx *Context, req *types.Reg
 	return body
 }
 
-func (m *VcenterVStorageObjectManager) createObject(req *types.CreateDisk_Task, register bool) (*types.VStorageObject, types.BaseMethodFault) {
+func (m *VcenterVStorageObjectManager) createObject(ctx *Context, req *types.CreateDisk_Task, register bool) (*types.VStorageObject, types.BaseMethodFault) {
 	dir := "fcd"
 	ref := req.Spec.BackingSpec.GetVslmCreateSpecBackingSpec().Datastore
-	ds := Map.Get(ref).(*Datastore)
-	dc := Map.getEntityDatacenter(ds)
+	ds := ctx.Map.Get(ref).(*Datastore)
+	dc := ctx.Map.getEntityDatacenter(ds)
 
 	objects, ok := m.objects[ds.Self]
 	if !ok {
 		objects = make(map[types.ID]*VStorageObject)
 		m.objects[ds.Self] = objects
-		_ = os.Mkdir(filepath.Join(ds.Info.GetDatastoreInfo().Url, dir), 0750)
+		_ = os.MkdirAll(ds.resolve(ctx, dir), 0750)
 	}
 
 	id := uuid.New().String()
@@ -240,9 +231,10 @@ func (m *VcenterVStorageObjectManager) createObject(req *types.CreateDisk_Task, 
 	}
 
 	if !register {
-		err := vdmCreateVirtualDisk(types.VirtualDeviceConfigSpecFileOperationCreate, &types.CreateVirtualDisk_Task{
+		_, err := vdmCreateVirtualDisk(ctx, types.VirtualDeviceConfigSpecFileOperationCreate, &types.CreateVirtualDisk_Task{
 			Datacenter: &dc.Self,
 			Name:       path.String(),
+			Spec:       &types.FileBackedVirtualDiskSpec{CapacityKb: req.Spec.CapacityInMB * 1024},
 		})
 		if err != nil {
 			return nil, err
@@ -270,7 +262,7 @@ func (m *VcenterVStorageObjectManager) createObject(req *types.CreateDisk_Task, 
 
 func (m *VcenterVStorageObjectManager) CreateDiskTask(ctx *Context, req *types.CreateDisk_Task) soap.HasFault {
 	task := CreateTask(m, "createDisk", func(*Task) (types.AnyType, types.BaseMethodFault) {
-		return m.createObject(req, false)
+		return m.createObject(ctx, req, false)
 	})
 
 	return &methods.CreateDisk_TaskBody{
@@ -287,10 +279,14 @@ func (m *VcenterVStorageObjectManager) DeleteVStorageObjectTask(ctx *Context, re
 			return nil, &types.InvalidArgument{}
 		}
 
+		if len(obj.Config.ConsumerId) != 0 {
+			return nil, &types.InvalidState{}
+		}
+
 		backing := obj.Config.Backing.(*types.BaseConfigInfoDiskFileBackingInfo)
-		ds := Map.Get(req.Datastore).(*Datastore)
-		dc := Map.getEntityDatacenter(ds)
-		dm := Map.VirtualDiskManager()
+		ds := ctx.Map.Get(req.Datastore).(*Datastore)
+		dc := ctx.Map.getEntityDatacenter(ds)
+		dm := ctx.Map.VirtualDiskManager()
 		dm.DeleteVirtualDiskTask(ctx, &types.DeleteVirtualDisk_Task{
 			Name:       backing.FilePath,
 			Datacenter: &dc.Self,
@@ -399,15 +395,15 @@ func (m *VcenterVStorageObjectManager) AttachTagToVStorageObject(ctx *Context, r
 	body := new(methods.AttachTagToVStorageObjectBody)
 	ref := m.tagID(req.Id)
 
-	err := ctx.Map.tagManager.AttachTag(ref, types.VslmTagEntry{
-		ParentCategoryName: req.Category,
-		TagName:            req.Tag,
-	})
-
-	if err == nil {
-		body.Res = new(types.AttachTagToVStorageObjectResponse)
-	} else {
+	t, err := ctx.Map.tagManager.GetTagByCategoryAndName(req.Category, req.Tag)
+	if err != nil {
 		body.Fault_ = Fault("", err)
+	} else {
+		if err := ctx.Map.tagManager.AttachTag(ref, t); err != nil {
+			body.Fault_ = Fault("", err)
+		} else {
+			body.Res = new(types.AttachTagToVStorageObjectResponse)
+		}
 	}
 
 	return body
@@ -417,15 +413,15 @@ func (m *VcenterVStorageObjectManager) DetachTagFromVStorageObject(ctx *Context,
 	body := new(methods.DetachTagFromVStorageObjectBody)
 	ref := m.tagID(req.Id)
 
-	err := ctx.Map.tagManager.DetachTag(ref, types.VslmTagEntry{
-		ParentCategoryName: req.Category,
-		TagName:            req.Tag,
-	})
-
-	if err == nil {
-		body.Res = new(types.DetachTagFromVStorageObjectResponse)
-	} else {
+	t, err := ctx.Map.tagManager.GetTagByCategoryAndName(req.Category, req.Tag)
+	if err != nil {
 		body.Fault_ = Fault("", err)
+	} else {
+		if err := ctx.Map.tagManager.DetachTag(ref, t); err != nil {
+			body.Fault_ = Fault("", err)
+		} else {
+			body.Res = new(types.DetachTagFromVStorageObjectResponse)
+		}
 	}
 
 	return body
@@ -434,18 +430,18 @@ func (m *VcenterVStorageObjectManager) DetachTagFromVStorageObject(ctx *Context,
 func (m *VcenterVStorageObjectManager) ListVStorageObjectsAttachedToTag(ctx *Context, req *types.ListVStorageObjectsAttachedToTag) soap.HasFault {
 	body := new(methods.ListVStorageObjectsAttachedToTagBody)
 
-	refs, err := ctx.Map.tagManager.AttachedObjects(types.VslmTagEntry{
-		ParentCategoryName: req.Category,
-		TagName:            req.Tag,
-	})
-
-	if err == nil {
-		body.Res = new(types.ListVStorageObjectsAttachedToTagResponse)
-		for _, ref := range refs {
-			body.Res.Returnval = append(body.Res.Returnval, types.ID{Id: ref.Value})
-		}
-	} else {
+	t, err := ctx.Map.tagManager.GetTagByCategoryAndName(req.Category, req.Tag)
+	if err != nil {
 		body.Fault_ = Fault("", err)
+	} else {
+		if refs, err := ctx.Map.tagManager.AttachedObjects(t); err != nil {
+			body.Fault_ = Fault("", err)
+		} else {
+			body.Res = new(types.ListVStorageObjectsAttachedToTagResponse)
+			for _, ref := range refs {
+				body.Res.Returnval = append(body.Res.Returnval, types.ID{Id: ref.Value})
+			}
+		}
 	}
 
 	return body
@@ -455,15 +451,75 @@ func (m *VcenterVStorageObjectManager) ListTagsAttachedToVStorageObject(ctx *Con
 	body := new(methods.ListTagsAttachedToVStorageObjectBody)
 	ref := m.tagID(req.Id)
 
-	tags, err := ctx.Map.tagManager.AttachedTags(ref)
-
-	if err == nil {
-		body.Res = &types.ListTagsAttachedToVStorageObjectResponse{
-			Returnval: tags,
-		}
-	} else {
+	if tags, err := ctx.Map.tagManager.AttachedTags(ref); err != nil {
 		body.Fault_ = Fault("", err)
+	} else {
+		body.Res = &types.ListTagsAttachedToVStorageObjectResponse{}
+		for _, t := range tags {
+			c, n, err := ctx.Map.tagManager.GetTagCategoryAndName(t)
+			if err != nil {
+				body.Res = nil
+				body.Fault_ = Fault("", err)
+				return body
+			}
+			body.Res.Returnval = append(body.Res.Returnval, types.VslmTagEntry{
+				ParentCategoryName: c,
+				TagName:            n,
+			})
+		}
 	}
 
 	return body
+}
+
+func (m *VcenterVStorageObjectManager) VCenterUpdateVStorageObjectMetadataExTask(ctx *Context, req *types.VCenterUpdateVStorageObjectMetadataEx_Task) soap.HasFault {
+	task := CreateTask(m, "updateVStorageObjectMetadataEx", func(*Task) (types.AnyType, types.BaseMethodFault) {
+		obj := m.object(req.Datastore, req.Id)
+		if obj == nil {
+			return nil, new(types.InvalidArgument)
+		}
+
+		var metadata []types.KeyValue
+
+		remove := func(key string) bool {
+			for _, dk := range req.DeleteKeys {
+				if key == dk {
+					return true
+				}
+			}
+			return false
+		}
+
+		for _, kv := range obj.Metadata {
+			if !remove(kv.Key) {
+				metadata = append(metadata, kv)
+			}
+		}
+
+		update := func(kv types.KeyValue) bool {
+			for i := range obj.Metadata {
+				if obj.Metadata[i].Key == kv.Key {
+					obj.Metadata[i] = kv
+					return true
+				}
+			}
+			return false
+		}
+
+		for _, kv := range req.Metadata {
+			if !update(kv) {
+				metadata = append(metadata, kv)
+			}
+		}
+
+		obj.Metadata = metadata
+
+		return nil, nil
+	})
+
+	return &methods.VCenterUpdateVStorageObjectMetadataEx_TaskBody{
+		Res: &types.VCenterUpdateVStorageObjectMetadataEx_TaskResponse{
+			Returnval: task.Run(ctx),
+		},
+	}
 }

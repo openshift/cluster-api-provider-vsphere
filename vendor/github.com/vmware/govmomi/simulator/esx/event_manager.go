@@ -1,18 +1,6 @@
-/*
-Copyright (c) 2018 VMware, Inc. All Rights Reserved.
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-*/
+// © Broadcom. All Rights Reserved.
+// The term "Broadcom" refers to Broadcom Inc. and/or its subsidiaries.
+// SPDX-License-Identifier: Apache-2.0
 
 package esx
 
@@ -20,7 +8,7 @@ import "github.com/vmware/govmomi/vim25/types"
 
 // EventInfo is the default template for the EventManager description.eventInfo property.
 // Capture method:
-//   govc object.collect -s -dump EventManager:ha-eventmgr description.eventInfo
+// govc object.collect -s -dump EventManager:ha-eventmgr description.eventInfo
 // The captured list has been manually pruned and FullFormat fields changed to use Go's template variable syntax.
 var EventInfo = []types.EventDescriptionEventDetail{
 	{
@@ -93,7 +81,7 @@ var EventInfo = []types.EventDescriptionEventDetail{
 		Key:         "VmMigratedEvent",
 		Description: "VM migrated",
 		Category:    "info",
-		FullFormat:  "Migration of virtual machine {{.Vm.Name}} from {{.SourceHost.Name}, {{.SourceDatastore.Name}} to {{.Host.Name}, {{.Ds.Name}} completed",
+		FullFormat:  "Migration of virtual machine {{.Vm.Name}} from {{.SourceHost.Name}}, {{.SourceDatastore.Name}} to {{.Host.Name}}, {{.Ds.Name}} completed",
 	},
 	{
 		Key:         "VmBeingMigratedEvent",
@@ -252,6 +240,12 @@ var EventInfo = []types.EventDescriptionEventDetail{
 		FullFormat:  "Customization of VM {{.Vm.Name}} succeeded",
 	},
 	{
+		Key:         "CustomizationNetworkSetupFailed",
+		Description: "Cannot complete customization network setup",
+		Category:    "error",
+		FullFormat:  "An error occurred while setting up network properties of the guest OS",
+	},
+	{
 		Key:         "DrsVmMigratedEvent",
 		Description: "DRS VM migrated",
 		Category:    "info",
@@ -262,5 +256,47 @@ var EventInfo = []types.EventDescriptionEventDetail{
 		Description: "DRS VM powered on",
 		Category:    "info",
 		FullFormat:  "DRS powered On {{.Vm.Name}} on {{.Host.Name}} in {{.Datacenter.Name}}",
+	},
+	{
+		Key:         "DvsCreatedEvent",
+		Description: "vSphere Distributed Switch created",
+		Category:    "info",
+		FullFormat:  "A vSphere Distributed Switch {{.Dvs.Name}} was created in {{.Datacenter.Name}}.",
+	},
+	{
+		Key:         "DvsDestroyedEvent",
+		Description: "vSphere Distributed Switch deleted",
+		Category:    "info",
+		FullFormat:  "vSphere Distributed Switch {{.Dvs.Name}} in {{.Datacenter.Name}} was deleted.",
+	},
+	{
+		Key:         "DvsReconfiguredEvent",
+		Description: "vSphere Distributed Switch reconfigured",
+		Category:    "info",
+		FullFormat:  "The vSphere Distributed Switch {{.Dvs.Name}} in {{.Datacenter.Name}} was reconfigured.",
+	},
+	{
+		Key:         "DvsHostJoinedEvent",
+		Description: "Host joined the vSphere Distributed Switch",
+		Category:    "info",
+		FullFormat:  "The host {{.HostJoined.Name}} joined the vSphere Distributed Switch {{.Dvs.Name}} in {{.Datacenter.Name}}.",
+	},
+	{
+		Key:         "DvsHostLeftEvent",
+		Description: "Host left vSphere Distributed Switch",
+		Category:    "info",
+		FullFormat:  "The host {{.HostLeft.Name}} left the vSphere Distributed Switch {{.Dvs.Name}} in {{.Datacenter.Name}}.",
+	},
+	{
+		Key:         "DVPortgroupCreatedEvent",
+		Description: "dvPort group created",
+		Category:    "info",
+		FullFormat:  "dvPort group {{.Net.Name}} in {{.Datacenter.Name}} was added to switch {{.Dvs.Name}}.",
+	},
+	{
+		Key:         "DVPortgroupDestroyedEvent",
+		Description: "dvPort group deleted",
+		Category:    "info",
+		FullFormat:  "dvPort group {{.Net.Name}} in {{.Datacenter.Name}} was deleted.",
 	},
 }

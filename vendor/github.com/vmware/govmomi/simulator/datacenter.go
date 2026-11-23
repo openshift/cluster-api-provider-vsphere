@@ -1,18 +1,6 @@
-/*
-Copyright (c) 2017 VMware, Inc. All Rights Reserved.
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-*/
+// © Broadcom. All Rights Reserved.
+// The term "Broadcom" refers to Broadcom Inc. and/or its subsidiaries.
+// SPDX-License-Identifier: Apache-2.0
 
 package simulator
 
@@ -77,10 +65,10 @@ func (dc *Datacenter) createFolders(ctx *Context) {
 		if dc.isESX {
 			folder.ChildType = f.types[:1]
 			folder.Self = *f.ref
-			Map.PutEntity(dc, folder)
+			ctx.Map.PutEntity(dc, folder)
 		} else {
 			folder.ChildType = f.types
-			e := Map.PutEntity(dc, folder)
+			e := ctx.Map.PutEntity(dc, folder)
 
 			// propagate the generated morefs to Datacenter
 			ref := e.Reference()
@@ -89,7 +77,7 @@ func (dc *Datacenter) createFolders(ctx *Context) {
 		}
 	}
 
-	net := Map.Get(dc.NetworkFolder).(*Folder)
+	net := ctx.Map.Get(dc.NetworkFolder).(*Folder)
 
 	for _, ref := range esx.Datacenter.Network {
 		// Add VM Network by default to each Datacenter
@@ -110,7 +98,7 @@ func (dc *Datacenter) defaultNetwork() []types.ManagedObjectReference {
 }
 
 // folder returns the Datacenter folder that can contain the given object type
-func (dc *Datacenter) folder(obj mo.Entity) *mo.Folder {
+func (dc *Datacenter) folder(ctx *Context, obj mo.Entity) *mo.Folder {
 	folders := []types.ManagedObjectReference{
 		dc.VmFolder,
 		dc.HostFolder,
@@ -121,7 +109,7 @@ func (dc *Datacenter) folder(obj mo.Entity) *mo.Folder {
 	rtype := obj.Reference().Type
 
 	for i := range folders {
-		folder, _ := asFolderMO(Map.Get(folders[i]))
+		folder, _ := asFolderMO(ctx.Map.Get(folders[i]))
 		for _, kind := range folder.ChildType {
 			if rtype == kind {
 				return folder
@@ -136,10 +124,10 @@ func (dc *Datacenter) folder(obj mo.Entity) *mo.Folder {
 	return nil
 }
 
-func datacenterEventArgument(obj mo.Entity) *types.DatacenterEventArgument {
+func datacenterEventArgument(ctx *Context, obj mo.Entity) *types.DatacenterEventArgument {
 	dc, ok := obj.(*Datacenter)
 	if !ok {
-		dc = Map.getEntityDatacenter(obj)
+		dc = ctx.Map.getEntityDatacenter(obj)
 	}
 	return &types.DatacenterEventArgument{
 		Datacenter:          dc.Self,
@@ -162,11 +150,24 @@ func (dc *Datacenter) PowerOnMultiVMTask(ctx *Context, req *types.PowerOnMultiVM
 		res.Attempted = []types.ClusterAttemptedVmInfo{}
 
 		for _, ref := range req.Vm {
-			vm := Map.Get(ref).(*VirtualMachine)
+			vm, ok := ctx.Map.Get(ref).(*VirtualMachine)
+			if !ok {
+				continue
+			}
+			// This task creates multiple subtasks which violates the assumption
+			// of 1:1 Context:Task, which results in data races in objects
+			// like the Simulator.Event manager. This is the minimum context
+			// required for the PowerOnVMTask to complete.
+			taskCtx := &Context{
+				Context: ctx.Context,
+				Session: ctx.Session,
+				Map:     ctx.Map,
+			}
+
 			// NOTE: Simulator does not actually perform any specific host-level placement
 			// (equivalent to vSphere DRS).
-			ctx.WithLock(vm, func() {
-				vmTaskBody := vm.PowerOnVMTask(ctx, &types.PowerOnVM_Task{}).(*methods.PowerOnVM_TaskBody)
+			taskCtx.WithLock(vm, func() {
+				vmTaskBody := vm.PowerOnVMTask(taskCtx, &types.PowerOnVM_Task{}).(*methods.PowerOnVM_TaskBody)
 				res.Attempted = append(res.Attempted, types.ClusterAttemptedVmInfo{Vm: ref, Task: &vmTaskBody.Res.Returnval})
 			})
 		}
@@ -189,13 +190,13 @@ func (d *Datacenter) DestroyTask(ctx *Context, req *types.Destroy_Task) soap.Has
 		}
 
 		for _, ref := range folders {
-			f, _ := asFolderMO(Map.Get(ref))
+			f, _ := asFolderMO(ctx.Map.Get(ref))
 			if len(f.ChildEntity) != 0 {
 				return nil, &types.ResourceInUse{}
 			}
 		}
 
-		p, _ := asFolderMO(Map.Get(*d.Parent))
+		p, _ := asFolderMO(ctx.Map.Get(*d.Parent))
 		folderRemoveChild(ctx, p, d.Self)
 
 		return nil, nil

@@ -1,18 +1,6 @@
-/*
-Copyright (c) 2017 VMware, Inc. All Rights Reserved.
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-*/
+// © Broadcom. All Rights Reserved.
+// The term "Broadcom" refers to Broadcom Inc. and/or its subsidiaries.
+// SPDX-License-Identifier: Apache-2.0
 
 package esx
 
@@ -25,7 +13,8 @@ import (
 
 // HostSystem is the default template for HostSystem properties.
 // Capture method:
-//   govc host.info -dump
+//
+//	govc host.info -dump
 var HostSystem = mo.HostSystem{
 	ManagedEntity: mo.ManagedEntity{
 		ExtensibleManagedObject: mo.ExtensibleManagedObject{
@@ -52,7 +41,7 @@ var HostSystem = mo.HostSystem{
 		DynamicData:       types.DynamicData{},
 		ConnectionState:   "connected",
 		PowerState:        "poweredOn",
-		StandbyMode:       "",
+		StandbyMode:       "none",
 		InMaintenanceMode: false,
 		BootTime:          (*time.Time)(nil),
 		HealthSystemRuntime: &types.HealthSystemRuntime{
@@ -1719,7 +1708,7 @@ var HostSystem = mo.HostSystem{
 			SslThumbprint:         "",
 			Product:               &HostConfigInfo.Product,
 			VmotionEnabled:        false,
-			FaultToleranceEnabled: types.NewBool(true),
+			FaultToleranceEnabled: true,
 			FeatureVersion:        nil,
 			AgentVmDatastore:      (*types.ManagedObjectReference)(nil),
 			AgentVmNetwork:        (*types.ManagedObjectReference)(nil),
@@ -1735,7 +1724,7 @@ var HostSystem = mo.HostSystem{
 		OverallStatus:      "gray",
 		RebootRequired:     false,
 		CustomValue:        nil,
-		ManagementServerIp: "",
+		ManagementServerIp: "127.0.0.1",
 		MaxEVCModeKey:      "",
 		CurrentEVCModeKey:  "",
 		Gateway:            (*types.HostListSummaryGatewaySummary)(nil),

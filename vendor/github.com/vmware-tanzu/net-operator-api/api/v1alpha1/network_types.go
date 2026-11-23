@@ -1,5 +1,6 @@
-// Copyright (c) 2020 VMware, Inc. All Rights Reserved.
-// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2020-2024 Broadcom. All Rights Reserved.
+// Broadcom Confidential. The term "Broadcom" refers to Broadcom Inc.
+// and/or its subsidiaries.
 
 package v1alpha1
 
@@ -30,6 +31,9 @@ const (
 
 	// NetworkTypeVDS is the network type describing VSphere Distributed Switch.
 	NetworkTypeVDS = NetworkType("vsphere-distributed")
+
+	// NetworkTypeNSXTVPC is the network type describing NSX-T VPC.
+	NetworkTypeNSXTVPC = NetworkType("nsx-t_vpc")
 )
 
 // NetworkSpec defines the state of Network.
@@ -48,6 +52,18 @@ type NetworkSpec struct {
 
 // NetworkStatus is unused. This is because Network is purely a configuration resource.
 type NetworkStatus struct {
+}
+
+// NetworkReference is an object that points to a Network.
+type NetworkReference struct {
+	// Kind is the type of resource being referenced.
+	Kind string `json:"kind"`
+	// Name is the name of resource being referenced.
+	Name string `json:"name"`
+	// APIVersion of the referent.
+	//
+	// +optional
+	APIVersion string `json:"apiVersion,omitempty"`
 }
 
 // +genclient

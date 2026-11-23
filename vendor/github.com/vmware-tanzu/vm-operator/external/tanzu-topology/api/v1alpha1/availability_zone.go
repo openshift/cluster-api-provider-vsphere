@@ -1,4 +1,5 @@
-// Copyright (c) 2021 VMware, Inc. All Rights Reserved.
+// © Broadcom. All Rights Reserved.
+// The term “Broadcom” refers to Broadcom Inc. and/or its subsidiaries.
 // SPDX-License-Identifier: Apache-2.0
 
 package v1alpha1
@@ -8,11 +9,16 @@ import (
 )
 
 // NamespaceInfo contains identifying information about the vSphere resources
-// used to represent a Kuberentes namespace on individual vSphere Clusters.
+// used to represent a Kubernetes namespace on individual vSphere Zones.
 type NamespaceInfo struct {
 	// PoolMoId is the managed object ID of the vSphere ResourcePool for a
 	// Namespace on an individual vSphere Cluster.
 	PoolMoId string `json:"poolMoId,omitempty"`
+
+	// PoolMoIDs are the managed object ID of the vSphere ResourcePools for a
+	// Namespace in an individual vSphere Zone. A zone may be comprised of
+	// multiple ResourcePools.
+	PoolMoIDs []string `json:"poolMoIDs,omitempty"`
 
 	// FolderMoId is the managed object ID of the vSphere Folder for a
 	// Namespace. Folders are global and not per-vSphere Cluster, but the
@@ -25,6 +31,10 @@ type AvailabilityZoneSpec struct {
 	// ClusterComputeResourceMoId is the managed object ID of the vSphere
 	// ClusterComputeResource represented by this availability zone.
 	ClusterComputeResourceMoId string `json:"clusterComputeResourceMoId,omitempty"`
+
+	// ClusterComputeResourceMoIDs are the managed object IDs of the vSphere
+	// ClusterComputeResources represented by this availability zone.
+	ClusterComputeResourceMoIDs []string `json:"clusterComputeResourceMoIDs,omitempty"`
 
 	// Namespaces is a map that enables querying information about the vSphere
 	// objects that make up a Kubernetes Namespace based on its name.
@@ -60,5 +70,5 @@ type AvailabilityZoneList struct {
 }
 
 func init() {
-	SchemeBuilder.Register(&AvailabilityZone{}, &AvailabilityZoneList{})
+	objectTypes = append(objectTypes, &AvailabilityZone{}, &AvailabilityZoneList{})
 }

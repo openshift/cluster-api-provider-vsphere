@@ -1,36 +1,31 @@
-/*
-Copyright (c) 2017 VMware, Inc. All Rights Reserved.
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-*/
+// © Broadcom. All Rights Reserved.
+// The term "Broadcom" refers to Broadcom Inc. and/or its subsidiaries.
+// SPDX-License-Identifier: Apache-2.0
 
 package pbm
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"strings"
 
 	"github.com/vmware/govmomi/pbm/types"
+	"github.com/vmware/govmomi/property"
+	"github.com/vmware/govmomi/view"
+	"github.com/vmware/govmomi/vim25"
+	"github.com/vmware/govmomi/vim25/mo"
+	vim "github.com/vmware/govmomi/vim25/types"
 )
 
 // A struct to capture pbm create spec details.
 type CapabilityProfileCreateSpec struct {
-	Name           string
-	SubProfileName string
-	Description    string
-	Category       string
-	CapabilityList []Capability
+	Name             string
+	SubProfileName   string
+	Description      string
+	Category         string
+	CapabilityList   []Capability
+	K8sCompliantName string
 }
 
 // A struct to capture pbm capability instance details.
@@ -69,6 +64,7 @@ func CreateCapabilityProfileSpec(pbmCreateSpec CapabilityProfileCreateSpec) (*ty
 				},
 			},
 		},
+		K8sCompliantName: pbmCreateSpec.K8sCompliantName,
 	}
 	return &pbmCapabilityProfileSpec, nil
 }
@@ -145,4 +141,101 @@ func verifyPropertyValueIsBoolean(propertyValue string, dataType string) (bool, 
 		return false, err
 	}
 	return val, nil
+}
+
+// ProfileMap contains a map of storage profiles by name.
+type ProfileMap struct {
+	Name    map[string]types.BasePbmProfile
+	Profile []types.BasePbmProfile
+}
+
+// ProfileMap builds a map of storage profiles by name.
+func (c *Client) ProfileMap(ctx context.Context, uid ...string) (*ProfileMap, error) {
+	m := &ProfileMap{Name: make(map[string]types.BasePbmProfile)}
+
+	rtype := types.PbmProfileResourceType{
+		ResourceType: string(types.PbmProfileResourceTypeEnumSTORAGE),
+	}
+
+	category := types.PbmProfileCategoryEnumREQUIREMENT
+
+	var ids []types.PbmProfileId
+	if len(uid) == 0 {
+		var err error
+		ids, err = c.QueryProfile(ctx, rtype, string(category))
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		ids = make([]types.PbmProfileId, len(uid))
+		for i, id := range uid {
+			ids[i].UniqueId = id
+		}
+	}
+
+	profiles, err := c.RetrieveContent(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	m.Profile = profiles
+
+	for _, p := range profiles {
+		base := p.GetPbmProfile()
+		m.Name[base.Name] = p
+		m.Name[base.ProfileId.UniqueId] = p
+	}
+
+	return m, nil
+}
+
+// DatastoreMap contains a map of Datastore by name.
+type DatastoreMap struct {
+	Name         map[string]string
+	PlacementHub []types.PbmPlacementHub
+}
+
+// DatastoreMap returns a map of Datastore by name.
+// The root reference can be a ClusterComputeResource or Folder.
+func (c *Client) DatastoreMap(ctx context.Context, vc *vim25.Client, root vim.ManagedObjectReference) (*DatastoreMap, error) {
+	m := &DatastoreMap{Name: make(map[string]string)}
+
+	prop := []string{"name"}
+	var content []vim.ObjectContent
+
+	if root.Type == "ClusterComputeResource" {
+		pc := property.DefaultCollector(vc)
+		var cluster mo.ClusterComputeResource
+
+		if err := pc.RetrieveOne(ctx, root, []string{"datastore"}, &cluster); err != nil {
+			return nil, err
+		}
+
+		if err := pc.Retrieve(ctx, cluster.Datastore, prop, &content); err != nil {
+			return nil, err
+		}
+	} else {
+		kind := []string{"Datastore"}
+		m := view.NewManager(vc)
+
+		v, err := m.CreateContainerView(ctx, root, kind, true)
+		if err != nil {
+			return nil, err
+		}
+
+		err = v.Retrieve(ctx, kind, prop, &content)
+		_ = v.Destroy(ctx)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	for _, item := range content {
+		m.PlacementHub = append(m.PlacementHub, types.PbmPlacementHub{
+			HubType: item.Obj.Type,
+			HubId:   item.Obj.Value,
+		})
+		m.Name[item.Obj.Value] = item.PropSet[0].Val.(string)
+	}
+
+	return m, nil
 }

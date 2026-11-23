@@ -1,27 +1,17 @@
-/*
-Copyright (c) 2017-2018 VMware, Inc. All Rights Reserved.
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-*/
+// © Broadcom. All Rights Reserved.
+// The term "Broadcom" refers to Broadcom Inc. and/or its subsidiaries.
+// SPDX-License-Identifier: Apache-2.0
 
 package simulator
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
 	"os"
 	"reflect"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -41,23 +31,32 @@ var refValueMap = map[string]string{
 	"EnvironmentBrowser":             "envbrowser",
 	"HostSystem":                     "host",
 	"ResourcePool":                   "resgroup",
+	"VirtualApp":                     "resgroup-v",
 	"VirtualMachine":                 "vm",
 	"VirtualMachineSnapshot":         "snapshot",
 	"VmwareDistributedVirtualSwitch": "dvs",
 	"DistributedVirtualSwitch":       "dvs",
 	"ClusterComputeResource":         "domain-c",
+	"ComputeResource":                "domain-s",
 	"Folder":                         "group",
 	"StoragePod":                     "group-p",
 }
 
-// Map is the default Registry instance.
-var Map = NewRegistry()
+// Map returns simulator.Context.Map from the given ctx
+func Map(ctx context.Context) *Registry {
+	return ctx.(*Context).Map
+}
+
+// ServiceFromContext returns the simulator Service from the given ctx
+func ServiceFromContext(ctx context.Context) *Service {
+	return ctx.(*Context).svc
+}
 
 // RegisterObject interface supports callbacks when objects are created, updated and deleted from the Registry
 type RegisterObject interface {
 	mo.Reference
-	PutObject(mo.Reference)
-	UpdateObject(mo.Reference, []types.PropertyChange)
+	PutObject(*Context, mo.Reference)
+	UpdateObject(*Context, mo.Reference, []types.PropertyChange)
 	RemoveObject(*Context, types.ManagedObjectReference)
 }
 
@@ -72,16 +71,19 @@ type Registry struct {
 	Namespace string
 	Path      string
 	Handler   func(*Context, *Method) (mo.Reference, types.BaseMethodFault)
+	Cookie    func(*Context) string
 
 	tagManager tagManager
 }
 
 // tagManager is an interface to simplify internal interaction with the vapi tag manager simulator.
 type tagManager interface {
-	AttachedObjects(types.VslmTagEntry) ([]types.ManagedObjectReference, types.BaseMethodFault)
-	AttachedTags(id types.ManagedObjectReference) ([]types.VslmTagEntry, types.BaseMethodFault)
-	AttachTag(types.ManagedObjectReference, types.VslmTagEntry) types.BaseMethodFault
-	DetachTag(types.ManagedObjectReference, types.VslmTagEntry) types.BaseMethodFault
+	AttachedObjects(string) ([]types.ManagedObjectReference, types.BaseMethodFault)
+	AttachedTags(id types.ManagedObjectReference) ([]string, types.BaseMethodFault)
+	AttachTag(types.ManagedObjectReference, string) types.BaseMethodFault
+	DetachTag(types.ManagedObjectReference, string) types.BaseMethodFault
+	GetTagByCategoryAndName(string, string) (string, types.BaseMethodFault)
+	GetTagCategoryAndName(string) (string, string, types.BaseMethodFault)
 }
 
 // NewRegistry creates a new instances of Registry
@@ -141,6 +143,24 @@ func (r *Registry) newReference(item mo.Reference) types.ManagedObjectReference 
 	}
 
 	return ref
+}
+
+func (r *Registry) AlignCounter() error {
+	maxN := int64(0)
+	for ref, _ := range r.objects {
+		prefix := valuePrefix(ref.Type)
+		suffix := strings.TrimPrefix(ref.Value, prefix)
+		n, err := strconv.ParseInt(suffix, 10, 64)
+		if err != nil {
+			continue
+		}
+		if n > maxN {
+			maxN = n
+		}
+	}
+
+	r.counter = maxN
+	return nil
 }
 
 func (r *Registry) setReference(item mo.Reference, ref types.ManagedObjectReference) {
@@ -277,8 +297,12 @@ func (r *Registry) Put(item mo.Reference) mo.Reference {
 
 	r.m.Unlock()
 
+	ctx := &Context{
+		Map: r,
+	}
+
 	r.applyHandlers(func(o RegisterObject) {
-		o.PutObject(item)
+		o.PutObject(ctx, item)
 	})
 
 	return item
@@ -301,7 +325,7 @@ func (r *Registry) Remove(ctx *Context, item types.ManagedObjectReference) {
 // such as any PropertyCollector instances with in-progress WaitForUpdates calls.
 // The changes are also applied to the given object via mo.ApplyPropertyChange,
 // so there is no need to set object fields directly.
-func (r *Registry) Update(obj mo.Reference, changes []types.PropertyChange) {
+func (r *Registry) Update(ctx *Context, obj mo.Reference, changes []types.PropertyChange) {
 	for i := range changes {
 		if changes[i].Op == "" {
 			changes[i].Op = types.PropertyChangeOpAssign
@@ -317,13 +341,13 @@ func (r *Registry) Update(obj mo.Reference, changes []types.PropertyChange) {
 	mo.ApplyPropertyChange(val, changes)
 
 	r.applyHandlers(func(o RegisterObject) {
-		o.UpdateObject(val, changes)
+		o.UpdateObject(ctx, val, changes)
 	})
 }
 
 func (r *Registry) AtomicUpdate(ctx *Context, obj mo.Reference, changes []types.PropertyChange) {
 	r.WithLock(ctx, obj, func() {
-		r.Update(obj, changes)
+		ctx.Update(obj, changes)
 	})
 }
 
@@ -355,7 +379,7 @@ func (r *Registry) getEntityDatacenter(item mo.Entity) *Datacenter {
 }
 
 func (r *Registry) getEntityFolder(item mo.Entity, kind string) *mo.Folder {
-	dc := Map.getEntityDatacenter(item)
+	dc := r.getEntityDatacenter(item)
 
 	var ref types.ManagedObjectReference
 
@@ -369,7 +393,7 @@ func (r *Registry) getEntityFolder(item mo.Entity, kind string) *mo.Folder {
 	// If Model was created with Folder option, use that Folder; else use top-level folder
 	for _, child := range folder.ChildEntity {
 		if child.Type == "Folder" {
-			folder, _ = asFolderMO(Map.Get(child))
+			folder, _ = asFolderMO(r.Get(child))
 			break
 		}
 	}
@@ -494,7 +518,9 @@ func (r *Registry) removeString(ctx *Context, obj mo.Reference, field *[]string,
 }
 
 func (r *Registry) content() types.ServiceContent {
-	return r.Get(vim25.ServiceInstance).(*ServiceInstance).Content
+	return r.Get(vim25.ServiceInstance).(interface {
+		ServiceContent() types.ServiceContent
+	}).ServiceContent()
 }
 
 // IsESX returns true if this Registry maps an ESX model
@@ -512,6 +538,15 @@ func (r *Registry) SearchIndex() *SearchIndex {
 	return r.Get(r.content().SearchIndex.Reference()).(*SearchIndex)
 }
 
+// AlarmManager returns the AlarmManager singleton
+func (r *Registry) AlarmManager() *AlarmManager {
+	ref := r.content().AlarmManager
+	if ref == nil {
+		return nil // ESX
+	}
+	return r.Get(*ref).(*AlarmManager)
+}
+
 // EventManager returns the EventManager singleton
 func (r *Registry) EventManager() *EventManager {
 	return r.Get(r.content().EventManager.Reference()).(*EventManager)
@@ -520,6 +555,11 @@ func (r *Registry) EventManager() *EventManager {
 // FileManager returns the FileManager singleton
 func (r *Registry) FileManager() *FileManager {
 	return r.Get(r.content().FileManager.Reference()).(*FileManager)
+}
+
+// CryptoManager returns the CryptoManagerKmip singleton
+func (r *Registry) CryptoManager() *CryptoManagerKmip {
+	return r.Get(r.content().CryptoManager.Reference()).(*CryptoManagerKmip)
 }
 
 type VirtualDiskManagerInterface interface {
@@ -563,13 +603,38 @@ func (r *Registry) CustomFieldsManager() *CustomFieldsManager {
 	return r.Get(r.content().CustomFieldsManager.Reference()).(*CustomFieldsManager)
 }
 
+// TenantManager returns TenantManager singleton
+func (r *Registry) TenantManager() *TenantManager {
+	return r.Get(r.content().TenantManager.Reference()).(*TenantManager)
+}
+
+// VmCompatibilityChecker returns VmCompatibilityChecker singleton
+func (r *Registry) VmCompatibilityChecker() *VmCompatibilityChecker {
+	return r.Get(r.content().VmCompatibilityChecker.Reference()).(*VmCompatibilityChecker)
+}
+
+// VmProvisioningChecker returns VmProvisioningChecker singleton
+func (r *Registry) VmProvisioningChecker() *VmProvisioningChecker {
+	return r.Get(r.content().VmProvisioningChecker.Reference()).(*VmProvisioningChecker)
+}
+
+// ExtensionManager returns the ExtensionManager singleton
+func (r *Registry) ExtensionManager() *ExtensionManager {
+	return r.Get(r.content().ExtensionManager.Reference()).(*ExtensionManager)
+}
+
+// VStorageObjectManager returns the VStorageObjectManager singleton
+func (r *Registry) VStorageObjectManager() *VcenterVStorageObjectManager {
+	return r.Get(r.content().VStorageObjectManager.Reference()).(*VcenterVStorageObjectManager)
+}
+
 func (r *Registry) MarshalJSON() ([]byte, error) {
 	r.m.Lock()
 	defer r.m.Unlock()
 
 	vars := struct {
-		Objects int
-		Locks   int
+		Objects int `json:"objects"`
+		Locks   int `json:"locks"`
 	}{
 		len(r.objects),
 		len(r.locks),

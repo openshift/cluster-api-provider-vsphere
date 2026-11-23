@@ -1,5 +1,6 @@
-// Copyright (c) 2020 VMware, Inc. All Rights Reserved.
-// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2020-2024 Broadcom. All Rights Reserved.
+// Broadcom Confidential. The term "Broadcom" refers to Broadcom Inc.
+// and/or its subsidiaries.
 
 package v1alpha1
 
@@ -13,8 +14,7 @@ import (
 type ClientSecretReference struct {
 	// Name is the name of resource being referenced.
 	Name string `json:"name"`
-	// Namespace of the resource being referenced. If empty, cluster scoped
-	// resource is assumed.
+	// Namespace of the resource being referenced. If empty, cluster scoped resource is assumed.
 	// +kubebuilder:default:=default
 	Namespace string `json:"namespace,omitempty"`
 }
@@ -28,6 +28,8 @@ const (
 	LoadBalancerConfigReady LoadBalancerConfigConditionType = "Ready"
 	// LoadBalancerConfigFailure is added if any failure is encountered while realizing LoadBalancerConfig object
 	LoadBalancerConfigFailure LoadBalancerConfigConditionType = "Failure"
+	// LoadBalancerConfigIPPoolPressure condition status is set to True when IPPool is low on free IPs.
+	LoadBalancerConfigIPPoolPressure LoadBalancerConfigConditionType = "IPPoolPressure"
 )
 
 // LoadBalancerConfigCondition describes the state of a LoadBalancerConfig at a certain point
@@ -68,12 +70,15 @@ const (
 
 	// LoadBalancerConfigTypeAvi is the LoadBalancerConfigType for Avi.
 	LoadBalancerConfigTypeAvi LoadBalancerConfigType = "avi"
+
+	// LoadBalancerConfigTypeFoundation is the FoundationLoadBalancerConfigType for VCF Foundation Load Balancer.
+	LoadBalancerConfigTypeFoundation LoadBalancerConfigType = "foundation"
 )
 
 // LoadBalancerConfigSpec defines the desired state of LoadBalancerConfig
 type LoadBalancerConfigSpec struct {
-	// Type describes type of load balancer. Supported value is haproxy
-	// +kubebuilder:validation:Enum=haproxy;avi
+	// Type describes type of load balancer.
+	// +kubebuilder:validation:Enum=haproxy;avi;foundation
 	Type LoadBalancerConfigType `json:"type"`
 	// ProviderRef is reference to a load balancer provider object that provides the details for this type of load balancer
 	ProviderRef LoadBalancerConfigProviderReference `json:"providerRef"`

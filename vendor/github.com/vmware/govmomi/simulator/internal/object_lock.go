@@ -1,3 +1,7 @@
+// © Broadcom. All Rights Reserved.
+// The term "Broadcom" refers to Broadcom Inc. and/or its subsidiaries.
+// SPDX-License-Identifier: Apache-2.0
+
 package internal
 
 import (
@@ -8,7 +12,7 @@ import (
 // SharedLockingContext is used to identify when locks can be shared. In
 // practice, simulator code uses the simulator.Context for a request, but in
 // principle this could be anything.
-type SharedLockingContext interface{}
+type SharedLockingContext any
 
 // ObjectLock implements a basic "reference-counted" mutex, where a single
 // SharedLockingContext can "share" the lock across code paths or child tasks.

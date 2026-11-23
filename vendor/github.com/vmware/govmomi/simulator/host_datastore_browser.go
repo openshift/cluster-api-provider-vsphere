@@ -1,27 +1,15 @@
-/*
-Copyright (c) 2017 VMware, Inc. All Rights Reserved.
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-*/
+// © Broadcom. All Rights Reserved.
+// The term "Broadcom" refers to Broadcom Inc. and/or its subsidiaries.
+// SPDX-License-Identifier: Apache-2.0
 
 package simulator
 
 import (
-	"io/ioutil"
 	"os"
 	"path"
 	"strings"
 
+	"github.com/vmware/govmomi/internal"
 	"github.com/vmware/govmomi/vim25/methods"
 	"github.com/vmware/govmomi/vim25/mo"
 	"github.com/vmware/govmomi/vim25/soap"
@@ -43,7 +31,7 @@ type searchDatastore struct {
 	recurse bool
 }
 
-func (s *searchDatastore) addFile(file os.FileInfo, res *types.HostDatastoreBrowserSearchResults) {
+func (s *searchDatastore) addFile(fname string, file os.FileInfo, res *types.HostDatastoreBrowserSearchResults) {
 	details := s.SearchSpec.Details
 	if details == nil {
 		details = new(types.FileQueryFlags)
@@ -52,7 +40,8 @@ func (s *searchDatastore) addFile(file os.FileInfo, res *types.HostDatastoreBrow
 	name := file.Name()
 
 	info := types.FileInfo{
-		Path: name,
+		Path:         name,
+		FriendlyName: fname,
 	}
 
 	var finfo types.BaseFileInfo = &info
@@ -66,7 +55,7 @@ func (s *searchDatastore) addFile(file os.FileInfo, res *types.HostDatastoreBrow
 		info.Modification = &mtime
 	}
 
-	if isTrue(details.FileOwner) {
+	if details.FileOwner {
 		// Assume for now this process created all files in the datastore
 		user := os.Getenv("USER")
 
@@ -148,32 +137,53 @@ func (s *searchDatastore) queryMatch(file os.FileInfo) bool {
 	return false
 }
 
-func (s *searchDatastore) search(ds *types.ManagedObjectReference, folder string, dir string) error {
-	files, err := ioutil.ReadDir(dir)
+func friendlyName(ctx *Context, root bool, ds *Datastore, p string) string {
+	if !root || p == "" || !internal.IsDatastoreVSAN(ds.Datastore) {
+		return ""
+	}
+
+	unlock := ctx.Map.AcquireLock(ctx, ds.Self)
+	defer unlock()
+
+	if ds.namespace == nil {
+		return ""
+	}
+
+	for name, id := range ds.namespace {
+		if p == id {
+			return name
+		}
+	}
+
+	return ""
+}
+
+func (s *searchDatastore) search(ctx *Context, ds *Datastore, folder string, dir string, root bool) error {
+	files, err := os.ReadDir(dir)
 	if err != nil {
 		tracef("search %s: %s", dir, err)
 		return err
 	}
 
 	res := types.HostDatastoreBrowserSearchResults{
-		Datastore:  ds,
+		Datastore:  &ds.Self,
 		FolderPath: folder,
 	}
 
 	for _, file := range files {
 		name := file.Name()
-
-		if s.queryMatch(file) {
+		info, _ := file.Info()
+		if s.queryMatch(info) {
 			for _, m := range s.SearchSpec.MatchPattern {
 				if ok, _ := path.Match(m, name); ok {
-					s.addFile(file, &res)
+					s.addFile(friendlyName(ctx, root, ds, name), info, &res)
 					break
 				}
 			}
 		}
 
 		if s.recurse && file.IsDir() {
-			_ = s.search(ds, path.Join(folder, name), path.Join(dir, name))
+			_ = s.search(ctx, ds, path.Join(folder, name), path.Join(dir, name), false)
 		}
 	}
 
@@ -188,22 +198,21 @@ func (s *searchDatastore) Run(task *Task) (types.AnyType, types.BaseMethodFault)
 		return nil, fault
 	}
 
-	ref := Map.FindByName(p.Datastore, s.Datastore)
+	ref := task.ctx.Map.FindByName(p.Datastore, s.Datastore)
 	if ref == nil {
 		return nil, &types.InvalidDatastore{Name: p.Datastore}
 	}
 
 	ds := ref.(*Datastore)
 
-	isolatedLockContext := &Context{} // we don't need/want to share the task lock
-	Map.WithLock(isolatedLockContext, task, func() {
+	task.ctx.WithLock(task, func() {
 		task.Info.Entity = &ds.Self // TODO: CreateTask() should require mo.Entity, rather than mo.Reference
 		task.Info.EntityName = ds.Name
 	})
 
-	dir := path.Join(ds.Info.GetDatastoreInfo().Url, p.Path)
+	dir := ds.resolve(task.ctx, p.Path)
 
-	err := s.search(&ds.Self, s.DatastorePath, dir)
+	err := s.search(task.ctx, ds, s.DatastorePath, dir, p.Path == "")
 	if err != nil {
 		ff := types.FileFault{
 			File: p.Path,

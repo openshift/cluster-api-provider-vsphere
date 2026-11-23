@@ -1,18 +1,6 @@
-/*
-Copyright (c) 2020 VMware, Inc. All Rights Reserved.
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-*/
+// © Broadcom. All Rights Reserved.
+// The term "Broadcom" refers to Broadcom Inc. and/or its subsidiaries.
+// SPDX-License-Identifier: Apache-2.0
 
 package simulator
 
@@ -69,7 +57,7 @@ func guestURL(ctx *Context, vm *VirtualMachine, path string) string {
 		Host:   "*", // See guest.FileManager.TransferURL
 		Path:   guestPrefix + strings.TrimPrefix(path, "/"),
 		RawQuery: url.Values{
-			"id":    []string{vm.run.id},
+			"id":    []string{vm.svm.c.id},
 			"token": []string{ctx.Session.Key},
 		}.Encode(),
 	}).String()
@@ -79,7 +67,7 @@ func (m *GuestFileManager) InitiateFileTransferToGuest(ctx *Context, req *types.
 	body := new(methods.InitiateFileTransferToGuestBody)
 
 	vm := ctx.Map.Get(req.Vm).(*VirtualMachine)
-	err := vm.run.prepareGuestOperation(vm, req.Auth)
+	err := vm.svm.prepareGuestOperation(req.Auth)
 	if err != nil {
 		body.Fault_ = Fault("", err)
 		return body
@@ -96,7 +84,7 @@ func (m *GuestFileManager) InitiateFileTransferFromGuest(ctx *Context, req *type
 	body := new(methods.InitiateFileTransferFromGuestBody)
 
 	vm := ctx.Map.Get(req.Vm).(*VirtualMachine)
-	err := vm.run.prepareGuestOperation(vm, req.Auth)
+	err := vm.svm.prepareGuestOperation(req.Auth)
 	if err != nil {
 		body.Fault_ = Fault("", err)
 		return body
@@ -126,7 +114,7 @@ func (m *GuestProcessManager) StartProgramInGuest(ctx *Context, req *types.Start
 
 	vm := ctx.Map.Get(req.Vm).(*VirtualMachine)
 
-	fault := vm.run.prepareGuestOperation(vm, auth)
+	fault := vm.svm.prepareGuestOperation(auth)
 	if fault != nil {
 		body.Fault_ = Fault("", fault)
 	}
@@ -141,7 +129,7 @@ func (m *GuestProcessManager) StartProgramInGuest(ctx *Context, req *types.Start
 		args = append(args, "-e", e)
 	}
 
-	args = append(args, vm.run.id, spec.ProgramPath, spec.Arguments)
+	args = append(args, vm.svm.c.id, spec.ProgramPath, spec.Arguments)
 
 	spec.ProgramPath = "docker"
 	spec.Arguments = strings.Join(args, " ")
@@ -213,7 +201,7 @@ func (m *GuestFileManager) mktemp(ctx *Context, req *types.CreateTemporaryFileIn
 
 	vm := ctx.Map.Get(req.Vm).(*VirtualMachine)
 
-	return vm.run.exec(ctx, vm, req.Auth, args)
+	return vm.svm.exec(ctx, req.Auth, args)
 }
 
 func (m *GuestFileManager) CreateTemporaryFileInGuest(ctx *Context, req *types.CreateTemporaryFileInGuest) soap.HasFault {
@@ -298,7 +286,7 @@ func (m *GuestFileManager) ListFilesInGuest(ctx *Context, req *types.ListFilesIn
 		return body
 	}
 
-	res, fault := vm.run.exec(ctx, vm, req.Auth, listFiles(req))
+	res, fault := vm.svm.exec(ctx, req.Auth, listFiles(req))
 	if fault != nil {
 		body.Fault_ = Fault("", fault)
 		return body
@@ -317,7 +305,7 @@ func (m *GuestFileManager) DeleteFileInGuest(ctx *Context, req *types.DeleteFile
 
 	vm := ctx.Map.Get(req.Vm).(*VirtualMachine)
 
-	_, fault := vm.run.exec(ctx, vm, req.Auth, args)
+	_, fault := vm.svm.exec(ctx, req.Auth, args)
 	if fault != nil {
 		body.Fault_ = Fault("", fault)
 		return body
@@ -338,7 +326,7 @@ func (m *GuestFileManager) DeleteDirectoryInGuest(ctx *Context, req *types.Delet
 
 	vm := ctx.Map.Get(req.Vm).(*VirtualMachine)
 
-	_, fault := vm.run.exec(ctx, vm, req.Auth, args)
+	_, fault := vm.svm.exec(ctx, req.Auth, args)
 	if fault != nil {
 		body.Fault_ = Fault("", fault)
 		return body
@@ -359,7 +347,7 @@ func (m *GuestFileManager) MakeDirectoryInGuest(ctx *Context, req *types.MakeDir
 
 	vm := ctx.Map.Get(req.Vm).(*VirtualMachine)
 
-	_, fault := vm.run.exec(ctx, vm, req.Auth, args)
+	_, fault := vm.svm.exec(ctx, req.Auth, args)
 	if fault != nil {
 		body.Fault_ = Fault("", fault)
 		return body
@@ -381,7 +369,7 @@ func (m *GuestFileManager) MoveFileInGuest(ctx *Context, req *types.MoveFileInGu
 
 	vm := ctx.Map.Get(req.Vm).(*VirtualMachine)
 
-	_, fault := vm.run.exec(ctx, vm, req.Auth, args)
+	_, fault := vm.svm.exec(ctx, req.Auth, args)
 	if fault != nil {
 		body.Fault_ = Fault("", fault)
 		return body
@@ -399,7 +387,7 @@ func (m *GuestFileManager) MoveDirectoryInGuest(ctx *Context, req *types.MoveDir
 
 	vm := ctx.Map.Get(req.Vm).(*VirtualMachine)
 
-	_, fault := vm.run.exec(ctx, vm, req.Auth, args)
+	_, fault := vm.svm.exec(ctx, req.Auth, args)
 	if fault != nil {
 		body.Fault_ = Fault("", fault)
 		return body
@@ -424,7 +412,7 @@ func (m *GuestFileManager) ChangeFileAttributesInGuest(ctx *Context, req *types.
 	if attr.Permissions != 0 {
 		args := []string{"chmod", fmt.Sprintf("%#o", attr.Permissions), req.GuestFilePath}
 
-		_, fault := vm.run.exec(ctx, vm, req.Auth, args)
+		_, fault := vm.svm.exec(ctx, req.Auth, args)
 		if fault != nil {
 			body.Fault_ = Fault("", fault)
 			return body
@@ -443,7 +431,7 @@ func (m *GuestFileManager) ChangeFileAttributesInGuest(ctx *Context, req *types.
 		if c.id != nil {
 			args := []string{c.cmd, fmt.Sprintf("%d", *c.id), req.GuestFilePath}
 
-			_, fault := vm.run.exec(ctx, vm, req.Auth, args)
+			_, fault := vm.svm.exec(ctx, req.Auth, args)
 			if fault != nil {
 				body.Fault_ = Fault("", fault)
 				return body
