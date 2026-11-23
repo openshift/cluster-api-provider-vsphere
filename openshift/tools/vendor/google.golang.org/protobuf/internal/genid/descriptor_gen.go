@@ -26,6 +26,8 @@ const (
 	Edition_EDITION_PROTO3_enum_value          = 999
 	Edition_EDITION_2023_enum_value            = 1000
 	Edition_EDITION_2024_enum_value            = 1001
+	Edition_EDITION_2026_enum_value            = 1002
+	Edition_EDITION_UNSTABLE_enum_value        = 9999
 	Edition_EDITION_1_TEST_ONLY_enum_value     = 1
 	Edition_EDITION_2_TEST_ONLY_enum_value     = 2
 	Edition_EDITION_99997_TEST_ONLY_enum_value = 99997
@@ -805,11 +807,13 @@ const (
 	FieldOptions_FeatureSupport_EditionDeprecated_field_name  protoreflect.Name = "edition_deprecated"
 	FieldOptions_FeatureSupport_DeprecationWarning_field_name protoreflect.Name = "deprecation_warning"
 	FieldOptions_FeatureSupport_EditionRemoved_field_name     protoreflect.Name = "edition_removed"
+	FieldOptions_FeatureSupport_RemovalError_field_name       protoreflect.Name = "removal_error"
 
 	FieldOptions_FeatureSupport_EditionIntroduced_field_fullname  protoreflect.FullName = "google.protobuf.FieldOptions.FeatureSupport.edition_introduced"
 	FieldOptions_FeatureSupport_EditionDeprecated_field_fullname  protoreflect.FullName = "google.protobuf.FieldOptions.FeatureSupport.edition_deprecated"
 	FieldOptions_FeatureSupport_DeprecationWarning_field_fullname protoreflect.FullName = "google.protobuf.FieldOptions.FeatureSupport.deprecation_warning"
 	FieldOptions_FeatureSupport_EditionRemoved_field_fullname     protoreflect.FullName = "google.protobuf.FieldOptions.FeatureSupport.edition_removed"
+	FieldOptions_FeatureSupport_RemovalError_field_fullname       protoreflect.FullName = "google.protobuf.FieldOptions.FeatureSupport.removal_error"
 )
 
 // Field numbers for google.protobuf.FieldOptions.FeatureSupport.
@@ -818,6 +822,7 @@ const (
 	FieldOptions_FeatureSupport_EditionDeprecated_field_number  protoreflect.FieldNumber = 2
 	FieldOptions_FeatureSupport_DeprecationWarning_field_number protoreflect.FieldNumber = 3
 	FieldOptions_FeatureSupport_EditionRemoved_field_number     protoreflect.FieldNumber = 4
+	FieldOptions_FeatureSupport_RemovalError_field_number       protoreflect.FieldNumber = 5
 )
 
 // Names for google.protobuf.OneofOptions.
@@ -882,11 +887,13 @@ const (
 	EnumValueOptions_Deprecated_field_name          protoreflect.Name = "deprecated"
 	EnumValueOptions_Features_field_name            protoreflect.Name = "features"
 	EnumValueOptions_DebugRedact_field_name         protoreflect.Name = "debug_redact"
+	EnumValueOptions_FeatureSupport_field_name      protoreflect.Name = "feature_support"
 	EnumValueOptions_UninterpretedOption_field_name protoreflect.Name = "uninterpreted_option"
 
 	EnumValueOptions_Deprecated_field_fullname          protoreflect.FullName = "google.protobuf.EnumValueOptions.deprecated"
 	EnumValueOptions_Features_field_fullname            protoreflect.FullName = "google.protobuf.EnumValueOptions.features"
 	EnumValueOptions_DebugRedact_field_fullname         protoreflect.FullName = "google.protobuf.EnumValueOptions.debug_redact"
+	EnumValueOptions_FeatureSupport_field_fullname      protoreflect.FullName = "google.protobuf.EnumValueOptions.feature_support"
 	EnumValueOptions_UninterpretedOption_field_fullname protoreflect.FullName = "google.protobuf.EnumValueOptions.uninterpreted_option"
 )
 
@@ -895,6 +902,7 @@ const (
 	EnumValueOptions_Deprecated_field_number          protoreflect.FieldNumber = 1
 	EnumValueOptions_Features_field_number            protoreflect.FieldNumber = 2
 	EnumValueOptions_DebugRedact_field_number         protoreflect.FieldNumber = 3
+	EnumValueOptions_FeatureSupport_field_number      protoreflect.FieldNumber = 4
 	EnumValueOptions_UninterpretedOption_field_number protoreflect.FieldNumber = 999
 )
 
@@ -1148,6 +1156,7 @@ const (
 	FeatureSet_ENFORCE_NAMING_STYLE_UNKNOWN_enum_value = 0
 	FeatureSet_STYLE2024_enum_value                    = 1
 	FeatureSet_STYLE_LEGACY_enum_value                 = 2
+	FeatureSet_STYLE2026_enum_value                    = 3
 )
 
 // Names for google.protobuf.FeatureSet.VisibilityFeature.
