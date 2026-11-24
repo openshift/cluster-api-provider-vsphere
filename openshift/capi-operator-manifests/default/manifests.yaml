@@ -453,6 +453,7 @@ spec:
         - --feature-gates=PriorityQueue=${EXP_PRIORITY_QUEUE:=true},ReconcilerRateLimiting=${EXP_RECONCILER_RATE_LIMITING:=true},NodeAntiAffinity=${EXP_NODE_ANTI_AFFINITY:=false}
         - --tls-min-version=${TLS_MIN_VERSION}
         - --tls-cipher-suites=${TLS_CIPHER_SUITES}
+        - --tls-curve-preferences=${TLS_CURVE_PREFERENCES}
         env:
         - name: POD_NAMESPACE
           valueFrom:
