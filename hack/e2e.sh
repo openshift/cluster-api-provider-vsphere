@@ -60,7 +60,7 @@ on_exit() {
 
     # If Boskos is being used then release the vsphere project.
     if [[ "${BOSKOS_HOST:-}" != "" && "${BOSKOS_RESOURCE_NAME:-}" != "" ]]; then
-      docker run -e VSPHERE_USERNAME -e VSPHERE_PASSWORD gcr.io/k8s-staging-capi-vsphere/extra/boskosctl:latest release --boskos-host="${BOSKOS_HOST}" --resource-owner="${BOSKOS_RESOURCE_OWNER}" --resource-name="${BOSKOS_RESOURCE_NAME}" --vsphere-server="${VSPHERE_SERVER}" --vsphere-tls-thumbprint="${VSPHERE_TLS_THUMBPRINT}" --vsphere-folder="${BOSKOS_RESOURCE_FOLDER}" --vsphere-resource-pool="${BOSKOS_RESOURCE_POOL}"
+      docker run -e VSPHERE_USERNAME -e VSPHERE_PASSWORD gcr.io/k8s-staging-capi-vsphere/extra/boskosctl@sha256:21d69a31ddbe4f43774aa5f5500a4285488ff00fb930f055a8ee8d53ce25d3de release --boskos-host="${BOSKOS_HOST}" --resource-owner="${BOSKOS_RESOURCE_OWNER}" --resource-name="${BOSKOS_RESOURCE_NAME}" --vsphere-server="${VSPHERE_SERVER}" --vsphere-tls-thumbprint="${VSPHERE_TLS_THUMBPRINT}" --vsphere-folder="${BOSKOS_RESOURCE_FOLDER}" --vsphere-resource-pool="${BOSKOS_RESOURCE_POOL}"
     fi
   fi
 
@@ -84,16 +84,19 @@ on_exit() {
     done || true
     # Replace secret and base64 secret in all files.
     if [ -n "$VSPHERE_PASSWORD" ]; then
-      grep -I -r -l -e "${VSPHERE_PASSWORD}" "${ARTIFACTS}" | while IFS= read -r file
-      do
-        echo "Cleaning up VSPHERE_PASSWORD from file ${file}"
-        sed -i "s/${VSPHERE_PASSWORD}/REDACTED/g" "${file}"
-      done || true
       VSPHERE_PASSWORD_B64=$(echo -n "${VSPHERE_PASSWORD}" | base64 --wrap=0)
-      grep -I -r -l -e "${VSPHERE_PASSWORD_B64}" "${ARTIFACTS}" | while IFS= read -r file
+      for secret in "${VSPHERE_PASSWORD}" "${VSPHERE_PASSWORD_B64}"; do
+        grep -I -r -l -F -e "${secret}" "${ARTIFACTS}" | while IFS= read -r file
+        do
+          echo "Cleaning up a secret from file ${file}"
+          SECRET_TO_REDACT="${secret}" python3 -c 'import os,sys; path=sys.argv[1]; secret=os.environb[b"SECRET_TO_REDACT"]; data=open(path,"rb").read(); open(path,"wb").write(data.replace(secret,b"REDACTED"))' "${file}"
+        done || true
+      done
+      # Delete any file where a fixed-string match still remains so we are not accidentally leaking sensitive info.
+      grep -I -r -l -F -e "${VSPHERE_PASSWORD}" -e "${VSPHERE_PASSWORD_B64}" "${ARTIFACTS}" | while IFS= read -r file
       do
-        echo "Cleaning up VSPHERE_PASSWORD_B64 from file ${file}"
-        sed -i "s/${VSPHERE_PASSWORD_B64}/REDACTED/g" "${file}"
+        echo "ERROR: secret still present after redaction, deleting ${file}" 1>&2
+        rm -f "${file}"
       done || true
     fi
     # re-packing pod-logs.tar.gz-unpacked
@@ -135,7 +138,7 @@ export VSPHERE_USERNAME="${GOVC_USERNAME:-}"
 export VSPHERE_PASSWORD="${GOVC_PASSWORD:-}"
 export E2E_CONF_FILE="${REPO_ROOT}/test/e2e/config/vsphere.yaml"
 export E2E_CONF_OVERRIDE_FILE=""
-export E2E_VM_OPERATOR_VERSION="${VM_OPERATOR_VERSION:-9.1}"
+export E2E_VM_OPERATOR_VERSION="${VM_OPERATOR_VERSION:-9.1.3}"
 export DOCKER_IMAGE_TAR="/tmp/images/image.tar"
 
 SSH_KEY_DIR=$(mktemp -d)
@@ -193,7 +196,7 @@ if [[ ! "${GINKGO_FOCUS:-}" =~ $RE_VCSIM ]]; then
     # Check out the account from Boskos and store the produced environment
     # variables in a temporary file.
     account_env_var_file="$(mktemp)"
-    docker run gcr.io/k8s-staging-capi-vsphere/extra/boskosctl:latest acquire --boskos-host="${BOSKOS_HOST}" --resource-owner="${BOSKOS_RESOURCE_OWNER}" --resource-type="${BOSKOS_RESOURCE_TYPE}" 1>"${account_env_var_file}"
+    docker run gcr.io/k8s-staging-capi-vsphere/extra/boskosctl@sha256:21d69a31ddbe4f43774aa5f5500a4285488ff00fb930f055a8ee8d53ce25d3de acquire --boskos-host="${BOSKOS_HOST}" --resource-owner="${BOSKOS_RESOURCE_OWNER}" --resource-type="${BOSKOS_RESOURCE_TYPE}" 1>"${account_env_var_file}"
     checkout_account_status="${?}"
 
     # If the checkout process was a success then load the account's
@@ -216,7 +219,7 @@ if [[ ! "${GINKGO_FOCUS:-}" =~ $RE_VCSIM ]]; then
 
     # Run the heartbeat to tell boskos periodically that we are still
     # using the checked out account.
-    docker run gcr.io/k8s-staging-capi-vsphere/extra/boskosctl:latest heartbeat --boskos-host="${BOSKOS_HOST}" --resource-owner="${BOSKOS_RESOURCE_OWNER}" --resource-name="${BOSKOS_RESOURCE_NAME}" >>"${ARTIFACTS}/boskos-heartbeat.log" 2>&1 &
+    docker run gcr.io/k8s-staging-capi-vsphere/extra/boskosctl@sha256:21d69a31ddbe4f43774aa5f5500a4285488ff00fb930f055a8ee8d53ce25d3de heartbeat --boskos-host="${BOSKOS_HOST}" --resource-owner="${BOSKOS_RESOURCE_OWNER}" --resource-name="${BOSKOS_RESOURCE_NAME}" >>"${ARTIFACTS}/boskos-heartbeat.log" 2>&1 &
     HEART_BEAT_PID=$!
   fi
 fi
